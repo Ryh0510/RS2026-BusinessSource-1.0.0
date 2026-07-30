@@ -1,0 +1,7 @@
+//  Define a file to set the shared library find directory
+
+#   rs2025 default configuration
+
+@MyProject_RUNTIME_CONF@
+
+

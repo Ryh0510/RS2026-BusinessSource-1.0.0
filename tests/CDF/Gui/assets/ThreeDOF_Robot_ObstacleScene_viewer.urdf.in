@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="ThreeDOF_Robot_ObstacleScene">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.316652462983068 0.0209295031293411 0" rpy="0 0 0" />
+      <mass value="1.4142163244935" />
+      <inertia
+        ixx="0.00105011985971853"
+        ixy="0"
+        ixz="0"
+        iyy="0.00174142985971853"
+        iyz="0"
+        izz="0.00126741164264263" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_OBSTACLE_SCENE_MESH_PATH_FOR_URDF@" />
+      </geometry>
+      <material name="obstacle_scene_mat">
+        <color rgba="0 0.898039215686275 0 0.82" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_OBSTACLE_SCENE_MESH_PATH_FOR_URDF@" />
+      </geometry>
+    </collision>
+  </link>
+</robot>

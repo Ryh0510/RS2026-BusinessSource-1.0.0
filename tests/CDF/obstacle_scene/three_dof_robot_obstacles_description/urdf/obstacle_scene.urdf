@@ -1,0 +1,119 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="three_dof_robot_obstacle_scene">
+  <link name="world" />
+  <material name="obs_01_elbow_cylinder_mat">
+    <color rgba="0.900 0.240 0.180 1.000" />
+  </material>
+  <material name="obs_02_front_box_mat">
+    <color rgba="0.950 0.670 0.180 1.000" />
+  </material>
+  <material name="obs_03_outer_cylinder_mat">
+    <color rgba="0.360 0.560 0.900 1.000" />
+  </material>
+  <material name="obs_04_left_wall_mat">
+    <color rgba="0.620 0.400 0.780 1.000" />
+  </material>
+  <material name="obs_05_tool_goal_block_mat">
+    <color rgba="0.300 0.660 0.440 1.000" />
+  </material>
+  <link name="obs_01_elbow_cylinder">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.035000" length="0.090000" />
+      </geometry>
+      <material name="obs_01_elbow_cylinder_mat" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.035000" length="0.090000" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="obs_01_elbow_cylinder_fixed" type="fixed">
+    <origin xyz="0.220000 0.110000 0.045000" rpy="0 0 0" />
+    <parent link="world" />
+    <child link="obs_01_elbow_cylinder" />
+  </joint>
+  <link name="obs_02_front_box">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.085000 0.040000 0.080000" />
+      </geometry>
+      <material name="obs_02_front_box_mat" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.085000 0.040000 0.080000" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="obs_02_front_box_fixed" type="fixed">
+    <origin xyz="0.360000 -0.090000 0.040000" rpy="0 0 0" />
+    <parent link="world" />
+    <child link="obs_02_front_box" />
+  </joint>
+  <link name="obs_03_outer_cylinder">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.028000" length="0.085000" />
+      </geometry>
+      <material name="obs_03_outer_cylinder_mat" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.028000" length="0.085000" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="obs_03_outer_cylinder_fixed" type="fixed">
+    <origin xyz="0.480000 0.075000 0.042500" rpy="0 0 0" />
+    <parent link="world" />
+    <child link="obs_03_outer_cylinder" />
+  </joint>
+  <link name="obs_04_left_wall">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.150000 0.026000 0.075000" />
+      </geometry>
+      <material name="obs_04_left_wall_mat" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.150000 0.026000 0.075000" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="obs_04_left_wall_fixed" type="fixed">
+    <origin xyz="0.170000 -0.185000 0.037500" rpy="0 0 0" />
+    <parent link="world" />
+    <child link="obs_04_left_wall" />
+  </joint>
+  <link name="obs_05_tool_goal_block">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.070000 0.060000 0.070000" />
+      </geometry>
+      <material name="obs_05_tool_goal_block_mat" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.070000 0.060000 0.070000" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="obs_05_tool_goal_block_fixed" type="fixed">
+    <origin xyz="0.420000 0.185000 0.035000" rpy="0 0 0" />
+    <parent link="world" />
+    <child link="obs_05_tool_goal_block" />
+  </joint>
+</robot>

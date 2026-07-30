@@ -1,0 +1,13 @@
+PackagesInstallation
+CMakeLists.txt.user
+log/
+/generated_assets/
+
+
+/PrebuiltPackages
+build
+
+/.codex
+/archive
+/PackageBuildFromSource
+/phase1_release

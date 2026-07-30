@@ -1,0 +1,652 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<SimscapeMultibodyImportXML version="2.0" xmlns="urn:mathworks:SimscapeMultibody:import"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Created by="" on="03/20/17||20:21:10" using="Simscape Multibody Link Version 4.9"
+        from="SolidWorks 24.3.0" />
+    <ModelUnits mass="kilogram" length="millimeter" />
+    <DataUnits mass="kilogram" length="meter" />
+    <RootAssembly name="KR16_2_withTool" uid="KR16_2_withTool" version="151">
+        <AssemblyFile name="KR16_2_withTool.SLDASM" type="SolidWorks Assembly" />
+        <InstanceTree>
+            <Instance name="KR16_2_Link1-1" uid="KR16_2_Link1-1" grounded="true"
+                entityUid="KR16_2_Link1" rigid="true">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>0 0 0</Translation>
+                </Transform>
+                <Instance name="KR16_2_Link1_3_plate-1" uid="KR16_2_Link1_3_plate-1" grounded="true"
+                    entityUid="KR16_2_Link1_3_plate*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link1_1_base-1" uid="KR16_2_Link1_1_base-1" grounded="true"
+                    entityUid="KR16_2_Link1_1_base*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link1_2_box-1" uid="KR16_2_Link1_2_box-1" grounded="true"
+                    entityUid="KR16_2_Link1_2_box*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="KR16_2_Link3-1" uid="KR16_2_Link3-1" entityUid="KR16_2_Link3*:*默认">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>0 0 0.0016765013621610203</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="KR16_2_Link2-1" uid="KR16_2_Link2-1" entityUid="KR16_2_Link2"
+                rigid="true">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>0 0 0.0016765013621610203</Translation>
+                </Transform>
+                <Instance name="KR16_2_Link2_2_motor-1" uid="KR16_2_Link2_2_motor-1" grounded="true"
+                    entityUid="KR16_2_Link2_2_motor*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link2_3_platform-1" uid="KR16_2_Link2_3_platform-1"
+                    grounded="true" entityUid="KR16_2_Link2_3_platform*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link2_1_body-1" uid="KR16_2_Link2_1_body-1" grounded="true"
+                    entityUid="KR16_2_Link2_1_body*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="KR16_2_Link5-1" uid="KR16_2_Link5-1" entityUid="KR16_2_Link5*:*默认">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>0 -5.7498450445336857e-013 0.0016765013627308978</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="KR16_2_Link4-1" uid="KR16_2_Link4-1" entityUid="KR16_2_Link4"
+                rigid="true">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>0 0 0.0016765013621609093</Translation>
+                </Transform>
+                <Instance name="KR16_2_Link4_2_motor-1" uid="KR16_2_Link4_2_motor-1" grounded="true"
+                    entityUid="KR16_2_Link4_2_motor*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link4_1_body-1" uid="KR16_2_Link4_1_body-1" grounded="true"
+                    entityUid="KR16_2_Link4_1_body*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="KR16_2_Link6-1" uid="KR16_2_Link6-1" entityUid="KR16_2_Link6"
+                rigid="true">
+                <Transform>
+                    <Rotation>1 1.899634064522604e-010 -1.0344114453886276e-011
+                        -1.899634064522604e-010 1 -1.1740771984789868e-016 1.0344114453886276e-011
+                        1.1740968485111707e-016 1</Rotation>
+                    <Translation>2.0664356728315458e-012 1.7609114147133234e-010
+                        0.0016765013531108153</Translation>
+                </Transform>
+                <Instance name="KR16_2_Link6_1_body-1" uid="KR16_2_Link6_1_body-1" grounded="true"
+                    entityUid="KR16_2_Link6_1_body*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link6_2_kuka-1" uid="KR16_2_Link6_2_kuka-1" grounded="true"
+                    entityUid="KR16_2_Link6_2_kuka*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="KR16_2_Link7withTool-1" uid="KR16_2_Link7withTool-1"
+                entityUid="KR16_2_Link7withTool" rigid="true">
+                <Transform>
+                    <Rotation>1 1.899634064522604e-010 -1.0344114453886276e-011
+                        -1.899634064522604e-010 1 0 1.0344114453886276e-011 0 1</Rotation>
+                    <Translation>4.0020661784545553e-009 1.8266371748509869e-010
+                        0.0016765013465408068</Translation>
+                </Transform>
+                <Instance name="tool-1" uid="tool-1" entityUid="tool*:*默认">
+                    <Transform>
+                        <Rotation>0 0 -1 -9.1200269560520653e-011 1 0 1.0000000000000002
+                            9.1200047511985728e-011 0</Rotation>
+                        <Translation>1.0879999990674101 -7.9015904932795721e-011 1.3199968626074101</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="KR16_2_Link7-1" uid="KR16_2_Link7-1" grounded="true"
+                    entityUid="KR16_2_Link7*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+        </InstanceTree>
+        <Constraints>
+            <Coincident name="重合1">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link1-1</Uid>
+                        <Uid>KR16_2_Link1_1_base-1</Uid>
+                    </InstancePath>
+                    <Position>-0.00055796444396988298 -0.00011519954308414201 0.39860000000000001</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link2-1</Uid>
+                        <Uid>KR16_2_Link2_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0.39692349863783899</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心1">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link1-1</Uid>
+                        <Uid>KR16_2_Link1_1_base-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0.39860000000000001</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link2-1</Uid>
+                        <Uid>KR16_2_Link2_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0.41012349863783903</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合2">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link2-1</Uid>
+                        <Uid>KR16_2_Link2_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.26000000000000001 -0.083000000000000004 0.67500000000000004</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link3-1</Uid>
+                    </InstancePath>
+                    <Position>0.26000000000000001 -0.083000000000000004 0.67500000000000004</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心2">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link2-1</Uid>
+                        <Uid>KR16_2_Link2_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.26000000000000001 -0.067000000000000004 0.67500000000000004</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link3-1</Uid>
+                    </InstancePath>
+                    <Position>0.26000000000000001 -0.083000000000000004 0.67500000000000004</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合3">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link3-1</Uid>
+                    </InstancePath>
+                    <Position>0.37471223244340002 -0.11700000000000001 1.4007832601637102</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link4-1</Uid>
+                        <Uid>KR16_2_Link4_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.37471223244340002 -0.11700000000000001 1.4007832601637102</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心3">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link3-1</Uid>
+                    </InstancePath>
+                    <Position>0.26000000000000001 -0.107 1.355</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link4-1</Uid>
+                        <Uid>KR16_2_Link4_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.26000000000000001 -0.107 1.355</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合4">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link4-1</Uid>
+                        <Uid>KR16_2_Link4_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.66200000000000003 5.7494276006764295e-013 1.3199999999994301</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link5-1</Uid>
+                    </InstancePath>
+                    <Position>0.66200000000000003 0 1.3200000000000001</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心4">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link4-1</Uid>
+                        <Uid>KR16_2_Link4_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.111000000000006 0 1.3200000000000001</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link5-1</Uid>
+                    </InstancePath>
+                    <Position>0.65700000000000003 5.7494938846537e-013 1.3199999999994301</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Concentric name="同心5">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link5-1</Uid>
+                    </InstancePath>
+                    <Position>0.93000000307614406 0.0609999999487158 1.3200000000512901</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link6-1</Uid>
+                        <Uid>KR16_2_Link6_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.93000000307614417 0.0609999999487158 1.3200000000512901</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合6">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link5-1</Uid>
+                    </InstancePath>
+                    <Position>0.93000000308070507 0.069999999948715003 1.3200000000512901</Position>
+                    <Axis>1.8996344139558801e-010 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link6-1</Uid>
+                        <Uid>KR16_2_Link6_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>0.93000000308070518 0.069999999948715003 1.3200000000512901</Position>
+                    <Axis>-1.8996344139558799e-010 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合7">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link6-1</Uid>
+                        <Uid>KR16_2_Link6_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>1.0760000030674099 -7.2443724630222358e-011 1.31999686260084</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>KR16_2_Link7withTool-1</Uid>
+                        <Uid>KR16_2_Link7-1</Uid>
+                    </InstancePath>
+                    <Position>1.0759999990674101 -7.9016458549021473e-011 1.3199968626074101</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心6">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link6-1</Uid>
+                        <Uid>KR16_2_Link6_1_body-1</Uid>
+                    </InstancePath>
+                    <Position>1.0524000030674099 -7.2443724630222332e-011 1.31999686260084</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>KR16_2_Link7withTool-1</Uid>
+                        <Uid>KR16_2_Link7-1</Uid>
+                    </InstancePath>
+                    <Position>1.0759999990674101 -7.9016458549021473e-011 1.3199968626074101</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+        </Constraints>
+    </RootAssembly>
+    <Assemblies>
+        <Assembly name="KR16_2_Link1" uid="KR16_2_Link1" version="129">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="KR16_2_Link1.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+        <Assembly name="KR16_2_Link2" uid="KR16_2_Link2" version="129">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="KR16_2_Link2.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+        <Assembly name="KR16_2_Link4" uid="KR16_2_Link4" version="128">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="KR16_2_Link4.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+        <Assembly name="KR16_2_Link6" uid="KR16_2_Link6" version="128">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="KR16_2_Link6.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+        <Assembly name="KR16_2_Link7withTool" uid="KR16_2_Link7withTool" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="KR16_2_Link7withTool.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+    </Assemblies>
+    <Parts>
+        <Part name="KR16_2_Link1_1_base" uid="KR16_2_Link1_1_base*:*默认" version="110">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link1_1_base.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>54.17966701154262</Mass>
+                <CenterOfMass>-0.0015190176044041213 -0.00011118105208978636 0.21449226446887665</CenterOfMass>
+                <Inertia>1.2764237010440684 1.2762577970966977 1.3143738856634655
+                    -0.00011685487688300729 -0.010017763370526055 -6.8998798510530422e-005</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link1_1_base_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.40000000000000002" g="0.40000000000000002" b="0.40000000000000002"
+                    a="1" />
+                <Diffuse r="0.40000000000000002" g="0.40000000000000002" b="0.40000000000000002"
+                    a="1" />
+                <Specular r="0.20000000000000001" g="0.20000000000000001" b="0.20000000000000001"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link1_2_box" uid="KR16_2_Link1_2_box*:*默认" version="116">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link1_2_box.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>12.380252392495198</Mass>
+                <CenterOfMass>-0.22318239468502818 -0.021751169579115257 0.17920105331131125</CenterOfMass>
+                <Inertia>0.22528524851324938 0.085325542419760522 0.17729090249978446
+                    0.0053477034674518746 -0.0020641044128421244 -0.00044347061307385</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link1_2_box_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0" g="0" b="0" a="1" />
+                <Diffuse r="0" g="0" b="0" a="1" />
+                <Specular r="0" g="0" b="0" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link1_3_plate" uid="KR16_2_Link1_3_plate*:*默认" version="109">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link1_3_plate.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.11338818587992246</Mass>
+                <CenterOfMass>-0.29199999999999998 0 0.19550000000000001</CenterOfMass>
+                <Inertia>0.00075279408296727236 0.00025598676993518477 0.0004969773953109075 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link1_3_plate_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.59999999999999998" g="0.59999999999999998" b="0.59999999999999998"
+                    a="1" />
+                <Diffuse r="0.59999999999999998" g="0.59999999999999998" b="0.59999999999999998"
+                    a="1" />
+                <Specular r="0.29999999999999999" g="0.29999999999999999" b="0.29999999999999999"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link2_1_body" uid="KR16_2_Link2_1_body*:*默认" version="110">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link2_1_body.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>17.337165566436802</Mass>
+                <CenterOfMass>0.11535964644683046 -0.0077102383984373815 0.54364849671981763</CenterOfMass>
+                <Inertia>0.37943118492358463 0.66262895223169704 0.52749146367704047
+                    0.019186365919067881 -0.22271690602694105 0.02994580055274516</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link2_1_body_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.49803921568627452" b="0" a="1" />
+                <Diffuse r="1" g="0.49803921568627452" b="0" a="1" />
+                <Specular r="0.5" g="0.24901960784313726" b="0" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link2_2_motor" uid="KR16_2_Link2_2_motor*:*默认" version="111">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link2_2_motor.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>8.3026750000000327</Mass>
+                <CenterOfMass>0.13014515470762367 0.074853759159938291 0.61003413919435812</CenterOfMass>
+                <Inertia>0.12338162345985849 0.21025775510980427 0.22176600449590284
+                    -0.04058507037029007 -0.070315448471680919 -0.080987929312620013</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link2_2_motor_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.20000000000000001" g="0.20000000000000001" b="0.20000000000000001"
+                    a="1" />
+                <Diffuse r="0.20000000000000001" g="0.20000000000000001" b="0.20000000000000001"
+                    a="1" />
+                <Specular r="0.10000000000000001" g="0.10000000000000001" b="0.10000000000000001"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link2_3_platform" uid="KR16_2_Link2_3_platform*:*默认" version="118">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link2_3_platform.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>2.6680229368680943</Mass>
+                <CenterOfMass>-0.009999999999999995 0 0.39364758567022323</CenterOfMass>
+                <Inertia>0.43209669179060933 0.041770147981701075 0.46654209555251336 0 0
+                    0.011311983395004737</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link2_3_platform_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.59999999999999998" g="0.59999999999999998" b="0.59999999999999998"
+                    a="1" />
+                <Diffuse r="0.59999999999999998" g="0.59999999999999998" b="0.59999999999999998"
+                    a="1" />
+                <Specular r="0.29999999999999999" g="0.29999999999999999" b="0.29999999999999999"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link3" uid="KR16_2_Link3*:*默认" version="109">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link3.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>13.518762977191452</Mass>
+                <CenterOfMass>0.26023655609681962 -0.18055173527361046 0.99639128872709648</CenterOfMass>
+                <Inertia>0.59573587429237951 0.59390979790499232 0.059222236837385589
+                    0.026404260221616047 -0.00033959208874361212 -0.00024134125074008921</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link3_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.49803921568627452" b="0" a="1" />
+                <Diffuse r="1" g="0.49803921568627452" b="0" a="1" />
+                <Specular r="0.5" g="0.24901960784313726" b="0" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link4_1_body" uid="KR16_2_Link4_1_body*:*默认" version="109">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link4_1_body.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>10.760463259139851</Mass>
+                <CenterOfMass>0.32726760958310902 -0.015979416945863696 1.334565749200149</CenterOfMass>
+                <Inertia>0.052332782592925862 0.28909362996950033 0.27452604345709375
+                    0.0039647105734466033 0.0085112367698264961 -0.0096822120594931976</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link4_1_body_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.49803921568627452" b="0" a="1" />
+                <Diffuse r="1" g="0.49803921568627452" b="0" a="1" />
+                <Specular r="0.5" g="0.24901960784313726" b="0" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link4_2_motor" uid="KR16_2_Link4_2_motor*:*默认" version="115">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link4_2_motor.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>5.496947007500026</Mass>
+                <CenterOfMass>0.13417667240420769 0.060853726152881808 1.3372265442376976</CenterOfMass>
+                <Inertia>0.051444262672085447 0.11808613647273335 0.12531598841066161
+                    -0.0060068177546135828 -0.0102298664816198 -0.04201643776968756</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link4_2_motor_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.20000000000000001" g="0.20000000000000001" b="0.20000000000000001"
+                    a="1" />
+                <Diffuse r="0.20000000000000001" g="0.20000000000000001" b="0.20000000000000001"
+                    a="1" />
+                <Specular r="0.10000000000000001" g="0.10000000000000001" b="0.10000000000000001"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link5" uid="KR16_2_Link5*:*默认" version="109">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link5.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>3.8440376126666918</Mass>
+                <CenterOfMass>0.79455518102220168 0.0056362320940396777 1.3199863426232554</CenterOfMass>
+                <Inertia>0.0088359532961911954 0.037837073364347253 0.038509956332321092
+                    -2.2383340385662479e-005 3.0421804820911242e-006 -0.0029488860562147767</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link5_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.49803921568627452" b="0" a="1" />
+                <Diffuse r="1" g="0.49803921568627452" b="0" a="1" />
+                <Specular r="0.5" g="0.24901960784313726" b="0" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link6_1_body" uid="KR16_2_Link6_1_body*:*默认" version="109">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link6_1_body.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.7852464519549531</Mass>
+                <CenterOfMass>0.97769330675249844 -0.0069410660018305453 1.320041330087399</CenterOfMass>
+                <Inertia>0.0085501300550860655 0.0062659951285030909 0.01217294433572403
+                    -2.5973086697335018e-006 -4.3580691519613325e-007 0.00037794662586512951</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link6_1_body_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.49803921568627452" b="0" a="1" />
+                <Diffuse r="1" g="0.49803921568627452" b="0" a="1" />
+                <Specular r="0.5" g="0.24901960784313726" b="0" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link6_2_kuka" uid="KR16_2_Link6_2_kuka*:*默认" version="115">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link6_2_kuka.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.013164608716074529</Mass>
+                <CenterOfMass>0.95138620213632386 -0.093540842040820735 1.3212528514513027</CenterOfMass>
+                <Inertia>2.4011422010840687e-006 2.4393865126286593e-005 2.208825570191846e-005
+                    -2.9729075510066553e-008 8.4048880285086017e-009 4.3621287776739684e-007</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link6_2_kuka_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0" g="0.20000000000000001" b="0.20000000000000001" a="1" />
+                <Diffuse r="0" g="0.20000000000000001" b="0.20000000000000001" a="1" />
+                <Specular r="0" g="0.10000000000000001" b="0.10000000000000001" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="KR16_2_Link7" uid="KR16_2_Link7*:*默认" version="108">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="KR16_2_Link7.sldprt" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.040500470012283622</Mass>
+                <CenterOfMass>1.0808752729839612 -7.9016459400132239e-011 1.3199968626074101</CenterOfMass>
+                <Inertia>2.880915274470326e-005 1.4849844230083954e-005 1.4849844230083888e-005 0 0
+                    0</Inertia>
+            </MassProperties>
+            <GeometryFile name="KR16_2_Link7_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0" g="0.20000000000000001" b="0.20000000000000001" a="1" />
+                <Diffuse r="0" g="0.20000000000000001" b="0.20000000000000001" a="1" />
+                <Specular r="0" g="0.10000000000000001" b="0.10000000000000001" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.5</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="tool" uid="tool*:*默认" version="151">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="tool.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.29900041575699965</Mass>
+                <CenterOfMass>4.6769047556727789e-008 -0.00028224381209461351 -0.050173541165961524</CenterOfMass>
+                <Inertia>0.00051469497309163787 0.00051682287452335099 0.00012886387686429114
+                    1.3306237172968765e-006 -2.480925248731752e-009 -9.8964300442053739e-010</Inertia>
+            </MassProperties>
+            <GeometryFile name="tool_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.96862745098039216" g="0.8784313725490196" b="0.59999999999999998"
+                    a="1" />
+                <Diffuse r="0.96862745098039216" g="0.8784313725490196" b="0.59999999999999998"
+                    a="1" />
+                <Specular r="0.67803921568627445" g="0.61490196078431369" b="0.41999999999999998"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+    </Parts>
+</SimscapeMultibodyImportXML>

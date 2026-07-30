@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(SMRobotGen2CollisionCoreConsumer LANGUAGES CXX)
+
+find_package(SMRobotGen2 CONFIG REQUIRED COMPONENTS Collision)
+
+add_executable(SMRobotGen2CollisionCoreConsumer main.cpp)
+target_compile_features(SMRobotGen2CollisionCoreConsumer PRIVATE cxx_std_17)
+target_link_libraries(SMRobotGen2CollisionCoreConsumer PRIVATE SMRobotGen2::Collision)
+

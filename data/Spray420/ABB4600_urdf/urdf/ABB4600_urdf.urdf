@@ -1,0 +1,395 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="ABB4600_urdf">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-0.0911932890918684 0.000363208968098766 0.0719644587562096"
+        rpy="0 0 0" />
+      <mass
+        value="30.2818624113324" />
+      <inertia
+        ixx="0.42324104577689"
+        ixy="0.00392142735894152"
+        ixz="0.0579868623484162"
+        iyy="0.85947550412857"
+        iyz="0.000145370658908216"
+        izz="1.1607705721215" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Link1">
+    <inertial>
+      <origin
+        xyz="0.0758968117601865 0.0280025983981409 0.234699031737896"
+        rpy="0 0 0" />
+      <mass
+        value="42.4132582242364" />
+      <inertia
+        ixx="1.12147028275501"
+        ixy="-0.111102917614093"
+        ixz="-0.294543295169321"
+        iyy="1.44041435664796"
+        iyz="-0.116325217481024"
+        izz="1.15997847480042" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint1"
+    type="continuous">
+    <origin
+      xyz="0 0 0.155"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="Link1" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3"
+      upper="3"
+      effort="3"
+      velocity="3" />
+  </joint>
+  <link
+    name="Link2">
+    <inertial>
+      <origin
+        xyz="0.00122868633094958 0.396773988704683 0.0640753512233016"
+        rpy="0 0 0" />
+      <mass
+        value="28.081254917396" />
+      <inertia
+        ixx="2.16966410447276"
+        ixy="-0.00553147143154108"
+        ixz="-0.000184011944501045"
+        iyy="0.160934395101855"
+        iyz="-0.0736394569229643"
+        izz="2.24820594763906" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint2"
+    type="continuous">
+    <origin
+      xyz="0.17945 -0.098822 0.3295"
+      rpy="1.5708 0 0.043315" />
+    <parent
+      link="Link1" />
+    <child
+      link="Link2" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3"
+      upper="3"
+      effort="3"
+      velocity="3" />
+  </joint>
+  <link
+    name="Link3">
+    <inertial>
+      <origin
+        xyz="0.0401961431285417 0.119032865127366 -0.185650831272444"
+        rpy="0 0 0" />
+      <mass
+        value="51.1585575475068" />
+      <inertia
+        ixx="1.13312203966925"
+        ixy="-0.117395942679003"
+        ixz="-0.0735200500472539"
+        iyy="1.13983455155525"
+        iyz="0.0140831637948014"
+        izz="1.38699397598086" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint3"
+    type="continuous">
+    <origin
+      xyz="0.0026032 0.9 0.02985"
+      rpy="0 0 0" />
+    <parent
+      link="Link2" />
+    <child
+      link="Link3" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3"
+      upper="3"
+      effort="3"
+      velocity="3" />
+  </joint>
+  <link
+    name="Link4">
+    <inertial>
+      <origin
+        xyz="0.00197556283085997 0.00244734533440849 0.40173204114897"
+        rpy="0 0 0" />
+      <mass
+        value="11.1138588815375" />
+      <inertia
+        ixx="0.461731747775202"
+        ixy="2.88649886047068E-05"
+        ixz="-0.00564731344771572"
+        iyy="0.479366709055523"
+        iyz="-0.0022869339509638"
+        izz="0.0532626198131083" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link4.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link4.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint4"
+    type="continuous">
+    <origin
+      xyz="0.3315 0.1746 -0.13635"
+      rpy="-1.5718 -1.5708 -1.5687" />
+    <parent
+      link="Link3" />
+    <child
+      link="Link4" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3"
+      upper="3"
+      effort="3"
+      velocity="3" />
+  </joint>
+  <link
+    name="Link5">
+    <inertial>
+      <origin
+        xyz="0.00142503334527699 0.000757988042638491 -0.0038223913272131"
+        rpy="0 0 0" />
+      <mass
+        value="1.50273005812421" />
+      <inertia
+        ixx="0.00302707610407443"
+        ixy="1.15598213132487E-05"
+        ixz="-8.67050513965587E-07"
+        iyy="0.00333475334542478"
+        iyz="5.10042619148529E-06"
+        izz="0.00314069875067256" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link5.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link5.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint5"
+    type="continuous">
+    <origin
+      xyz="-0.00037092 -0.0015764 0.62603"
+      rpy="-2.3771 -1.5708 2.3891" />
+    <parent
+      link="Link4" />
+    <child
+      link="Link5" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3"
+      upper="3"
+      effort="3"
+      velocity="3" />
+  </joint>
+  <link
+    name="Link6">
+    <inertial>
+      <origin
+        xyz="0.0007643574225491 0.00568229341830251 0.441961274141648"
+        rpy="0 0 0" />
+      <mass
+        value="2.40256463130803" />
+      <inertia
+        ixx="0.41712713267946"
+        ixy="-1.60005497676363E-06"
+        ixz="-0.00071970776139543"
+        iyy="0.417133099068414"
+        iyz="-0.00606233628376475"
+        izz="0.00258876868978742" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link6.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://ABB4600_urdf/meshes/Link6.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint6"
+    type="continuous">
+    <origin
+      xyz="0.073624 0.0025684 -0.00037092"
+      rpy="-1.5708 1.1775 -1.5528" />
+    <parent
+      link="Link5" />
+    <child
+      link="Link6" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3"
+      upper="3"
+      effort="3"
+      velocity="3" />
+  </joint>
+</robot>

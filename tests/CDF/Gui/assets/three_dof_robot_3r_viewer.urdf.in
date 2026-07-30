@@ -1,0 +1,94 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="three_dof_robot_3r">
+  <link name="base_link" />
+  <link name="link1">
+    <inertial>
+      <origin xyz="0.110000 0 0" rpy="0 0 0" />
+      <mass value="0.332640" />
+      <inertia ixx="0.000049785" ixy="0" ixz="0" iyy="0.001347081" iyz="0" izz="0.001386000" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_3R_LINK1_MESH_PATH_FOR_URDF@" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="link1_mat">
+        <color rgba="0.280 0.450 0.820 1.000" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_3R_LINK1_MESH_PATH_FOR_URDF@" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link2">
+    <inertial>
+      <origin xyz="0.090000 0 0" rpy="0 0 0" />
+      <mass value="0.209952" />
+      <inertia ixx="0.000025194" ixy="0" ixz="0" iyy="0.000569390" iyz="0" izz="0.000589545" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_3R_LINK2_MESH_PATH_FOR_URDF@" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="link2_mat">
+        <color rgba="0.840 0.360 0.300 1.000" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_3R_LINK2_MESH_PATH_FOR_URDF@" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link3">
+    <inertial>
+      <origin xyz="0.065000 0 0" rpy="0 0 0" />
+      <mass value="0.112320" />
+      <inertia ixx="0.000010521" ixy="0" ixz="0" iyy="0.000159120" iyz="0" izz="0.000167769" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_3R_LINK3_MESH_PATH_FOR_URDF@" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="link3_mat">
+        <color rgba="0.320 0.620 0.420 1.000" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="@CDF_3R_LINK3_MESH_PATH_FOR_URDF@" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint1" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="link1" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.141593" upper="3.141593" effort="10" velocity="2" />
+    <dynamics damping="0.05" friction="0.0" />
+  </joint>
+  <joint name="joint2" type="revolute">
+    <origin xyz="0.220000 0 0" rpy="0 0 0" />
+    <parent link="link1" />
+    <child link="link2" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.141593" upper="3.141593" effort="10" velocity="2" />
+    <dynamics damping="0.05" friction="0.0" />
+  </joint>
+  <joint name="joint3" type="revolute">
+    <origin xyz="0.180000 0 0" rpy="0 0 0" />
+    <parent link="link2" />
+    <child link="link3" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.141593" upper="3.141593" effort="10" velocity="2" />
+    <dynamics damping="0.05" friction="0.0" />
+  </joint>
+</robot>

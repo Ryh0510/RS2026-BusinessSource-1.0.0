@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>three_dof_robot_obstacles_description</name>
+  <version>0.0.1</version>
+  <description>Obstacle scene for the generated three degree of freedom 3R robot workspace.</description>
+  <maintainer email="user@example.com">user</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+</package>

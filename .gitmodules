@@ -1,0 +1,11 @@
+[submodule "thirdparty"]
+	path = thirdparty
+	url = gitea@123.207.55.50:tangtang_dev/RSThirdParty.git
+	branch = main
+
+[submodule "data"]
+	path = data
+	url = gitea@123.207.55.50:tangtang_dev/RSData.git
+	branch = main
+
+	

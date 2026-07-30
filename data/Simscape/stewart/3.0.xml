@@ -1,0 +1,1356 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<SimscapeMultibodyImportXML version="2.0" xmlns="urn:mathworks:SimscapeMultibody:import"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Created by="" on="02/02/26||16:19:23" using="Simscape Multibody Link Version 7.4"
+        from="SolidWorks 32.0.1" />
+    <ModelUnits mass="kilogram" length="millimeter" />
+    <DataUnits mass="kilogram" length="meter" />
+    <RootAssembly name="2.0" uid="2.0" version="554">
+        <AssemblyFile name="2.0.SLDASM" type="SolidWorks Assembly" />
+        <InstanceTree>
+            <Instance name="上动平台-1" uid="上动平台-1" grounded="true" entityUid="上动平台*:*默认">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>0 0 0</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="下定平台-2" uid="下定平台-2" grounded="true" entityUid="下定平台*:*默认">
+                <Transform>
+                    <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                    <Translation>-7.3814984897869934e-05 0.0024184860053084183 -0.60053765216790278</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="固定套筒-1" uid="固定套筒-1" grounded="true" entityUid="固定套筒*:*默认">
+                <Transform>
+                    <Rotation>-0.99906790962572023 0 0.043166097299775844 0.043166097299775844
+                        -1.2246467991473542e-16 0.99906790962572023 0 1 1.2235053176539765e-16</Rotation>
+                    <Translation>0.012851093874449391 -0.0023644484022045027 0.59985769876695216</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="直线机构-1" uid="直线机构-1" entityUid="直线机构*:*默认">
+                <Transform>
+                    <Rotation>0.043166097299775663 -0.99906790962572023 0 0.99906790962572023
+                        0.043166097299775663 -1.2478381179502894e-16 1.246709342979057e-16 0 1</Rotation>
+                    <Translation>0.012851093874449465 -0.0023644484022044381 0.0538711770372792</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="喷枪-1" uid="喷枪-1" entityUid="喷枪*:*默认">
+                <Transform>
+                    <Rotation>0.043166097299775712 0.090710770751647921 0.99494132697036375
+                        0.99906790962572023 -0.0039192830824386253 -0.042987802644627163
+                        1.2435226503153952e-16 0.99586956740818311 -0.090795400270268709</Rotation>
+                    <Translation>0.013930246306943856 0.022612249338438566 0.061496879191409184</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="工件-2" uid="工件-2" entityUid="工件*:*默认">
+                <Transform>
+                    <Rotation>0.56426876678754001 0.80410594589983198 -0.18712131518510958
+                        0.82559115718863463 -0.54958421793725187 0.12789225373817753 0
+                        -0.22665130743685444 -0.97397596727905167</Rotation>
+                    <Translation>0.036327847442387283 0.0927582138433065 -0.43916650528416723</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="虎克铰零件4-1" uid="虎克铰零件4-1" entityUid="虎克铰零件4*:*默认">
+                <Transform>
+                    <Rotation>-0.49999999999999861 0.72427595727500571 0.47478872955597368
+                        -0.86602540378443948 -0.41816091890029694 -0.2741194008173406 0
+                        -0.54823880163468308 0.83632183780059632</Rotation>
+                    <Translation>-0.75571895029011593 0.035532271229790607 -0.50226408892391583</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器下段3-1" uid="执行器下段3-1" entityUid="执行器下段3*:*默认">
+                <Transform>
+                    <Rotation>0.75366294722816363 -0.39951381716192325 0.52190120891991409
+                        -0.43512750546044804 -0.89840903073813183 -0.059373962979897311
+                        0.49260147783692881 -0.18234561520606901 -0.85093704858114727</Rotation>
+                    <Translation>0.72467759616348526 -0.022778578720674802 -0.45064923317607342</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器上段2-1" uid="执行器上段2-1" entityUid="执行器上段2*:*默认">
+                <Transform>
+                    <Rotation>0.57997398551384172 0.7486290791043535 -0.32122371962007734
+                        -0.79433501726758338 0.43222120034406031 -0.42686849768476437
+                        -0.18072646864723024 0.50273187276371034 0.8453393446644929</Rotation>
+                    <Translation>0.38345732699038987 0.61688301803670198 -0.4500817318421767</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="虎克铰零件1-2" uid="虎克铰零件1-2" entityUid="虎克铰零件1*:*默认">
+                <Transform>
+                    <Rotation>-0.50000000000001821 0.75366294722816385 -0.4266053937485319
+                        -0.86602540378442816 -0.43512750546044815 0.24630073891847309 0
+                        0.49260147783692831 0.87025501092086466</Rotation>
+                    <Translation>0.75460765360416993 -0.030138925981211082 -0.50294275238632014</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="虎克铰零件2-1" uid="虎克铰零件2-1" entityUid="虎克铰零件2*:*默认">
+                <Transform>
+                    <Rotation>1 1.9596793374837252e-14 1.2454671238245731e-14
+                        -2.3219600382484896e-14 0.84264328425411961 0.53847218637681871 0
+                        -0.53847218637681871 0.84264328425411961</Rotation>
+                    <Translation>0.34907137344783268 -0.66835095772223074 -0.50239051785298516</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="虎克铰零件6-1" uid="虎克铰零件6-1" entityUid="虎克铰零件6*:*默认">
+                <Transform>
+                    <Rotation>0.49999999999998268 0.74862907910435361 -0.43537857310550415
+                        -0.86602540378444859 0.43222120034406031 -0.25136593638184629 0
+                        0.50273187276371012 0.86444240068815037</Rotation>
+                    <Translation>0.40563792875857579 0.63981440752479823 -0.50282650018166586</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器下段5-1" uid="执行器下段5-1" entityUid="执行器下段5*:*默认">
+                <Transform>
+                    <Rotation>0.7290210619655576 0.58761009179414736 -0.35105935571108809
+                        0.42090050637071497 -0.78928645215660898 -0.44706784740004357
+                        -0.53978797221454122 0.17816081629726174 -0.82273183273093731</Rotation>
+                    <Translation>-0.38268455368210047 -0.61162033504314262 -0.45180564702593884</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器下段6-1" uid="执行器下段6-1" entityUid="执行器下段6*:*默认">
+                <Transform>
+                    <Rotation>0.7242759572750066 -0.37690790382841843 -0.57737749327891263
+                        -0.41816091890029738 -0.90591185278470243 0.066821859362388186
+                        -0.54823880163468186 0.19303923698527078 -0.81373832978809135</Rotation>
+                    <Translation>-0.7225506984745611 0.027310186979585909 -0.45217438064659221</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="虎克铰零件3-1" uid="虎克铰零件3-1" entityUid="虎克铰零件3*:*默认">
+                <Transform>
+                    <Rotation>0.49999999999998962 0.72902106196555827 0.46747009659508698
+                        -0.86602540378444459 0.42090050637070997 0.26989398610726695
+                        3.3031303473894752e-16 -0.53978797221454444 0.84180101274143782</Rotation>
+                    <Translation>-0.4064273891981578 -0.63534799650869267 -0.50237367242273157</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器下段2-1" uid="执行器下段2-1" entityUid="执行器下段2*:*默认">
+                <Transform>
+                    <Rotation>0.74862907910435328 0.57997398551384172 0.3212237196200774
+                        0.43222120034406053 -0.79433501726758338 0.42686849768476426
+                        0.50273187276371034 -0.18072646864722999 -0.8453393446644929</Rotation>
+                    <Translation>0.38376018479204244 0.61728548039208597 -0.45087873903665876</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器下段1-1" uid="执行器下段1-1" entityUid="执行器下段1*:*默认">
+                <Transform>
+                    <Rotation>-1.3539028839021361e-14 -0.97689805032663168 -0.21370587092549864
+                        -0.86753865569422395 -0.10629083831581695 0.48587955150055395
+                        -0.49736976272815231 0.18539810397667703 -0.84749682133067306</Rotation>
+                    <Translation>-0.34045706270968779 0.64249742439378599 -0.45079028249334513</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器上段4-1" uid="执行器上段4-1" entityUid="执行器上段4*:*默认">
+                <Transform>
+                    <Rotation>0.97496891800967 1.8792787963815838e-14 -0.22234119931999466
+                        0.11972455171946592 0.84264328425412016 0.52499364493011058
+                        0.18735431842001013 -0.5384721863768176 0.82155101111735185</Rotation>
+                    <Translation>0.33960345146884613 -0.6352257882683594 -0.4505536685481073</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器上段5-1" uid="执行器上段5-1" entityUid="执行器上段5*:*默认">
+                <Transform>
+                    <Rotation>0.72902106196555683 -0.5876100917941478 0.35105935571108887
+                        0.42090050637071563 0.78928645215660898 0.44706784740004296
+                        -0.53978797221454167 -0.17816081629726035 0.8227318327309372</Rotation>
+                    <Translation>-0.38144740199186261 -0.61004484436310658 -0.44890629664282733</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器上段6-1" uid="执行器上段6-1" entityUid="执行器上段6*:*默认">
+                <Transform>
+                    <Rotation>0.37690790382841821 -0.72427595727500649 0.57737749327891252
+                        0.90591185278470254 0.41816091890029694 -0.066821859362388492
+                        -0.19303923698527037 0.54823880163468219 0.81373832978809124</Rotation>
+                    <Translation>-0.72100914857463949 0.02713177817111722 -0.4500017669658557</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器下段4-1" uid="执行器下段4-1" entityUid="执行器下段4*:*默认">
+                <Transform>
+                    <Rotation>1.8850684359826564e-14 0.97496891800966989 0.22234119931999502
+                        0.84264328425412127 0.11972455171946569 -0.52499364493010914
+                        -0.53847218637681593 0.18735431842001068 -0.82155101111735285</Rotation>
+                    <Translation>0.33995538427571315 -0.63605677455255827 -0.4518540607120935</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器上段1-1" uid="执行器上段1-1" entityUid="执行器上段1*:*默认">
+                <Transform>
+                    <Rotation>-1.1680828288125611e-14 0.97689805032663157 0.21370587092549859
+                        -0.86753865569422417 0.10629083831581849 -0.48587955150055362
+                        -0.49736976272815248 -0.18539810397667608 0.84749682133067328</Rotation>
+                    <Translation>-0.3404017496578618 0.64237166518699873 -0.45057092663102122</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="虎克铰零件5-1" uid="虎克铰零件5-1" entityUid="虎克铰零件5*:*默认">
+                <Transform>
+                    <Rotation>1 1.3751538576547488e-14 -7.8227109663862419e-15
+                        -1.5820771187667718e-14 0.8675386556942245 -0.49736976272815192 0
+                        0.49736976272815192 0.8675386556942245</Rotation>
+                    <Translation>-0.34921900341763312 0.67236588125987184 -0.50288842528178734</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="执行器上段3-1" uid="执行器上段3-1" entityUid="执行器上段3*:*默认">
+                <Transform>
+                    <Rotation>0.39951381716192275 0.75366294722816352 0.52190120891991443
+                        0.89840903073813216 -0.43512750546044726 -0.059373962979897832
+                        0.1823456152060684 0.49260147783692942 -0.85093704858114716</Rotation>
+                    <Translation>0.37238173237929983 0.017300273783956967 0.12375373319425841</Translation>
+                </Transform>
+            </Instance>
+        </InstanceTree>
+        <Constraints>
+            <Parallel name="平行2">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>固定套筒-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Parallel>
+            <Concentric name="同心4">
+                <ConstraintGeometry geomType="circle">
+                    <InstancePath>
+                        <Uid>直线机构-1</Uid>
+                    </InstancePath>
+                    <Position>0.020999999999999998 0 0.0076257021541299846</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="circle">
+                    <InstancePath>
+                        <Uid>喷枪-1</Uid>
+                    </InstancePath>
+                    <Position>-0.0040000000000000001 0 0</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合7">
+                <ConstraintGeometry geomType="circle">
+                    <InstancePath>
+                        <Uid>直线机构-1</Uid>
+                    </InstancePath>
+                    <Position>0.020999999999999998 0 0.0076257021541299846</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>喷枪-1</Uid>
+                    </InstancePath>
+                    <Position>-0.0040000000000000001 0 0</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合11">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>上动平台-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 -0.0074999999999999997</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>工件-2</Uid>
+                    </InstancePath>
+                    <Position>-0.097079030782007802 -0.076070765517190123 -0.42549814445599937</Position>
+                    <Axis>0 -0.22665130743685513 -0.97397596727905156</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心5">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>上动平台-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 -0.02</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>工件-2</Uid>
+                    </InstancePath>
+                    <Position>-0.097079030782007802 -0.076070765517190123 -0.42549814445599937</Position>
+                    <Axis>0 0.22665130743685516 0.97397596727905145</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Distance name="距离2">
+                <ConstraintGeometry geomType="point">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="point">
+                    <InstancePath>
+                        <Uid>2.0</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                </ConstraintGeometry>
+            </Distance>
+            <Distance name="距离5">
+                <ConstraintGeometry geomType="point">
+                    <InstancePath>
+                        <Uid>固定套筒-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="point">
+                    <InstancePath>
+                        <Uid>2.0</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                </ConstraintGeometry>
+            </Distance>
+            <Coincident name="重合44">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>固定套筒-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000004 -0.39000000000000001 0.020000000000000004</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>直线机构-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000004 0.019999999999999997 0.5</Position>
+                    <Axis>1 -1.7347234759768071e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合20">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0.73192936071409687 -0.052261159691779302 0.13</Position>
+                    <Axis>0.50000000000000577 0.86602540378443538 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件1-2</Uid>
+                    </InstancePath>
+                    <Position>0.028440000000000076 -1.1102230246251565e-16 0</Position>
+                    <Axis>1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心8">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0.72686936071409636 -0.061025336778077789 0.11499999999999999</Position>
+                    <Axis>0.50000000000001843 0.86602540378442816 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件1-2</Uid>
+                    </InstancePath>
+                    <Position>0.033440000000000081 0 0.019999999999999907</Position>
+                    <Axis>-1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合30">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>固定套筒-1</Uid>
+                    </InstancePath>
+                    <Position>-0.019999999999999997 -0.39000000000000001 -0.02</Position>
+                    <Axis>1 0 1.7347234759768071e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>直线机构-1</Uid>
+                    </InstancePath>
+                    <Position>-0.02 -0.019999999999999997 0.5</Position>
+                    <Axis>-1.7347234759768071e-16 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合31">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0.32070518843273077 -0.66000000000000236 0.13</Position>
+                    <Axis>1 -7.4014868308343712e-15 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.028440000000000021 0 0</Position>
+                    <Axis>-1 -1.0675221390625325e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心9">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0.31058518843273047 -0.66000000000000192 0.11499999999999999</Position>
+                    <Axis>1 -2.3129646346357451e-14 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.033440000000000025 0 0.020000000000000129</Position>
+                    <Axis>1 1.0675221390625325e-16 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合32">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>-0.41122417228135905 -0.607738840308226 0.13</Position>
+                    <Axis>0.50000000000000211 -0.86602540378443749 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件3-1</Uid>
+                    </InstancePath>
+                    <Position>-0.028440000000000021 0 0</Position>
+                    <Axis>-1 -1.3036125812236881e-16 2.4229451037050476e-16</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心10">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>-0.41628417228135906 -0.59897466322192716 0.11499999999999999</Position>
+                    <Axis>0.49999999999999017 -0.86602540378444448 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件3-1</Uid>
+                    </InstancePath>
+                    <Position>-0.033440000000000025 -1.1102230246251565e-16 0.019999999999999907</Position>
+                    <Axis>1 1.3036125812236881e-16 -2.4229451037050476e-16</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合34">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>-0.73192936071409731 0.052261159691774028 0.13</Position>
+                    <Axis>-0.4999999999999985 -0.86602540378443948 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件4-1</Uid>
+                    </InstancePath>
+                    <Position>-0.028440000000000076 1.1102230246251565e-16 0</Position>
+                    <Axis>-1 0 1.1134410807519243e-16</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合35">
+                <ConstraintGeometry geomType="circle">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>-0.73042936071409725 0.054859235903127038 0.11499999999999999</Position>
+                    <Axis>-0.50000000000000411 -0.86602540378443638 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件4-1</Uid>
+                    </InstancePath>
+                    <Position>-0.033440000000000025 0 0.020000000000000018</Position>
+                    <Axis>1 0 -1.1134410807519246e-16</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合36">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>-0.32070518843273538 0.66000000000000003 0.13</Position>
+                    <Axis>-1 1.8503717077085857e-15 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件5-1</Uid>
+                    </InstancePath>
+                    <Position>0.028440000000000021 -1.1102230246251565e-16 0</Position>
+                    <Axis>1 1.0675221390625818e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心11">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>-0.31058518843273503 0.6599999999999997 0.11499999999999999</Position>
+                    <Axis>-1 1.5728159515523066e-14 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件5-1</Uid>
+                    </InstancePath>
+                    <Position>0.033440000000000025 0 0.020000000000000018</Position>
+                    <Axis>-1 -1.0675221390625819e-16 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合37">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0.41122417228136326 0.60773884030822312 0.13</Position>
+                    <Axis>-0.49999999999999772 0.86602540378443993 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件6-1</Uid>
+                    </InstancePath>
+                    <Position>0.028440000000000021 0 0</Position>
+                    <Axis>0.99999999999999989 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心12">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>下定平台-2</Uid>
+                    </InstancePath>
+                    <Position>0.41628417228136316 0.59897466322192416 0.11499999999999999</Position>
+                    <Axis>-0.49999999999998318 0.86602540378444848 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件6-1</Uid>
+                    </InstancePath>
+                    <Position>0.033440000000000025 -1.1102230246251565e-16 0.019999999999999907</Position>
+                    <Axis>-0.99999999999999989 0 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合38">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件5-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.042500000000000038 -1.1102230246251565e-16</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段1-1</Uid>
+                    </InstancePath>
+                    <Position>0.042499999999999982 0.019999999999999962 0.05600000000000005</Position>
+                    <Axis>-1 1.6653345369377348e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心13">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件5-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.057500000000000107 0.020000000000000018</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>执行器下段1-1</Uid>
+                    </InstancePath>
+                    <Position>0.054500000000000048 0 0.041000000000000147</Position>
+                    <Axis>-1 -3.4694469519536142e-16 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合39">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件6-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.042499999999999982 -1.1102230246251565e-16</Position>
+                    <Axis>0 -1 1.1102230246251565e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.042499999999999982 0.019999999999999907 0.05600000000000005</Position>
+                    <Axis>1 1.1102230246251565e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心14">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件6-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.057500000000000051 0.019999999999999907</Position>
+                    <Axis>0 1 -1.1102230246251565e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>执行器下段2-1</Uid>
+                    </InstancePath>
+                    <Position>0.054500000000000104 0 0.041000000000000147</Position>
+                    <Axis>-1 -3.6082248300317588e-16 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合40">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件1-2</Uid>
+                    </InstancePath>
+                    <Position>0 0.042499999999999982 0</Position>
+                    <Axis>0 1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段3-1</Uid>
+                    </InstancePath>
+                    <Position>0.042500000000000093 0.019999999999999962 0.05600000000000005</Position>
+                    <Axis>-1 2.2204460492503131e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心15">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件1-2</Uid>
+                    </InstancePath>
+                    <Position>0 0.057499999999999996 0.020000000000000018</Position>
+                    <Axis>0 -1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>执行器下段3-1</Uid>
+                    </InstancePath>
+                    <Position>0.054500000000000048 0 0.041000000000000147</Position>
+                    <Axis>-1 -3.0531133177191805e-16 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合41">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件2-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.042500000000000038 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段4-1</Uid>
+                    </InstancePath>
+                    <Position>-0.042499999999999982 0.020000000000000073 0.055999999999999939</Position>
+                    <Axis>1.0000000000000002 2.0816681711721685e-16 -1.6653345369377348e-16</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心16">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件2-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.057499999999999996 0.020000000000000018</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>执行器下段4-1</Uid>
+                    </InstancePath>
+                    <Position>0.054499999999999882 0 0.041000000000000036</Position>
+                    <Axis>-1 -3.8857805861880479e-16 2.2204460492503131e-16</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合42">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件3-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.042500000000000149 0</Position>
+                    <Axis>0 -1.0000000000000002 2.2204460492503131e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段5-1</Uid>
+                    </InstancePath>
+                    <Position>-0.042500000000000038 0.019999999999999962 0.055999999999999939</Position>
+                    <Axis>1 1.8041124150158794e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心17">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件3-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.057500000000000162 0.020000000000000018</Position>
+                    <Axis>0 1.0000000000000002 -2.2204460492503131e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>执行器下段5-1</Uid>
+                    </InstancePath>
+                    <Position>0.054499999999999993 0 0.040999999999999925</Position>
+                    <Axis>-1 -3.6082248300317588e-16 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合43">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>虎克铰零件4-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.042499999999999982 0</Position>
+                    <Axis>0 -1 1.6653345369377348e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段6-1</Uid>
+                    </InstancePath>
+                    <Position>-0.042499999999999927 0.01999999999999999 0.05600000000000005</Position>
+                    <Axis>1.0000000000000004 1.9428902930940239e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心18">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>虎克铰零件4-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.057499999999999996 0.019999999999999907</Position>
+                    <Axis>0 1 -1.6653345369377348e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>执行器下段6-1</Uid>
+                    </InstancePath>
+                    <Position>0.054500000000000048 0 0.041000000000000036</Position>
+                    <Axis>-1.0000000000000002 -3.7470027081099033e-16 1.6653345369377348e-16</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合45">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段1-1</Uid>
+                    </InstancePath>
+                    <Position>0.019999999999999907 -0.019999999999999962 -0.60000000000000009</Position>
+                    <Axis>0 1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段1-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000018 0.019999999999999907 0.66999999999999993</Position>
+                    <Axis>0 1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合46">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段1-1</Uid>
+                    </InstancePath>
+                    <Position>-0.019999999999999962 0.020000000000000046 -0.60000000000000009</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段1-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000018 0.019999999999999907 0.66999999999999993</Position>
+                    <Axis>-1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合47">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段2-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000018 0.01999999999999999 -0.59999999999999998</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段2-1</Uid>
+                    </InstancePath>
+                    <Position>0.019999999999999879 0.020000000000000073 0.67000000000000004</Position>
+                    <Axis>1.0000000000000002 1.5265566588595902e-16 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合48">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段2-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000018 0.01999999999999999 -0.59999999999999998</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000129 0.020000000000000073 0.67000000000000015</Position>
+                    <Axis>1.5265566588595902e-16 1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合49">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段3-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000018 0.020000000000000018 -0.59999999999999976</Position>
+                    <Axis>1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段3-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000018 -0.020000000000000073 0.67000000000000015</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合50">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段3-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000018 0.01999999999999999 -0.59999999999999976</Position>
+                    <Axis>0 -1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段3-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000018 0.019999999999999851 0.67000000000000015</Position>
+                    <Axis>-1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合51">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段4-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000073 0.020000000000000046 -0.60000000000000009</Position>
+                    <Axis>-1.0000000000000002 0 1.6653345369377348e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段4-1</Uid>
+                    </InstancePath>
+                    <Position>-0.01999999999999999 0.020000000000000018 0.66999999999999993</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合52">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段4-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000129 -0.019999999999999934 -0.59999999999999998</Position>
+                    <Axis>0 1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段4-1</Uid>
+                    </InstancePath>
+                    <Position>-0.01999999999999999 0.020000000000000018 0.66999999999999993</Position>
+                    <Axis>-1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合53">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段5-1</Uid>
+                    </InstancePath>
+                    <Position>-0.019999999999999962 0.020000000000000046 -0.59999999999999998</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段5-1</Uid>
+                    </InstancePath>
+                    <Position>-0.019999999999999962 0.020000000000000018 0.66999999999999982</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合54">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段5-1</Uid>
+                    </InstancePath>
+                    <Position>0.019999999999999962 0.020000000000000046 -0.59999999999999998</Position>
+                    <Axis>0 -1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段5-1</Uid>
+                    </InstancePath>
+                    <Position>-0.019999999999999962 -0.01999999999999999 0.66999999999999982</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合55">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段6-1</Uid>
+                    </InstancePath>
+                    <Position>0.020000000000000073 0.019999999999999962 -0.60000000000000009</Position>
+                    <Axis>0 -1.0000000000000002 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段6-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000073 0.020000000000000073 0.67000000000000004</Position>
+                    <Axis>-1.0000000000000002 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合56">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器下段6-1</Uid>
+                    </InstancePath>
+                    <Position>-0.019999999999999851 0.019999999999999962 -0.60000000000000009</Position>
+                    <Axis>1.0000000000000002 0 -1.1102230246251565e-16</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>执行器上段6-1</Uid>
+                    </InstancePath>
+                    <Position>-0.020000000000000073 0.020000000000000073 0.67000000000000004</Position>
+                    <Axis>0 1.0000000000000002 2.2204460492503131e-16</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+        </Constraints>
+    </RootAssembly>
+    <Assemblies>
+    </Assemblies>
+    <Parts>
+        <Part name="工件" uid="工件*:*默认" version="508">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="工件.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>67.99404789093083</Mass>
+                <CenterOfMass>-0.097155801344986997 -0.05711973980486492 -0.3683582620407041</CenterOfMass>
+                <Inertia>4.1914014738076117 2.8440767122440151 5.3277928299413038
+                    0.48817429522235772 0.0012552102880584522 0.0008169191095596819</Inertia>
+            </MassProperties>
+            <GeometryFile name="工件_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.59999999999999998" b="0" a="1" />
+                <Diffuse r="1" g="0.59999999999999998" b="0" a="1" />
+                <Specular r="0.88" g="0.52800000000000002" b="0" a="1" />
+                <Emissive r="0.20999999999999999" g="0.126" b="0" a="1" />
+                <Shininess>0.20999999999999999</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="固定套筒" uid="固定套筒*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="固定套筒.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.85217189045158404</Mass>
+                <CenterOfMass>0 -0.13559135409466644 0</CenterOfMass>
+                <Inertia>0.015282141888559147 0.0016618202652453234 0.01580482333877941 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="固定套筒_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="虎克铰零件1" uid="虎克铰零件1*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="虎克铰零件1.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.17364905975943634</Mass>
+                <CenterOfMass>0 0 0.019999999999999997</CenterOfMass>
+                <Inertia>0.00011974119858292534 6.4311742703417648e-05 0.00014283046002204258 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="虎克铰零件1_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="虎克铰零件2" uid="虎克铰零件2*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="虎克铰零件2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.17364905975943631</Mass>
+                <CenterOfMass>0 0 0.019999999999999997</CenterOfMass>
+                <Inertia>0.00011974119858292534 6.4311742703417648e-05 0.00014283046002204258 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="虎克铰零件2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="虎克铰零件3" uid="虎克铰零件3*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="虎克铰零件3.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.17364905975943634</Mass>
+                <CenterOfMass>0 0 0.019999999999999997</CenterOfMass>
+                <Inertia>0.00011974119858292536 6.4311742703417648e-05 0.00014283046002204258 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="虎克铰零件3_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="虎克铰零件4" uid="虎克铰零件4*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="虎克铰零件4.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.17364905975943634</Mass>
+                <CenterOfMass>0 0 0.019999999999999997</CenterOfMass>
+                <Inertia>0.00011974119858292534 6.4311742703417648e-05 0.00014283046002204258 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="虎克铰零件4_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="虎克铰零件5" uid="虎克铰零件5*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="虎克铰零件5.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.17364905975943634</Mass>
+                <CenterOfMass>0 0 0.019999999999999997</CenterOfMass>
+                <Inertia>0.00011974119858292536 6.4311742703417648e-05 0.00014283046002204258 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="虎克铰零件5_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="虎克铰零件6" uid="虎克铰零件6*:*默认" version="136">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="虎克铰零件6.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.17364905975943634</Mass>
+                <CenterOfMass>0 0 0.019999999999999997</CenterOfMass>
+                <Inertia>0.00011974119858292534 6.4311742703417648e-05 0.00014283046002204258 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="虎克铰零件6_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="喷枪" uid="喷枪*:*默认" version="135">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="喷枪.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.0058387512257224352</Mass>
+                <CenterOfMass>0 1.2838524085612767e-08 0.05202596709840214</CenterOfMass>
+                <Inertia>6.5272168062133178e-06 6.5272214534175235e-06 4.8002295384856163e-08
+                    2.6965143223508485e-12 0 -9.0014397859785846e-12</Inertia>
+            </MassProperties>
+            <GeometryFile name="喷枪_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="上动平台" uid="上动平台*:*默认" version="187">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="上动平台.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>7.0422962398277988</Mass>
+                <CenterOfMass>0 0 0</CenterOfMass>
+                <Inertia>0.42656377129282924 0.42656377129282913 0.85272810619317263 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="上动平台_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="下定平台" uid="下定平台*:*默认" version="472">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="下定平台.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>52.64618400897232</Mass>
+                <CenterOfMass>0 0 0.016110907233746519</CenterOfMass>
+                <Inertia>7.4191473604991831 7.4191473604991822 14.825865439973056 0 0
+                    -1.5507121856306912e-15</Inertia>
+            </MassProperties>
+            <GeometryFile name="下定平台_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="直线机构" uid="直线机构*:*默认" version="155">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="直线机构.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.80007853981633947</Mass>
+                <CenterOfMass>2.0123852282485701e-06 0 0.2499762072947955</CenterOfMass>
+                <Inertia>0.016777947707255273 0.01677798022604415 0.00021336683386991338 0
+                    3.9020036535377796e-07 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="直线机构_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器上段1" uid="执行器上段1*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器上段1.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.0720000000000001</Mass>
+                <CenterOfMass>0 0 0.33500000000000002</CenterOfMass>
+                <Inertia>0.040244666666666679 0.040244666666666679 0.00028586666666666671 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器上段1_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器上段2" uid="执行器上段2*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器上段2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.0720000000000001</Mass>
+                <CenterOfMass>0 0 0.33500000000000002</CenterOfMass>
+                <Inertia>0.040244666666666679 0.040244666666666679 0.00028586666666666671 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器上段2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器上段3" uid="执行器上段3*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器上段3.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.0720000000000001</Mass>
+                <CenterOfMass>0 0 0.33500000000000002</CenterOfMass>
+                <Inertia>0.040244666666666679 0.040244666666666679 0.00028586666666666671 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器上段3_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器上段4" uid="执行器上段4*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器上段4.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.0720000000000001</Mass>
+                <CenterOfMass>0 0 0.33500000000000002</CenterOfMass>
+                <Inertia>0.040244666666666679 0.040244666666666679 0.00028586666666666671 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器上段4_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器上段5" uid="执行器上段5*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器上段5.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.0720000000000001</Mass>
+                <CenterOfMass>0 0 0.33500000000000002</CenterOfMass>
+                <Inertia>0.040244666666666679 0.040244666666666679 0.00028586666666666671 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器上段5_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器上段6" uid="执行器上段6*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器上段6.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.0720000000000001</Mass>
+                <CenterOfMass>0 0 0.33500000000000002</CenterOfMass>
+                <Inertia>0.040244666666666679 0.040244666666666679 0.00028586666666666671 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器上段6_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器下段1" uid="执行器下段1*:*默认" version="142">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器下段1.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.58730166394730066</Mass>
+                <CenterOfMass>0 0 -0.27519969668034905</CenterOfMass>
+                <Inertia>0.020530412806061181 0.020562291011809009 0.00043148238955203425 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器下段1_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器下段2" uid="执行器下段2*:*默认" version="142">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器下段2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.58730166394730077</Mass>
+                <CenterOfMass>0 0 -0.27519969668034899</CenterOfMass>
+                <Inertia>0.020530412806061188 0.020562291011809015 0.00043148238955203414 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器下段2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器下段3" uid="执行器下段3*:*默认" version="142">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器下段3.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.58730166394730066</Mass>
+                <CenterOfMass>0 0 -0.27519969668034905</CenterOfMass>
+                <Inertia>0.020530412806061191 0.020562291011809019 0.0004314823895520342 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器下段3_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器下段4" uid="执行器下段4*:*默认" version="142">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器下段4.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.58730166394730077</Mass>
+                <CenterOfMass>0 0 -0.27519969668034905</CenterOfMass>
+                <Inertia>0.020530412806061188 0.020562291011809015 0.00043148238955203431 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器下段4_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器下段5" uid="执行器下段5*:*默认" version="142">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器下段5.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.58730166394730066</Mass>
+                <CenterOfMass>0 0 -0.27519969668034905</CenterOfMass>
+                <Inertia>0.020530412806061177 0.020562291011809005 0.0004314823895520342 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器下段5_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="执行器下段6" uid="执行器下段6*:*默认" version="142">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="执行器下段6.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.58730166394730077</Mass>
+                <CenterOfMass>0 0 -0.27519969668034905</CenterOfMass>
+                <Inertia>0.020530412806061188 0.020562291011809015 0.0004314823895520342 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="执行器下段6_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Diffuse r="0.792156862745098" g="0.81960784313725488" b="0.93333333333333335" a="1" />
+                <Specular r="0.396078431372549" g="0.40980392156862744" b="0.46666666666666667"
+                    a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+    </Parts>
+</SimscapeMultibodyImportXML>

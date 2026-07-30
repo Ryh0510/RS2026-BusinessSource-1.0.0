@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<SimMechanicsImportXML version="1.0" xmlns="urn:mathworks:simmechanics:import" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<Created by="" on="03/31/16||15:42:49" using="SimMechanics Link Version 4.3" from="SolidWorks 21.5.0"/>
+<ModelUnits mass="kilogram" length="millimeter"/>
+<DataUnits mass="kilogram" length="meter"/>
+<RootAssembly name="scu_quadrotor" uid="scu_quadrotor" version="128">
+<AssemblyFile name="scu_quadrotor.SLDASM" type="SolidWorks Assembly"/>
+<InstanceTree>
+<Instance name="body-1" uid="body-1" grounded="true" entityUid="body*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+<Instance name="righdown-1" uid="righdown-1" entityUid="righdown*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 -0.000297491</Translation>
+</Transform>
+</Instance>
+<Instance name="leftdown-1" uid="leftdown-1" entityUid="leftdown*:*默认">
+<Transform>
+<Rotation>0.983747 -0.179562 -1.0994e-014 0.179562 0.983747 -2.02188e-015 1.11784e-014 0 1</Rotation>
+<Translation>-0.00139368 -0.00193791 -0.000297491</Translation>
+</Transform>
+</Instance>
+<Instance name="rightup-1" uid="rightup-1" entityUid="rightup*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 -0.000297491</Translation>
+</Transform>
+</Instance>
+<Instance name="leftup-1" uid="leftup-1" entityUid="leftup*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>-7.97973e-016 0 -0.000297491</Translation>
+</Transform>
+</Instance>
+</InstanceTree>
+<Constraints>
+<Concentric name="同心1">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.00975511 -0.00897276 -0.00051668</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>leftdown-1</Uid>
+</InstancePath>
+<Position>0.0097044 -0.00892242 8.68877e-005</Position>
+<Axis>-1.11784e-014 0 -1</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合1">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.00496744 -0.00384959 -0.000606415</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>leftdown-1</Uid>
+</InstancePath>
+<Position>0.0061828 -0.00540082 -0.000308924</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心2">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.00970438 0.0883478 -0.00051668</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>leftup-1</Uid>
+</InstancePath>
+<Position>0.00970438 0.0883478 8.68877e-005</Position>
+<Axis>-3.36097e-014 2.23866e-014 -1</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合2">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.0148275 0.0931354 -0.000606415</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>leftup-1</Uid>
+</InstancePath>
+<Position>0.00618278 0.0848262 -0.000308924</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心4">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.107019 -0.00897276 -0.00051668</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>righdown-1</Uid>
+</InstancePath>
+<Position>0.107019 -0.00897276 8.68877e-005</Position>
+<Axis>0 -1.11784e-014 -1</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合3">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.111807 -0.00384959 -0.000606415</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>righdown-1</Uid>
+</InstancePath>
+<Position>0.103498 -0.0124944 -0.000308924</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心5">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.10707 0.0883478 -0.00051668</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>rightup-1</Uid>
+</InstancePath>
+<Position>0.10707 0.0883478 8.68877e-005</Position>
+<Axis>1.11784e-014 0 -1</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合4">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>body-1</Uid>
+</InstancePath>
+<Position>0.101947 0.0931354 -0.000606415</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>rightup-1</Uid>
+</InstancePath>
+<Position>0.110592 0.0848262 -0.000308924</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Coincident>
+</Constraints>
+</RootAssembly>
+<Assemblies>
+</Assemblies>
+<Parts>
+<Part name="body" uid="body*:*默认" version="107">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="body.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.0605898</Mass>
+<CenterOfMass>0.0585865 0.0409305 -0.0154583</CenterOfMass>
+<Inertia>3.26902e-005 2.82653e-005 4.70473e-005 1.71981e-006 -3.62406e-007 -2.35197e-007</Inertia>
+</MassProperties>
+<GeometryFile name="body_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.894118" g="0.909804" b="0.929412" a="1"/>
+<Diffuse r="0.894118" g="0.909804" b="0.929412" a="1"/>
+<Specular r="0.447059" g="0.454902" b="0.464706" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="leftdown" uid="leftdown*:*默认" version="107">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="leftdown.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.000487806</Mass>
+<CenterOfMass>0.00970307 -0.00892399 0.00212467</CenterOfMass>
+<Inertia>1.15856e-007 9.57155e-008 2.10111e-007 -4.90302e-012 3.91444e-012 -1.02061e-007</Inertia>
+</MassProperties>
+<GeometryFile name="leftdown_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.964706" g="0.87451" b="0.6" a="1"/>
+<Diffuse r="0.964706" g="0.87451" b="0.6" a="1"/>
+<Specular r="0.675294" g="0.612157" b="0.42" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="leftup" uid="leftup*:*默认" version="107">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="leftup.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.000487786</Mass>
+<CenterOfMass>0.00969917 0.0883454 0.00212459</CenterOfMass>
+<Inertia>1.15851e-007 9.57103e-008 2.10102e-007 -4.25485e-013 -1.34078e-012 1.02056e-007</Inertia>
+</MassProperties>
+<GeometryFile name="leftup_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.564706" g="0.564706" b="0.584314" a="1"/>
+<Diffuse r="0.564706" g="0.564706" b="0.584314" a="1"/>
+<Specular r="0.395294" g="0.395294" b="0.40902" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="righdown" uid="righdown*:*默认" version="108">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="righdown.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.000487808</Mass>
+<CenterOfMass>0.107017 -0.00897856 0.00212468</CenterOfMass>
+<Inertia>9.57155e-008 1.15856e-007 2.10111e-007 -2.14131e-012 -1.10842e-012 1.02061e-007</Inertia>
+</MassProperties>
+<GeometryFile name="righdown_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.564706" g="0.564706" b="0.584314" a="1"/>
+<Diffuse r="0.564706" g="0.564706" b="0.584314" a="1"/>
+<Specular r="0.395294" g="0.395294" b="0.40902" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="rightup" uid="rightup*:*默认" version="107">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="rightup.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0.000487808</Mass>
+<CenterOfMass>0.107076 0.0883449 0.00212468</CenterOfMass>
+<Inertia>1.15856e-007 9.57155e-008 2.10111e-007 -1.10854e-012 2.1416e-012 -1.02061e-007</Inertia>
+</MassProperties>
+<GeometryFile name="rightup_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.964706" g="0.87451" b="0.6" a="1"/>
+<Diffuse r="0.964706" g="0.87451" b="0.6" a="1"/>
+<Specular r="0.675294" g="0.612157" b="0.42" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+</Parts>
+</SimMechanicsImportXML>

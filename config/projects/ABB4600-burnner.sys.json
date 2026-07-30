@@ -1,0 +1,189 @@
+{
+    "compat": {
+        "sourceVersion": 2,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "attachments": {
+            "assets": [],
+            "attachments": [],
+            "mountFrames": []
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "",
+                            "type": "SceneAll"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [
+                        {
+                            "excludeLinks": [],
+                            "includeLinks": [],
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotId": "ABB4600_urdf"
+                        }
+                    ],
+                    "type": "SceneAll"
+                }
+            ],
+            "objectModelSelections": [],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": []
+            },
+            "robotLinkModelSelections": [],
+            "robotOverrides": [],
+            "selectionSets": []
+        },
+        "objects": [],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": 0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "ABB4600_urdf",
+                "initialJoints": [],
+                "name": "ABB4600_urdf",
+                "sourcePath": "C:/Users/14390/Desktop/RS2026-BusinessSource-1.0.0/RS2026-BusinessSource-1.0.0/data/Spray420/ABB4600_urdf/urdf/ABB4600_urdf.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            },
+            {
+                "baseTransform": {
+                    "pitch": 1.5707963267948966,
+                    "roll": 0.0,
+                    "x": 0.2,
+                    "y": 0.53,
+                    "yaw": 1.5707963267948966,
+                    "z": -0.0
+                },
+                "collisionEnabled": true,
+                "id": "burnner",
+                "initialJoints": [],
+                "name": "burnner",
+                "sourcePath": "C:/Users/14390/Desktop/RS2026-BusinessSource-1.0.0/RS2026-BusinessSource-1.0.0/data/drake_models/burnner/urdf/burnner.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {},
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColorMode": "theme",
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {},
+            "attachments": {},
+            "objects": {},
+            "pointClouds": {},
+            "robots": {
+                "ABB4600_urdf": {
+                    "visible": true
+                },
+                "burnner": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

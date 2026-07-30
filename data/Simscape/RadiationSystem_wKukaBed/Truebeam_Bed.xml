@@ -1,0 +1,930 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<SimMechanicsImportXML version="1.0" xmlns="urn:mathworks:simmechanics:import"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Created by="" on="09/17/15||09:41:22" using="SimMechanics Link Version 4.3"
+        from="SolidWorks 21.5.0" />
+    <ModelUnits mass="kilogram" length="millimeter" />
+    <DataUnits mass="kilogram" length="meter" />
+    <RootAssembly name="Truebeam_Bed" uid="Truebeam_Bed" version="832">
+        <AssemblyFile name="Truebeam_Bed.SLDASM" type="SolidWorks Assembly" />
+        <InstanceTree>
+            <Instance name="zhongjian-1" uid="zhongjian-1" entityUid="zhongjian*:*默认">
+                <Transform>
+                    <Rotation>0.997945 -2.97214e-015 0.0640835 -0.0640809 -0.00902362 0.997904
+                        0.000578266 -0.999959 -0.00900507</Rotation>
+                    <Translation>0.863722 0.561073 0.900559</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="bottom-1" uid="bottom-1" entityUid="bottom*:*默认">
+                <Transform>
+                    <Rotation>-1.20133e-016 -1 1.07089e-016 0.00902362 -1.08169e-016 -0.999959
+                        0.999959 -1.19162e-016 0.00902362</Rotation>
+                    <Translation>0.676697 -0.00582816 0.191064</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="prt1-2" uid="prt1-2" grounded="true" entityUid="prt1*:*默认">
+                <Transform>
+                    <Rotation>-1.22465e-016 -2.22045e-016 1 1 0 1.22465e-016 0 1 0</Rotation>
+                    <Translation>0 0 0.905722</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="BASE-1" uid="BASE-1" grounded="true" entityUid="BASE*:*默认">
+                <Transform>
+                    <Rotation>-0.999874 0.0158929 -2.22045e-016 -0.0158929 -0.999874 0 -2.20434e-016
+                        1.03096e-016 1</Rotation>
+                    <Translation>2.79387 -0.964827 9.38486e-016</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="JOINT1-1" uid="JOINT1-1" entityUid="JOINT1*:*默认">
+                <Transform>
+                    <Rotation>-0.767763 -0.640734 -2.45943e-016 0.640734 -0.767763 2.19673e-016
+                        -3.29578e-016 0 1</Rotation>
+                    <Translation>2.79387 -0.964827 0.0016765</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="JOINT2-1" uid="JOINT2-1" entityUid="JOINT2*:*默认">
+                <Transform>
+                    <Rotation>0.342576 -0.640734 -0.687097 -0.285895 -0.767763 0.573414 -0.894933
+                        -2.72345e-016 -0.4462</Rotation>
+                    <Translation>2.96897 -1.11096 1.21054</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="JOINT3-1" uid="JOINT3-1" entityUid="JOINT3*:*默认">
+                <Transform>
+                    <Rotation>-0.696094 -0.640734 0.323904 0.580922 -0.767763 -0.270313 0.421881 0
+                        0.906651</Rotation>
+                    <Translation>1.86912 -0.193081 -0.964941</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="JOINT4-1" uid="JOINT4-1" entityUid="JOINT4*:*默认">
+                <Transform>
+                    <Rotation>-0.696094 -0.641975 0.321436 0.580922 -0.766717 -0.273266 0.421881
+                        -0.00348918 0.906645</Rotation>
+                    <Translation>1.87238 -0.189183 -0.964932</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="JOINT5-1" uid="JOINT5-1" entityUid="JOINT5*:*默认">
+                <Transform>
+                    <Rotation>-0.00710527 -0.641975 0.766692 0.00139858 -0.766717 -0.641983 0.999974
+                        -0.00348918 0.00634558</Rotation>
+                    <Translation>0.64388 0.836481 -0.314164</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="ASM6-2" uid="ASM6-2" entityUid="ASM6" rigid="true">
+                <Transform>
+                    <Rotation>-0.00710527 -0.01238 0.999898 0.00139858 -0.999923 -0.0123704 0.999974
+                        0.00131054 0.00712203</Rotation>
+                    <Translation>0.336049 0.00539386 -0.315189</Translation>
+                </Transform>
+                <Instance name="JOINT6-1" uid="JOINT6-1" entityUid="JOINT6*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="bed-1" uid="bed-1" entityUid="bed*:*默认">
+                    <Transform>
+                        <Rotation>0 1 0 0 0 1 1 0 0</Rotation>
+                        <Translation>1.093 -7.90165e-011 1.32</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="Dude-2-1" uid="Dude-2-1" entityUid="Dude-2*:*默认">
+                    <Transform>
+                        <Rotation>0 -0.0766518 0.997058 -1 3.79213e-016 0 -3.77455e-016 -0.997058
+                            -0.0766518</Rotation>
+                        <Translation>1.18594 -0.00185902 1.08653</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="a2-1" uid="a2-1" entityUid="a2" rigid="true">
+                <Transform>
+                    <Rotation>-1.07089e-016 0 1 0.999959 0.00902362 1.07169e-016 -0.00902362
+                        0.999959 0</Rotation>
+                    <Translation>0.111165 -0.00129026 0.762746</Translation>
+                </Transform>
+                <Instance name="prt2-1" uid="prt2-1" entityUid="prt2*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0 0 0</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="p2-1" uid="p2-1" entityUid="p2*:*默认">
+                    <Transform>
+                        <Rotation>-0.837169 0 -0.546944 0 -1 0 -0.546944 0 0.837169</Rotation>
+                        <Translation>4.82526e-008 0.532982 1.00484</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="fashe-1" uid="fashe-1" entityUid="fashe*:*默认">
+                <Transform>
+                    <Rotation>-0.444738 1.20374e-016 -0.895661 -0.895624 0.00902362 0.44472
+                        0.0080821 0.999959 -0.00401315</Rotation>
+                    <Translation>0.57 -0.32089 0.808514</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="a1-1" uid="a1-1" entityUid="a1" rigid="true">
+                <Transform>
+                    <Rotation>-0.908061 0 -0.418838 -0.418821 0.00902362 0.908024 0.00377944
+                        0.999959 -0.008194</Rotation>
+                    <Translation>1.12589 -0.745678 0.926874</Translation>
+                </Transform>
+                <Instance name="fashexian-1" uid="fashexian-1" entityUid="fashexian*:*默认">
+                    <Transform>
+                        <Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+                        <Translation>0.0881494 -0.0645225 0.3235</Translation>
+                    </Transform>
+                </Instance>
+                <Instance name="p1-1" uid="p1-1" entityUid="p1*:*默认">
+                    <Transform>
+                        <Rotation>2.77599e-015 -0.42784 0.903854 1 0 -3.0787e-015 1.33053e-015
+                            0.903854 0.42784</Rotation>
+                        <Translation>-0.140385 -0.0195225 0.329104</Translation>
+                    </Transform>
+                </Instance>
+            </Instance>
+            <Instance name="jieshou-1" uid="jieshou-1" entityUid="jieshou*:*默认">
+                <Transform>
+                    <Rotation>-0.634464 5.19707e-015 -0.772952 0.772921 -0.00902362 -0.634439
+                        -0.00697483 -0.999959 0.00572517</Rotation>
+                    <Translation>0.57 0.320888 1.00273</Translation>
+                </Transform>
+            </Instance>
+            <Instance name="jieshouban-1" uid="jieshouban-1" entityUid="jieshouban*:*默认">
+                <Transform>
+                    <Rotation>0.00977839 1.2509e-016 0.999952 -0.999911 -0.00902362 0.009778
+                        0.00902319 -0.999959 -8.82365e-005</Rotation>
+                    <Translation>1.11321 0.545052 0.900704</Translation>
+                </Transform>
+            </Instance>
+        </InstanceTree>
+        <Constraints>
+            <Coincident name="重合17">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>BASE-1</Uid>
+                    </InstancePath>
+                    <Position>-0.000557964 -0.0001152 0.3986</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT1-1</Uid>
+                    </InstancePath>
+                    <Position>0 -2.22045e-016 0.396923</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心8">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>BASE-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0.3986</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT1-1</Uid>
+                    </InstancePath>
+                    <Position>0 -2.22045e-016 0.410123</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合19">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT1-1</Uid>
+                    </InstancePath>
+                    <Position>0.26 -0.083 0.675</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT2-1</Uid>
+                    </InstancePath>
+                    <Position>0.26 -0.083 0.675</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心9">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT1-1</Uid>
+                    </InstancePath>
+                    <Position>0.26 -0.067 0.675</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT2-1</Uid>
+                    </InstancePath>
+                    <Position>0.26 -0.083 0.675</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Concentric name="同心10">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT2-1</Uid>
+                    </InstancePath>
+                    <Position>0.26 -0.107 1.355</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT3-1</Uid>
+                    </InstancePath>
+                    <Position>0.26 -0.107 1.355</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合20">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT2-1</Uid>
+                    </InstancePath>
+                    <Position>0.374712 -0.117 1.40078</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT3-1</Uid>
+                    </InstancePath>
+                    <Position>0.374712 -0.117 1.40078</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合21">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT3-1</Uid>
+                    </InstancePath>
+                    <Position>0.662 5.74873e-013 1.32</Position>
+                    <Axis>1 -1.06351e-016 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT4-1</Uid>
+                    </InstancePath>
+                    <Position>0.662 -2.22045e-016 1.32</Position>
+                    <Axis>-1 -1.17744e-016 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心11">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT3-1</Uid>
+                    </InstancePath>
+                    <Position>0.111 0 1.32</Position>
+                    <Axis>-1 1.06351e-016 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT4-1</Uid>
+                    </InstancePath>
+                    <Position>0.657 5.75096e-013 1.32</Position>
+                    <Axis>1 1.17744e-016 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合24">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT4-1</Uid>
+                    </InstancePath>
+                    <Position>0.93 -0.0465 1.32</Position>
+                    <Axis>-1.89964e-010 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT5-1</Uid>
+                    </InstancePath>
+                    <Position>0.93 -0.0465 1.32</Position>
+                    <Axis>1.89963e-010 1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心14">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT4-1</Uid>
+                    </InstancePath>
+                    <Position>0.93 0.061 1.32</Position>
+                    <Axis>1.17311e-016 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT5-1</Uid>
+                    </InstancePath>
+                    <Position>0.93 0.061 1.32</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合25">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>JOINT5-1</Uid>
+                    </InstancePath>
+                    <Position>1.076 -7.24438e-011 1.32</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>ASM6-2</Uid>
+                        <Uid>JOINT6-1</Uid>
+                    </InstancePath>
+                    <Position>1.076 -7.90165e-011 1.32</Position>
+                    <Axis>-1 0 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心15">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>JOINT5-1</Uid>
+                    </InstancePath>
+                    <Position>1.0524 -7.24436e-011 1.32</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>ASM6-2</Uid>
+                        <Uid>JOINT6-1</Uid>
+                    </InstancePath>
+                    <Position>1.076 -7.90165e-011 1.32</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Concentric name="同心16">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>prt1-2</Uid>
+                    </InstancePath>
+                    <Position>0 0 0.24</Position>
+                    <Axis>0 -2.22045e-016 1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>4.82526e-008 0.142982 0.0988354</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合26">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>prt1-2</Uid>
+                    </InstancePath>
+                    <Position>-0.420032 -0.0199282 0.3</Position>
+                    <Axis>0 -2.22045e-016 1</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.42 0.0829819 0.188835</Position>
+                    <Axis>0 0 -1</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心17">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.32 0.242882 0.458835</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>fashe-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.2 1.11022e-016</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合27">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.242882 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>fashe-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.2 1.11022e-016</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心18">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>fashe-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.0348528 -0.38</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>a1-1</Uid>
+                        <Uid>fashexian-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.1 -1.11022e-016</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合28">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>fashe-1</Uid>
+                    </InstancePath>
+                    <Position>-0.015 0.15 -0.03</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>a1-1</Uid>
+                        <Uid>fashexian-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.1 -1.11022e-016</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心19">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>0.32 0.242882 0.458835</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>jieshou-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.2 2.22045e-016</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合29">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>0 0.242882 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>jieshou-1</Uid>
+                    </InstancePath>
+                    <Position>0 0 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心20">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>jieshou-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.0348528 -0.38</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>zhongjian-1</Uid>
+                    </InstancePath>
+                    <Position>-1.11022e-016 -0.05 0</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合30">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>jieshou-1</Uid>
+                    </InstancePath>
+                    <Position>-0.015 0.05 -0.03</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>zhongjian-1</Uid>
+                    </InstancePath>
+                    <Position>-1.11022e-016 -0.05 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Concentric name="同心21">
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>jieshouban-1</Uid>
+                    </InstancePath>
+                    <Position>0 -0.07 0</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="cylinder">
+                    <InstancePath>
+                        <Uid>zhongjian-1</Uid>
+                    </InstancePath>
+                    <Position>0.25 -0.05 0</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+            </Concentric>
+            <Coincident name="重合31">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>jieshouban-1</Uid>
+                    </InstancePath>
+                    <Position>-1.11022e-016 -0.05 0</Position>
+                    <Axis>0 1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>zhongjian-1</Uid>
+                    </InstancePath>
+                    <Position>-1.11022e-016 -0.05 0</Position>
+                    <Axis>0 -1 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合32">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.225 -0.561099 0.488835</Position>
+                    <Axis>2.96638e-016 -1 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>bottom-1</Uid>
+                    </InstancePath>
+                    <Position>0.0106009 -0.0642912 0.219621</Position>
+                    <Axis>1 -1.1074e-016 0</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+            <Coincident name="重合33">
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>a2-1</Uid>
+                        <Uid>prt2-1</Uid>
+                    </InstancePath>
+                    <Position>-0.225 -0.561099 0.488835</Position>
+                    <Axis>1 0 0</Axis>
+                </ConstraintGeometry>
+                <ConstraintGeometry geomType="plane">
+                    <InstancePath>
+                        <Uid>bottom-1</Uid>
+                    </InstancePath>
+                    <Position>0.0076009 -0.271068 0.225621</Position>
+                    <Axis>0 0 1</Axis>
+                </ConstraintGeometry>
+            </Coincident>
+        </Constraints>
+    </RootAssembly>
+    <Assemblies>
+        <Assembly name="ASM6" uid="ASM6" version="172">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="ASM6.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+        <Assembly name="a2" uid="a2" version="130">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="a2.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+        <Assembly name="a1" uid="a1" version="150">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <AssemblyFile name="a1.SLDASM" type="SolidWorks Assembly" />
+        </Assembly>
+    </Assemblies>
+    <Parts>
+        <Part name="BASE" uid="BASE*:*默认" version="105">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="BASE.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>425.31</Mass>
+                <CenterOfMass>-0.00151902 -0.000111181 0.214492</CenterOfMass>
+                <Inertia>10.0199 10.0186 10.3178 0.000917302 0.0786398 0.000541638</Inertia>
+            </MassProperties>
+            <GeometryFile name="BASE_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.501961" g="0.501961" b="0.501961" a="1" />
+                <Diffuse r="0.351373" g="0.351373" b="0.351373" a="1" />
+                <Specular r="0.100392" g="0.100392" b="0.100392" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.2</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="Dude-2" uid="Dude-2*:*默认" version="182">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="Dude-2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>3420.53</Mass>
+                <CenterOfMass>-3.48929e-007 -0.24724 -0.0311136</CenterOfMass>
+                <Inertia>662.459 76.7147 706.909 56.6879 2.40208 -0.275849</Inertia>
+            </MassProperties>
+            <GeometryFile name="Dude-2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792157" g="0.819608" b="0.933333" a="1" />
+                <Diffuse r="0.792157" g="0.819608" b="0.933333" a="1" />
+                <Specular r="0.396078" g="0.409804" b="0.466667" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.4</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="JOINT1" uid="JOINT1*:*默认" version="105">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="JOINT1.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>137.395</Mass>
+                <CenterOfMass>0.11436 -0.0075835 0.542445</CenterOfMass>
+                <Inertia>3.0542 5.2518 4.22505 -0.152663 1.76563 -0.239871</Inertia>
+            </MassProperties>
+            <GeometryFile name="JOINT1_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.8" g="1" b="0.372549" a="1" />
+                <Diffuse r="0.8" g="1" b="0.372549" a="1" />
+                <Specular r="0.568" g="0.71" b="0.26451" a="1" />
+                <Emissive r="0.28" g="0.35" b="0.130392" a="1" />
+                <Shininess>0.4</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="JOINT2" uid="JOINT2*:*默认" version="105">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="JOINT2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>106.122</Mass>
+                <CenterOfMass>0.260237 -0.180552 0.996391</CenterOfMass>
+                <Inertia>4.67653 4.66219 0.464895 -0.207273 0.0026658 0.00189453</Inertia>
+            </MassProperties>
+            <GeometryFile name="JOINT2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.8" g="1" b="0.368627" a="1" />
+                <Diffuse r="0.8" g="1" b="0.368627" a="1" />
+                <Specular r="0.568" g="0.71" b="0.261725" a="1" />
+                <Emissive r="0.28" g="0.35" b="0.12902" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="JOINT3" uid="JOINT3*:*默认" version="105">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="JOINT3.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>84.469</Mass>
+                <CenterOfMass>0.327269 -0.0159797 1.33456</CenterOfMass>
+                <Inertia>0.410801 2.26935 2.15501 -0.0311255 -0.0667975 0.0760092</Inertia>
+            </MassProperties>
+            <GeometryFile name="JOINT3_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.8" g="1" b="0.368627" a="1" />
+                <Diffuse r="0.8" g="1" b="0.368627" a="1" />
+                <Specular r="0.568" g="0.71" b="0.261725" a="1" />
+                <Emissive r="0.28" g="0.35" b="0.12902" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="JOINT4" uid="JOINT4*:*默认" version="105">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="JOINT4.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>30.1757</Mass>
+                <CenterOfMass>0.794555 0.00563623 1.31999</CenterOfMass>
+                <Inertia>0.0693622 0.297021 0.302303 0.000175709 -2.38816e-005 0.0231488</Inertia>
+            </MassProperties>
+            <GeometryFile name="JOINT4_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.8" g="1" b="0.368627" a="1" />
+                <Diffuse r="0.8" g="1" b="0.368627" a="1" />
+                <Specular r="0.568" g="0.71" b="0.261725" a="1" />
+                <Emissive r="0.28" g="0.35" b="0.12902" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="JOINT5" uid="JOINT5*:*默认" version="105">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="JOINT5.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>14.0142</Mass>
+                <CenterOfMass>0.977693 -0.00694107 1.32004</CenterOfMass>
+                <Inertia>0.0671185 0.0491881 0.0955576 2.03889e-005 3.42108e-006 -0.00296688</Inertia>
+            </MassProperties>
+            <GeometryFile name="JOINT5_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.8" g="1" b="0.368627" a="1" />
+                <Diffuse r="0.8" g="1" b="0.368627" a="1" />
+                <Specular r="0.568" g="0.71" b="0.261725" a="1" />
+                <Emissive r="0.28" g="0.35" b="0.12902" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="JOINT6" uid="JOINT6*:*默认" version="108">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="JOINT6.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.354634</Mass>
+                <CenterOfMass>1.0813 -7.90165e-011 1.32</CenterOfMass>
+                <Inertia>0.000230704 0.000119518 0.000119518 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="JOINT6_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.501961" g="0.501961" b="0.501961" a="1" />
+                <Diffuse r="0.351373" g="0.351373" b="0.351373" a="1" />
+                <Specular r="0.100392" g="0.100392" b="0.100392" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.2</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="bed" uid="bed*:*默认" version="213">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="bed.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>2.93122</Mass>
+                <CenterOfMass>-0.105076 0.00677444 0</CenterOfMass>
+                <Inertia>0.0318579 0.442717 0.411479 0 0 -0.00561347</Inertia>
+            </MassProperties>
+            <GeometryFile name="bed_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.403922" g="0.890196" b="1" a="1" />
+                <Diffuse r="0.282745" g="0.623137" b="0.7" a="1" />
+                <Specular r="0.0807843" g="0.178039" b="0.2" a="1" />
+                <Emissive r="0.10098" g="0.222549" b="0.25" a="1" />
+                <Shininess>0.2</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="bottom" uid="bottom*:*默认" version="430">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="bottom.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.833984</Mass>
+                <CenterOfMass>0.00433726 -0.263684 0.00126836</CenterOfMass>
+                <Inertia>0.0290491 0.0123642 0.01669 -8.44107e-005 -4.58398e-007 7.02781e-005</Inertia>
+            </MassProperties>
+            <GeometryFile name="bottom_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.529412" g="0.447059" b="0" a="1" />
+                <Diffuse r="0.529412" g="0.447059" b="0" a="1" />
+                <Specular r="0.375882" g="0.317412" b="0" a="1" />
+                <Emissive r="0.185294" g="0.156471" b="0" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="fashe" uid="fashe*:*默认" version="570">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="fashe.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.67875</Mass>
+                <CenterOfMass>3.11594e-006 0.100051 -0.179752</CenterOfMass>
+                <Inertia>0.0421384 0.0354212 0.00752867 -1.62475e-005 -9.9164e-007 -2.3383e-007</Inertia>
+            </MassProperties>
+            <GeometryFile name="fashe_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.792157" g="0.819608" b="0.933333" a="1" />
+                <Diffuse r="0.792157" g="0.819608" b="0.933333" a="1" />
+                <Specular r="0.396078" g="0.409804" b="0.466667" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.4</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="fashexian" uid="fashexian*:*默认" version="248">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="fashexian.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>2.19583</Mass>
+                <CenterOfMass>-0.144823 0.0493935 -0.0365468</CenterOfMass>
+                <Inertia>0.00473667 0.0144426 0.0160603 6.74582e-005 0.000346605 0.00010035</Inertia>
+            </MassProperties>
+            <GeometryFile name="fashexian_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.796078" b="0.52549" a="1" />
+                <Diffuse r="1" g="0.796078" b="0.52549" a="1" />
+                <Specular r="0.5" g="0.398039" b="0.262745" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.4</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="jieshou" uid="jieshou*:*默认" version="572">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="jieshou.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.67875</Mass>
+                <CenterOfMass>3.11594e-006 0.100051 -0.179752</CenterOfMass>
+                <Inertia>0.0421384 0.0354212 0.00752867 -1.62475e-005 -9.9164e-007 -2.3383e-007</Inertia>
+            </MassProperties>
+            <GeometryFile name="jieshou_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.909804" b="0.811765" a="1" />
+                <Diffuse r="1" g="0.909804" b="0.811765" a="1" />
+                <Specular r="0.71" g="0.645961" b="0.576353" a="1" />
+                <Emissive r="0.35" g="0.318431" b="0.284118" a="1" />
+                <Shininess>0.3125</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="jieshouban" uid="jieshouban*:*默认" version="369">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="jieshouban.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>3.73594</Mass>
+                <CenterOfMass>0.105508 4.75309e-009 0.000212127</CenterOfMass>
+                <Inertia>0.0754783 0.0434594 0.0449459 2.83586e-009 -1.76535e-005 -8.79011e-010</Inertia>
+            </MassProperties>
+            <GeometryFile name="jieshouban_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="1" b="1" a="1" />
+                <Diffuse r="1" g="1" b="1" a="1" />
+                <Specular r="0.88" g="0.88" b="0.88" a="1" />
+                <Emissive r="0.21" g="0.21" b="0.21" a="1" />
+                <Shininess>0.21</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="p1" uid="p1*:*默认" version="178">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="p1.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>13.6673</Mass>
+                <CenterOfMass>0 0.582539 0</CenterOfMass>
+                <Inertia>0.417231 0.0614939 0.417231 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="p1_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.0941176" g="1" b="0.027451" a="0.17" />
+                <Diffuse r="0.0752941" g="0.8" b="0.0219608" a="0.17" />
+                <Specular r="0.0329412" g="0.35" b="0.00960784" a="0.17" />
+                <Emissive r="0.0941176" g="1" b="0.027451" a="0.17" />
+                <Shininess>0.2</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="p2" uid="p2*:*默认" version="175">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="p2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>0.0878927</Mass>
+                <CenterOfMass>0 0.686172 0</CenterOfMass>
+                <Inertia>0.00757591 1.32535e-006 0.00757591 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="p2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="0.164706" b="0.678431" a="0.2" />
+                <Diffuse r="0.7" g="0.115294" b="0.474902" a="0.2" />
+                <Specular r="0.2" g="0.0329412" b="0.135686" a="0.2" />
+                <Emissive r="1" g="0.164706" b="0.678431" a="0.2" />
+                <Shininess>0.2</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="prt1" uid="prt1*:*默认" version="1422">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="prt1.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>376.492</Mass>
+                <CenterOfMass>8.856e-008 -0.106308 0.147711</CenterOfMass>
+                <Inertia>82.0301 24.1395 100.622 0.1286 1.12187e-006 -6.58334e-006</Inertia>
+            </MassProperties>
+            <GeometryFile name="prt1_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.592157" g="0.701961" b="1" a="1" />
+                <Diffuse r="0.592157" g="0.701961" b="1" a="1" />
+                <Specular r="0.473725" g="0.561569" b="0.8" a="1" />
+                <Emissive r="0" g="0" b="0" a="1" />
+                <Shininess>0.4</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="prt2" uid="prt2*:*默认" version="9143">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="prt2.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>345.911</Mass>
+                <CenterOfMass>-3.62382e-005 0.239544 0.511613</CenterOfMass>
+                <Inertia>99.8205 34.0766 79.9976 21.2692 0.00104396 0.00162209</Inertia>
+            </MassProperties>
+            <GeometryFile name="prt2_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="0.592157" g="0.772549" b="1" a="1" />
+                <Diffuse r="0.592157" g="0.772549" b="1" a="1" />
+                <Specular r="0.296078" g="0.386275" b="0.5" a="1" />
+                <Emissive r="0.0888235" g="0.115882" b="0.15" a="1" />
+                <Shininess>0.4</Shininess>
+            </VisualProperties>
+        </Part>
+        <Part name="zhongjian" uid="zhongjian*:*默认" version="174">
+            <ModelUnits mass="kilogram" length="millimeter" />
+            <PartFile name="zhongjian.SLDPRT" type="SolidWorks Part" />
+            <MassProperties>
+                <Mass>1.93717</Mass>
+                <CenterOfMass>0.125 0 0</CenterOfMass>
+                <Inertia>0.0027548 0.0127826 0.0132564 0 0 0</Inertia>
+            </MassProperties>
+            <GeometryFile name="zhongjian_默认_sldprt.STL" type="STL" />
+            <VisualProperties>
+                <Ambient r="1" g="1" b="1" a="1" />
+                <Diffuse r="1" g="1" b="1" a="1" />
+                <Specular r="0.88" g="0.88" b="0.88" a="1" />
+                <Emissive r="0.21" g="0.21" b="0.21" a="1" />
+                <Shininess>0.21</Shininess>
+            </VisualProperties>
+        </Part>
+    </Parts>
+</SimMechanicsImportXML>

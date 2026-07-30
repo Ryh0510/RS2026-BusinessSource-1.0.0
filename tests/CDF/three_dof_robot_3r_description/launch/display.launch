@@ -1,0 +1,7 @@
+<launch>
+  <arg name="model" default="$(find three_dof_robot_3r_description)/urdf/three_dof_robot_3r.urdf"/>
+  <param name="robot_description" textfile="$(arg model)"/>
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find three_dof_robot_3r_description)/launch/display.rviz" required="true"/>
+</launch>

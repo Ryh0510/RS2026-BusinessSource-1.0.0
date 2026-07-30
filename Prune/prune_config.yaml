@@ -1,0 +1,48 @@
+project_root: ..
+
+rules:
+  # 1. 直接删除整个目录（递归）
+  - type: delete_tree
+    paths:
+      - cmake_bk
+      - cmake_upgrade
+      - Algorithm
+      - Common
+      - QtComponents
+      - SMRobotGen1
+      - SMRobotGen2
+      - Test
+      - Verification
+      - RadiationTherapySystem
+
+  # 2. 处理一个目录，仅保留指定文件
+  - type: keep_only_files
+    dir: license
+    keep:
+      - license.dat
+    recursive: true
+
+  - type: keep_only_files
+    dir: doc
+    keep:
+      - 仿真平台使用教程.pdf
+    recursive: true
+
+  - type: keep_only_files
+    dir: include
+    keep:
+      - config.h.in
+      - data_path.h.in
+    recursive: true
+
+  # 3. 删除指定的目录 / 文件（黑名单）
+  - type: remove_items
+    dirs:
+      - .
+    files:
+      - .gitignore
+      - .gitmodules
+      - LD_LIBRARY_PATH_setting.sh.in
+
+dry_run: true
+

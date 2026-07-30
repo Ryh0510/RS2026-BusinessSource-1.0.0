@@ -1,0 +1,649 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<SimMechanicsImportXML version="1.0" xmlns="urn:mathworks:simmechanics:import" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<Created by="" on="08/25/15||15:39:54" using="SimMechanics Link Version 4.3" from="SolidWorks 21.5.0"/>
+<ModelUnits mass="kilogram" length="millimeter"/>
+<DataUnits mass="kilogram" length="meter"/>
+<RootAssembly name="KR360zhiliao" uid="KR360zhiliao" version="286">
+<AssemblyFile name="KR360zhiliao.SLDASM" type="SolidWorks Assembly"/>
+<InstanceTree>
+<Instance name="R77-2" uid="R77-2" entityUid="R77" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R7-1" uid="R7-1" grounded="true" entityUid="R7*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+<Instance name="R8-1" uid="R8-1" entityUid="R8*:*默认">
+<Transform>
+<Rotation>0 1 0 -2.22045e-016 0 -1 -1 0 0</Rotation>
+<Translation>1.895 0 2.29</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="bianweiji1-1" uid="bianweiji1-1" grounded="true" entityUid="bianweiji1*:*默认">
+<Transform>
+<Rotation>-1 0 0 0 -7.21645e-016 1 0 1 0</Rotation>
+<Translation>2.5 1 0.006</Translation>
+</Transform>
+</Instance>
+<Instance name="R99-1" uid="R99-1" entityUid="R99" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>2.74382 1.04159 0.006</Translation>
+</Transform>
+<Instance name="bianweiqi2-1" uid="bianweiqi2-1" grounded="true" entityUid="bianweiqi2*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>-0.243823 -0.0415916 1</Translation>
+</Transform>
+</Instance>
+<Instance name="R9-1" uid="R9-1" grounded="true" entityUid="R9*:*默认">
+<Transform>
+<Rotation>1 0 0 0 0 1 0 -1 0</Rotation>
+<Translation>-0.243823 -1.09159 1</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="R11-2" uid="R11-2" grounded="true" entityUid="R11" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R1-1" uid="R1-1" grounded="true" entityUid="R1*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="R22-2" uid="R22-2" entityUid="R22" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R2-1" uid="R2-1" grounded="true" entityUid="R2*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="R33-2" uid="R33-2" entityUid="R33" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R3-1" uid="R3-1" grounded="true" entityUid="R3*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="R44-2" uid="R44-2" entityUid="R44" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R4-1" uid="R4-1" grounded="true" entityUid="R4*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="R55-2" uid="R55-2" entityUid="R55" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R5-1" uid="R5-1" grounded="true" entityUid="R5*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+</Instance>
+<Instance name="R66-2" uid="R66-2" entityUid="R66" rigid="true">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+<Instance name="R6-1" uid="R6-1" grounded="true" entityUid="R6*:*默认">
+<Transform>
+<Rotation>1 0 0 0 1 0 0 0 1</Rotation>
+<Translation>0 0 0</Translation>
+</Transform>
+</Instance>
+</Instance>
+</InstanceTree>
+<Constraints>
+<Coincident name="重合1">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R11-2</Uid>
+<Uid>R1-1</Uid>
+</InstancePath>
+<Position>-0.325672 0.303694 0.566</Position>
+<Axis>0 0 1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R22-2</Uid>
+<Uid>R2-1</Uid>
+</InstancePath>
+<Position>0 0 0.566</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心1">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R11-2</Uid>
+<Uid>R1-1</Uid>
+</InstancePath>
+<Position>0 0 0.566</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R22-2</Uid>
+<Uid>R2-1</Uid>
+</InstancePath>
+<Position>0 0 0.566</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合2">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R22-2</Uid>
+<Uid>R2-1</Uid>
+</InstancePath>
+<Position>0.432642 -0.054 0.62267</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R33-2</Uid>
+<Uid>R3-1</Uid>
+</InstancePath>
+<Position>0.500022 -0.054 0.955</Position>
+<Axis>0 1 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心2">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R22-2</Uid>
+<Uid>R2-1</Uid>
+</InstancePath>
+<Position>0.5 -0.054 1.045</Position>
+<Axis>0 1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R33-2</Uid>
+<Uid>R3-1</Uid>
+</InstancePath>
+<Position>0.5 -0.05 1.045</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合3">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R33-2</Uid>
+<Uid>R3-1</Uid>
+</InstancePath>
+<Position>0.5 -0.245 2.345</Position>
+<Axis>0 1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R44-2</Uid>
+<Uid>R4-1</Uid>
+</InstancePath>
+<Position>0.5 -0.245 2.345</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心3">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R33-2</Uid>
+<Uid>R3-1</Uid>
+</InstancePath>
+<Position>0.5 -0.245 2.345</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R44-2</Uid>
+<Uid>R4-1</Uid>
+</InstancePath>
+<Position>0.5 -0.245 2.345</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合4">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R44-2</Uid>
+<Uid>R4-1</Uid>
+</InstancePath>
+<Position>0.999 0 0</Position>
+<Axis>1 0 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R55-2</Uid>
+<Uid>R5-1</Uid>
+</InstancePath>
+<Position>0.999 0 2.411</Position>
+<Axis>-1 0 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心4">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R44-2</Uid>
+<Uid>R4-1</Uid>
+</InstancePath>
+<Position>0.999 0 2.29</Position>
+<Axis>-1 0 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R55-2</Uid>
+<Uid>R5-1</Uid>
+</InstancePath>
+<Position>0.989 0 2.29</Position>
+<Axis>1 0 0</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合5">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R55-2</Uid>
+<Uid>R5-1</Uid>
+</InstancePath>
+<Position>1.525 -0.085 2.29</Position>
+<Axis>0 1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R66-2</Uid>
+<Uid>R6-1</Uid>
+</InstancePath>
+<Position>1.525 -0.085 2.29</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Concentric name="同心5">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R55-2</Uid>
+<Uid>R5-1</Uid>
+</InstancePath>
+<Position>1.525 -0.075 2.29</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R66-2</Uid>
+<Uid>R6-1</Uid>
+</InstancePath>
+<Position>1.525 -0.075 2.29</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Concentric name="同心6">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R66-2</Uid>
+<Uid>R6-1</Uid>
+</InstancePath>
+<Position>1.772 0 2.29</Position>
+<Axis>-1 0 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R77-2</Uid>
+<Uid>R7-1</Uid>
+</InstancePath>
+<Position>1.772 0 2.29</Position>
+<Axis>-1 0 0</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合7">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R66-2</Uid>
+<Uid>R6-1</Uid>
+</InstancePath>
+<Position>1.762 0 2.29</Position>
+<Axis>1 0 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R77-2</Uid>
+<Uid>R7-1</Uid>
+</InstancePath>
+<Position>1.762 0 2.39115</Position>
+<Axis>-1 0 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Coincident name="重合8">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R11-2</Uid>
+<Uid>R1-1</Uid>
+</InstancePath>
+<Position>0 0 0.006</Position>
+<Axis>0 0 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>bianweiji1-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 -1 6.66134e-016</Axis>
+</ConstraintGeometry>
+</Coincident>
+<Distance name="距离1">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R11-2</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>1 0 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>bianweiji1-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>1 0 0</Axis>
+</ConstraintGeometry>
+</Distance>
+<Distance name="距离2">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R11-2</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 1 0</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>bianweiji1-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 -6.66134e-016 1</Axis>
+</ConstraintGeometry>
+</Distance>
+<Concentric name="同心7">
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>bianweiji1-1</Uid>
+</InstancePath>
+<Position>0 1 0.1</Position>
+<Axis>0 6.66134e-016 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="cylinder">
+<InstancePath>
+<Uid>R99-1</Uid>
+<Uid>bianweiqi2-1</Uid>
+</InstancePath>
+<Position>0 0.05 0</Position>
+<Axis>0 -1 0</Axis>
+</ConstraintGeometry>
+</Concentric>
+<Coincident name="重合9">
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>bianweiji1-1</Uid>
+</InstancePath>
+<Position>0 1 -6.66134e-016</Position>
+<Axis>0 6.66134e-016 -1</Axis>
+</ConstraintGeometry>
+<ConstraintGeometry geomType="plane">
+<InstancePath>
+<Uid>R99-1</Uid>
+<Uid>bianweiqi2-1</Uid>
+</InstancePath>
+<Position>0 0 0</Position>
+<Axis>0 1 0</Axis>
+</ConstraintGeometry>
+</Coincident>
+</Constraints>
+</RootAssembly>
+<Assemblies>
+<Assembly name="R77" uid="R77" version="153">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R77.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R99" uid="R99" version="117">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R99.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R11" uid="R11" version="128">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R11.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R22" uid="R22" version="113">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R22.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R33" uid="R33" version="113">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R33.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R44" uid="R44" version="113">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R44.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R55" uid="R55" version="113">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R55.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+<Assembly name="R66" uid="R66" version="113">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<AssemblyFile name="R66.SLDASM" type="SolidWorks Assembly"/>
+</Assembly>
+</Assemblies>
+<Parts>
+<Part name="R1" uid="R1*:*默认" version="108">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R1.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>0</Mass>
+<CenterOfMass>0 0 0</CenterOfMass>
+<Inertia>0 0 0 0 0 0</Inertia>
+</MassProperties>
+<GeometryFile name="R1_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.25098" g="0.25098" b="0.25098" a="1"/>
+<Diffuse r="0.205804" g="0.205804" b="0.205804" a="1"/>
+<Specular r="0.213333" g="0.213333" b="0.213333" a="1"/>
+<Emissive r="0.0652549" g="0.0652549" b="0.0652549" a="1"/>
+<Shininess>0.2</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R2" uid="R2*:*默认" version="108">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R2.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>1348.21</Mass>
+<CenterOfMass>0.0701317 0.0222924 0.799591</CenterOfMass>
+<Inertia>68.8535 151.351 144.674 1.1159 25.3941 19.0032</Inertia>
+</MassProperties>
+<GeometryFile name="R2_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.972549" g="1" b="0.305882" a="1"/>
+<Diffuse r="0.972549" g="1" b="0.305882" a="1"/>
+<Specular r="0.923922" g="0.95" b="0.290588" a="1"/>
+<Emissive r="0.30149" g="0.31" b="0.0948235" a="1"/>
+<Shininess>0.2</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R3" uid="R3*:*默认" version="110">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R3.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>1422.84</Mass>
+<CenterOfMass>0.499649 -0.309881 1.49782</CenterOfMass>
+<Inertia>327.765 330.619 38.7282 -33.6292 0.853571 0.730392</Inertia>
+</MassProperties>
+<GeometryFile name="R3_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="0.14902" a="1"/>
+<Diffuse r="1" g="1" b="0.14902" a="1"/>
+<Specular r="1" g="1" b="0.14902" a="1"/>
+<Emissive r="0.24" g="0.24" b="0.0357647" a="1"/>
+<Shininess>0.4</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R4" uid="R4*:*默认" version="110">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R4.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>662.563</Mass>
+<CenterOfMass>0.539937 -0.0411569 2.32385</CenterOfMass>
+<Inertia>14.1771 41.6812 37.9784 -0.719019 -0.768367 0.837378</Inertia>
+</MassProperties>
+<GeometryFile name="R4_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="0.14902" a="1"/>
+<Diffuse r="1" g="1" b="0.14902" a="1"/>
+<Specular r="1" g="1" b="0.14902" a="1"/>
+<Emissive r="0.24" g="0.24" b="0.0357647" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R5" uid="R5*:*默认" version="109">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R5.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>251.667</Mass>
+<CenterOfMass>1.25924 -0.010375 2.29</CenterOfMass>
+<Inertia>4.12487 8.08005 10.0683 -3.84701e-006 -5.99233e-005 -0.488814</Inertia>
+</MassProperties>
+<GeometryFile name="R5_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="0.14902" a="1"/>
+<Diffuse r="1" g="1" b="0.14902" a="1"/>
+<Specular r="1" g="1" b="0.14902" a="1"/>
+<Emissive r="0.24" g="0.24" b="0.0357647" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R6" uid="R6*:*默认" version="109">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R6.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>142.821</Mass>
+<CenterOfMass>1.57715 0.0377665 2.29</CenterOfMass>
+<Inertia>1.27317 1.98906 2.03656 -7.75084e-007 1.24788e-006 -0.325987</Inertia>
+</MassProperties>
+<GeometryFile name="R6_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="1" g="1" b="0.14902" a="1"/>
+<Diffuse r="1" g="1" b="0.14902" a="1"/>
+<Specular r="1" g="1" b="0.14902" a="1"/>
+<Emissive r="0.24" g="0.24" b="0.0357647" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R7" uid="R7*:*默认" version="118">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R7.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>14.0318</Mass>
+<CenterOfMass>1.78759 1.8104e-006 2.29</CenterOfMass>
+<Inertia>0.0984265 0.0520264 0.0520226 -3.49526e-008 -3.1715e-006 2.03579e-007</Inertia>
+</MassProperties>
+<GeometryFile name="R7_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.494118" g="0.494118" b="0.494118" a="1"/>
+<Diffuse r="0.494118" g="0.494118" b="0.494118" a="1"/>
+<Specular r="0.148235" g="0.148235" b="0.148235" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.5</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R8" uid="R8*:*默认" version="279">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R8.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>5.02008</Mass>
+<CenterOfMass>0.120161 0.162596 -3.00535e-007</CenterOfMass>
+<Inertia>0.0832883 0.0796088 0.156545 1.78612e-009 -2.47146e-008 0.0656717</Inertia>
+</MassProperties>
+<GeometryFile name="R8_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.898039" g="0.898039" b="0.898039" a="1"/>
+<Diffuse r="0.898039" g="0.898039" b="0.898039" a="1"/>
+<Specular r="0.718431" g="0.718431" b="0.718431" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="R9" uid="R9*:*默认" version="200">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="R9.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>10.3553</Mass>
+<CenterOfMass>-6.75444e-016 0.00500568 2.71688e-014</CenterOfMass>
+<Inertia>3.45184 3.6861 0.234433 0 9.43012e-016 0</Inertia>
+</MassProperties>
+<GeometryFile name="R9_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.776471" g="0.756863" b="0.737255" a="1"/>
+<Diffuse r="0.776471" g="0.756863" b="0.737255" a="1"/>
+<Specular r="0.621176" g="0.60549" b="0.589804" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="bianweiji1" uid="bianweiji1*:*默认" version="187">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="bianweiji1.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>248.005</Mass>
+<CenterOfMass>-2.24085e-008 0.607407 0.0910233</CenterOfMass>
+<Inertia>56.443 31.5265 83.7961 3.3777 -2.73061e-007 1.58937e-005</Inertia>
+</MassProperties>
+<GeometryFile name="bianweiji1_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.827451" g="0.666667" b="0.129412" a="1"/>
+<Diffuse r="0.827451" g="0.666667" b="0.129412" a="1"/>
+<Specular r="0.661961" g="0.533333" b="0.103529" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+<Part name="bianweiqi2" uid="bianweiqi2*:*默认" version="195">
+<ModelUnits mass="kilogram" length="millimeter"/>
+<PartFile name="bianweiqi2.SLDPRT" type="SolidWorks Part"/>
+<MassProperties>
+<Mass>41.0883</Mass>
+<CenterOfMass>0 -0.0244962 0</CenterOfMass>
+<Inertia>2.40263 4.8385 2.55423 0 -7.2366e-016 0</Inertia>
+</MassProperties>
+<GeometryFile name="bianweiqi2_默认_sldprt.STL" type="STL"/>
+<VisualProperties>
+<Ambient r="0.2" g="0.2" b="0.2" a="1"/>
+<Diffuse r="0.2" g="0.2" b="0.2" a="1"/>
+<Specular r="0.2" g="0.2" b="0.2" a="1"/>
+<Emissive r="0" g="0" b="0" a="1"/>
+<Shininess>0.3125</Shininess>
+</VisualProperties>
+</Part>
+</Parts>
+</SimMechanicsImportXML>
