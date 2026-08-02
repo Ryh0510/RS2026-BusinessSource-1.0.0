@@ -124,7 +124,7 @@ target_compile_features(${APP_TARGET_NAME}
 
 target_compile_definitions(${APP_TARGET_NAME}
     PRIVATE
-        ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH="projects/420-red4600.sys.json"
+        ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH="projects/ABB4600-burner.sys.json"
 )
 
 set_target_properties(${APP_TARGET_NAME}

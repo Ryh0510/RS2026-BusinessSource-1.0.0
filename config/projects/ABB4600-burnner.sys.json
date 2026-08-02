@@ -1,6 +1,6 @@
 {
     "compat": {
-        "sourceVersion": 2,
+        "sourceVersion": 3,
         "writePolicy": "v3-opt-in"
     },
     "core": {
@@ -97,7 +97,7 @@
                 "id": "ABB4600_urdf",
                 "initialJoints": [],
                 "name": "ABB4600_urdf",
-                "sourcePath": "C:/Users/14390/Desktop/RS2026-BusinessSource-1.0.0/RS2026-BusinessSource-1.0.0/data/Spray420/ABB4600_urdf/urdf/ABB4600_urdf.urdf",
+                "sourcePath": "data/Spray420/ABB4600_urdf/urdf/ABB4600_urdf.urdf",
                 "sourceType": "urdf",
                 "visible": true
             },
@@ -105,16 +105,16 @@
                 "baseTransform": {
                     "pitch": 1.5707963267948966,
                     "roll": 0.0,
-                    "x": 0.2,
-                    "y": 0.53,
+                    "x": 0.65,
+                    "y": 0.85,
                     "yaw": 1.5707963267948966,
-                    "z": -0.0
+                    "z": 0.65
                 },
                 "collisionEnabled": true,
                 "id": "burnner",
                 "initialJoints": [],
                 "name": "burnner",
-                "sourcePath": "C:/Users/14390/Desktop/RS2026-BusinessSource-1.0.0/RS2026-BusinessSource-1.0.0/data/drake_models/burnner/urdf/burnner.urdf",
+                "sourcePath": "data/drake_models/burnner/urdf/burnner.urdf",
                 "sourceType": "urdf",
                 "visible": true
             }
