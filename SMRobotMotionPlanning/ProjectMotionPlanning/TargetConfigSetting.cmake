@@ -7,5 +7,6 @@ set(${TARGET_NAME}_RequiredLibsPublic
 )
 
 set(${TARGET_NAME}_RequiredLibsPrivate
+    nlohmann_json::nlohmann_json
     SMRobotMotionPlanning::MotionPlanningOmpl
 )

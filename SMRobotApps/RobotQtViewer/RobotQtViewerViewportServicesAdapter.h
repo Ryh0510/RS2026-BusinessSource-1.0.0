@@ -165,6 +165,10 @@ namespace robot_qt_viewer
         bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible) override;
         bool clearSurfaceScalarOverlay(const QString& objectId) override;
         void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId) override;
+        void setTrajectoryControlPointOverlay(
+            const QString& trajectoryId,
+            const std::vector<simulation_project::TransformDesc>& controlPoints) override;
+        void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) override;
 
         bool jointValue(
             const std::string& robotId,

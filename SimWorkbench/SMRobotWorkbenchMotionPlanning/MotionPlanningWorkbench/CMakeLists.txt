@@ -26,7 +26,7 @@ target_compile_features(${TARGET_NAME}
 set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
     SMRobotWorkbenchCommon::WorkbenchCommon
     SMRobotWorkbenchMotionPlanning::MotionPlanningEditor
-    SMRobotMotionPlanning::MotionPlanningCore
+    SMRobotMotionPlanning::ProjectMotionPlanning
 )
 
 set_target_properties(${TARGET_NAME}

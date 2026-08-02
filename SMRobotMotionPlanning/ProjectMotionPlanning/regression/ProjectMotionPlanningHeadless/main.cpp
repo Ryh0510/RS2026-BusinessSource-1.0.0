@@ -1,4 +1,5 @@
 #include <ProjectMotionPlanning/ProjectMotionPlanning.h>
+#include <ProjectMotionPlanning/TrajectoryImport.h>
 
 #include <MotionPlanningCore/MotionPlanning.h>
 #include <RobotRuntime/RobotTrajectoryExecutionSession.h>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -24,6 +26,7 @@ namespace
         std::filesystem::path projectPath = std::filesystem::path(PROJECT_SOURCE_PATH) /
             "config/projects/420-red4600-tool.sys.json";
         bool discover = false;
+        bool importOnly = false;
     };
 
     bool parseOptions(int argc, char** argv, Options& options)
@@ -35,6 +38,8 @@ namespace
                 options.projectPath = std::filesystem::u8path(argv[++index]);
             else if (argument == "--discover")
                 options.discover = true;
+            else if (argument == "--import-only")
+                options.importOnly = true;
             else
             {
                 std::cerr << "Unknown or incomplete option: " << argument << "\n";
@@ -176,6 +181,114 @@ namespace
         std::cerr << "FAILED: " << message << "\n";
         return 1;
     }
+
+    int runImportOnly(const Options& options)
+    {
+        simulation_project::ProjectDocument document;
+        std::string errorMessage;
+        if (!simulation_project::loadProjectDocument(options.projectPath, document, &errorMessage))
+            return fail("Project load failed: " + errorMessage);
+
+        motion_planning::TrajectoryImportOptions importOptions;
+        importOptions.robotId = "Red4600";
+        importOptions.jointNames = { "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6" };
+
+        const std::filesystem::path importedCsvPath =
+            std::filesystem::current_path() / "import_only_motion_plan.csv";
+        {
+            std::ofstream csv(importedCsvPath);
+            csv << "time";
+            for (const std::string& jointName : importOptions.jointNames)
+                csv << "," << jointName;
+            csv << "\n";
+            csv << "0,0.1,0.2,0.3,0.4,0.5,0.6\n";
+            csv << "1,0.2,0.3,0.4,0.5,0.6,0.7\n";
+        }
+        const motion_planning::TrajectoryImportResult jointImport =
+            motion_planning::ProjectTrajectoryImporter::importFile(importedCsvPath, importOptions);
+        std::error_code removeImportedCsvError;
+        std::filesystem::remove(importedCsvPath, removeImportedCsvError);
+        if (!jointImport.success ||
+            jointImport.dataKind != motion_planning::TrajectoryImportDataKind::JointTrajectory ||
+            jointImport.plan.trajectory.points.size() != 2 ||
+            !jointImport.plan.cartesianControlPoints.empty())
+            return fail("Import-only CSV joint trajectory import failed: " + jointImport.message());
+        if (!motion_planning::MotionPlanningProjectStore::upsertPlan(document, jointImport.plan, &errorMessage))
+            return fail("Import-only joint trajectory store failed: " + errorMessage);
+
+        const std::filesystem::path importedCartesianPath =
+            std::filesystem::current_path() / "import_only_cartesian_points.txt";
+        {
+            std::ofstream text(importedCartesianPath);
+            text << "=== Point 1 ===\n";
+            text << "Pose (4x4 matrix):\n";
+            text << "1 0 0 1,000\n";
+            text << "0 1 0 0\n";
+            text << "0 0 1 50\n";
+            text << "0 0 0 1\n";
+            text << "=== Point 2 ===\n";
+            text << "Pose (4x4 matrix):\n";
+            text << "1 0 0 120\n";
+            text << "0 1 0 5\n";
+            text << "0 0 1 55\n";
+            text << "0 0 0 1\n";
+        }
+        const motion_planning::TrajectoryImportResult cartesianImport =
+            motion_planning::ProjectTrajectoryImporter::importFile(importedCartesianPath, importOptions);
+        std::error_code removeImportedCartesianError;
+        std::filesystem::remove(importedCartesianPath, removeImportedCartesianError);
+        const auto& importedCartesianPoints = cartesianImport.plan.cartesianControlPoints.points;
+        if (!cartesianImport.success ||
+            cartesianImport.dataKind != motion_planning::TrajectoryImportDataKind::CartesianControlPoints ||
+            importedCartesianPoints.size() != 2 ||
+            !cartesianImport.plan.trajectory.empty())
+            return fail("Import-only cartesian control-point import failed: " + cartesianImport.message());
+        if (std::abs(importedCartesianPoints.front().time) > 1.0e-9 ||
+            std::abs(importedCartesianPoints.back().time - 5.0) > 1.0e-9 ||
+            std::abs(importedCartesianPoints.front().tcpPose.translation().x() - 1.0) > 1.0e-9 ||
+            std::abs(importedCartesianPoints.front().tcpPose.translation().z() - 0.05) > 1.0e-9 ||
+            std::abs(importedCartesianPoints.back().tcpPose.translation().x() - 0.12) > 1.0e-9)
+            return fail("Import-only cartesian control-point TXT parsing mismatch.");
+        if (!motion_planning::MotionPlanningProjectStore::upsertPlan(document, cartesianImport.plan, &errorMessage))
+            return fail("Import-only cartesian control-point store failed: " + errorMessage);
+
+        const std::filesystem::path roundTripPath = std::filesystem::current_path() /
+            "import_only_motion_planning_roundtrip.sys.json";
+        if (!simulation_project::saveProjectDocumentV3(roundTripPath, document, &errorMessage))
+            return fail("Import-only project save failed: " + errorMessage);
+        simulation_project::ProjectDocument reloaded;
+        if (!simulation_project::loadProjectDocument(roundTripPath, reloaded, &errorMessage))
+            return fail("Import-only project reload failed: " + errorMessage);
+        std::error_code removeRoundTripError;
+        std::filesystem::remove(roundTripPath, removeRoundTripError);
+
+        const std::vector<motion_planning::StoredMotionPlan> plans =
+            motion_planning::MotionPlanningProjectStore::plans(reloaded);
+        const auto importedJointIt = std::find_if(
+            plans.begin(),
+            plans.end(),
+            [&](const motion_planning::StoredMotionPlan& plan) {
+                return plan.id == jointImport.plan.id;
+            });
+        if (importedJointIt == plans.end() || importedJointIt->trajectory.points.size() != 2)
+            return fail("Import-only joint trajectory did not survive project round-trip.");
+        const auto importedCartesianIt = std::find_if(
+            plans.begin(),
+            plans.end(),
+            [&](const motion_planning::StoredMotionPlan& plan) {
+                return plan.id == cartesianImport.plan.id;
+            });
+        if (importedCartesianIt == plans.end() ||
+            importedCartesianIt->cartesianControlPoints.points.size() != 2 ||
+            !importedCartesianIt->trajectory.empty())
+            return fail("Import-only cartesian control points did not survive project round-trip.");
+        if (std::abs(importedCartesianIt->cartesianControlPoints.points.back().time - 5.0) > 1.0e-9 ||
+            std::abs(importedCartesianIt->cartesianControlPoints.points.front().tcpPose.translation().x() - 1.0) > 1.0e-9)
+            return fail("Import-only cartesian control-point values changed during project round-trip.");
+
+        std::cout << "PASS ProjectMotionPlanning import-only regression\n";
+        return 0;
+    }
 }
 
 int main(int argc, char** argv)
@@ -183,6 +296,8 @@ int main(int argc, char** argv)
     Options options;
     if (!parseOptions(argc, argv, options))
         return 2;
+    if (options.importOnly)
+        return runImportOnly(options);
 
     simulation_project::ProjectDocument document;
     std::string errorMessage;
@@ -340,6 +455,74 @@ int main(int argc, char** argv)
     if (!motion_planning::MotionPlanningProjectStore::upsertPlan(roundTripDocument, storedPlan, &errorMessage))
         return fail("Trajectory store failed: " + errorMessage);
 
+    motion_planning::TrajectoryImportOptions importOptions;
+    importOptions.robotId = request.robotId;
+    importOptions.jointNames = request.jointNames;
+
+    const std::filesystem::path importedCsvPath =
+        std::filesystem::current_path() / "imported_motion_plan.csv";
+    {
+        std::ofstream csv(importedCsvPath);
+        csv << "time";
+        for (const std::string& jointName : request.jointNames)
+            csv << "," << jointName;
+        csv << "\n";
+        for (std::size_t index = 0; index < std::min<std::size_t>(3, result.trajectory.points.size()); ++index)
+        {
+            const robottrajectory::TimedJointPoint& point = result.trajectory.points[index];
+            csv << point.time;
+            for (double value : point.q)
+                csv << "," << value;
+            csv << "\n";
+        }
+    }
+    const motion_planning::TrajectoryImportResult jointImport =
+        motion_planning::ProjectTrajectoryImporter::importFile(importedCsvPath, importOptions);
+    std::error_code removeImportedCsvError;
+    std::filesystem::remove(importedCsvPath, removeImportedCsvError);
+    if (!jointImport.success ||
+        jointImport.dataKind != motion_planning::TrajectoryImportDataKind::JointTrajectory ||
+        jointImport.plan.trajectory.points.size() != 3)
+        return fail("CSV joint trajectory import failed: " + jointImport.message());
+    if (!motion_planning::MotionPlanningProjectStore::upsertPlan(roundTripDocument, jointImport.plan, &errorMessage))
+        return fail("Imported joint trajectory store failed: " + errorMessage);
+
+    const std::filesystem::path importedCartesianPath =
+        std::filesystem::current_path() / "imported_cartesian_points.txt";
+    {
+        std::ofstream text(importedCartesianPath);
+        text << "=== Point 1 ===\n";
+        text << "Pose (4x4 matrix):\n";
+        text << "1 0 0 100\n";
+        text << "0 1 0 0\n";
+        text << "0 0 1 50\n";
+        text << "0 0 0 1\n";
+        text << "=== Point 2 ===\n";
+        text << "Pose (4x4 matrix):\n";
+        text << "1 0 0 120\n";
+        text << "0 1 0 5\n";
+        text << "0 0 1 55\n";
+        text << "0 0 0 1\n";
+    }
+    const motion_planning::TrajectoryImportResult cartesianImport =
+        motion_planning::ProjectTrajectoryImporter::importFile(importedCartesianPath, importOptions);
+    std::error_code removeImportedCartesianError;
+    std::filesystem::remove(importedCartesianPath, removeImportedCartesianError);
+    const auto& importedCartesianPoints = cartesianImport.plan.cartesianControlPoints.points;
+    if (!cartesianImport.success ||
+        cartesianImport.dataKind != motion_planning::TrajectoryImportDataKind::CartesianControlPoints ||
+        importedCartesianPoints.size() != 2 ||
+        !cartesianImport.plan.trajectory.empty())
+        return fail("Cartesian trajectory control-point import failed: " + cartesianImport.message());
+    if (std::abs(importedCartesianPoints.front().time) > 1.0e-9 ||
+        std::abs(importedCartesianPoints.back().time - 5.0) > 1.0e-9)
+        return fail("Cartesian trajectory control-point TXT timing mismatch.");
+    if (std::abs(importedCartesianPoints.front().tcpPose.translation().x() - 0.1) > 1.0e-9 ||
+        std::abs(importedCartesianPoints.back().tcpPose.translation().x() - 0.12) > 1.0e-9)
+        return fail("Cartesian trajectory control-point TXT unit conversion mismatch.");
+    if (!motion_planning::MotionPlanningProjectStore::upsertPlan(roundTripDocument, cartesianImport.plan, &errorMessage))
+        return fail("Imported cartesian control-point store failed: " + errorMessage);
+
     const std::filesystem::path roundTripPath = std::filesystem::current_path() /
         "ompl_motion_planning_roundtrip.sys.json";
     if (!simulation_project::saveProjectDocumentV3(roundTripPath, roundTripDocument, &errorMessage))
@@ -357,6 +540,24 @@ int main(int argc, char** argv)
     });
     if (storedIt == plans.end() || storedIt->trajectory.points.size() != result.trajectory.points.size())
         return fail("Stored trajectory did not survive project round-trip.");
+    const auto importedJointIt = std::find_if(
+        plans.begin(),
+        plans.end(),
+        [&](const motion_planning::StoredMotionPlan& plan) {
+            return plan.id == jointImport.plan.id;
+        });
+    if (importedJointIt == plans.end() || importedJointIt->trajectory.points.size() != 3)
+        return fail("Imported joint trajectory did not survive project round-trip.");
+    const auto importedCartesianIt = std::find_if(
+        plans.begin(),
+        plans.end(),
+        [&](const motion_planning::StoredMotionPlan& plan) {
+            return plan.id == cartesianImport.plan.id;
+        });
+    if (importedCartesianIt == plans.end() ||
+        importedCartesianIt->cartesianControlPoints.points.size() != 2 ||
+        !importedCartesianIt->trajectory.empty())
+        return fail("Imported cartesian control points did not survive project round-trip.");
 
     robotruntime::RobotTrajectoryExecutionSession execution;
     if (!execution.load(request.robotId, storedIt->id, storedIt->trajectory).success)

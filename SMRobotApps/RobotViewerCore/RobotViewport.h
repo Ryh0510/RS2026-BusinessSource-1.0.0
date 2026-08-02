@@ -217,6 +217,10 @@ public:
     bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const QString& objectId);
     void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId = QString());
+    void setTrajectoryControlPointOverlay(
+        const QString& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& controlPoints);
+    void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
 
 signals:
     void robotLinksAvailable(

@@ -46,4 +46,14 @@ if(BuildTests)
         LABELS "SMRobotMotionPlanning;ProjectMotionPlanning;Regression"
         WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>
     )
+    add_test(
+        NAME ProjectMotionPlanningImportHeadless
+        COMMAND $<TARGET_FILE:${EXAMPLE_TARGET_NAME}>
+            --project ${CMAKE_SOURCE_DIR}/config/projects/420-red4600-tool.sys.json
+            --import-only
+    )
+    set_tests_properties(ProjectMotionPlanningImportHeadless PROPERTIES
+        LABELS "SMRobotMotionPlanning;ProjectMotionPlanning;Regression"
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>
+    )
 endif()

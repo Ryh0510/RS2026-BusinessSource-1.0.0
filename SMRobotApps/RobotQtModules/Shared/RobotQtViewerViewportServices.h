@@ -194,5 +194,16 @@ namespace robot_qt_viewer
             (void)enabled;
             (void)objectId;
         }
+        virtual void setTrajectoryControlPointOverlay(
+            const QString& trajectoryId,
+            const std::vector<simulation_project::TransformDesc>& controlPoints)
+        {
+            (void)trajectoryId;
+            (void)controlPoints;
+        }
+        virtual void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString())
+        {
+            (void)trajectoryId;
+        }
     };
 }

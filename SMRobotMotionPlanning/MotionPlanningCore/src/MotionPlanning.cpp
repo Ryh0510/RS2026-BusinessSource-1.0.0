@@ -41,6 +41,39 @@ namespace motion_planning
                 { "points", points }
             };
         }
+
+        Json writePose(const Eigen::Isometry3d& pose)
+        {
+            Json rows = Json::array();
+            const Eigen::Matrix4d matrix = pose.matrix();
+            for(int row = 0; row < 4; ++row) {
+                Json values = Json::array();
+                for(int column = 0; column < 4; ++column) {
+                    values.push_back(matrix(row, column));
+                }
+                rows.push_back(std::move(values));
+            }
+            return rows;
+        }
+
+        Json writeCartesianTrajectory(const robottrajectory::CartesianTrajectory& trajectory)
+        {
+            Json points = Json::array();
+            for(const robottrajectory::TimedCartesianPoint& point : trajectory.points) {
+                points.push_back(Json{
+                    { "time", point.time },
+                    { "tcpPose", writePose(point.tcpPose) },
+                    { "linearSpeed", point.linearSpeed },
+                    { "angularSpeed", point.angularSpeed }
+                });
+            }
+            return Json{
+                { "name", trajectory.name },
+                { "interpolation", trajectory.interpolation == robottrajectory::TrajectoryInterpolation::Step
+                    ? "step" : "linear" },
+                { "points", points }
+            };
+        }
          
         robottrajectory::JointTrajectory readTrajectory(const Json& json)
         {
@@ -56,6 +89,51 @@ namespace motion_planning
                     point.q = pointJson.value("q", std::vector<double>());
                     point.qd = pointJson.value("qd", std::vector<double>());
                     point.qdd = pointJson.value("qdd", std::vector<double>());
+                    trajectory.points.push_back(std::move(point));
+                }
+            }
+            return trajectory;
+        }
+
+        Eigen::Isometry3d readPose(const Json& json)
+        {
+            Eigen::Matrix4d matrix = Eigen::Matrix4d::Identity();
+            if(json.is_array() && json.size() >= 4 && json.front().is_array()) {
+                for(std::size_t row = 0; row < 4 && row < json.size(); ++row) {
+                    const Json& rowJson = json.at(row);
+                    for(std::size_t column = 0; column < 4 && column < rowJson.size(); ++column) {
+                        matrix(static_cast<int>(row), static_cast<int>(column)) =
+                            rowJson.at(column).get<double>();
+                    }
+                }
+            } else if(json.is_array() && json.size() >= 16) {
+                for(std::size_t index = 0; index < 16; ++index) {
+                    matrix(static_cast<int>(index / 4), static_cast<int>(index % 4)) =
+                        json.at(index).get<double>();
+                }
+            }
+
+            Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+            pose.matrix() = matrix;
+            return pose;
+        }
+
+        robottrajectory::CartesianTrajectory readCartesianTrajectory(const Json& json)
+        {
+            robottrajectory::CartesianTrajectory trajectory;
+            trajectory.name = json.value("name", std::string());
+            trajectory.interpolation = json.value("interpolation", std::string("linear")) == "step"
+                ? robottrajectory::TrajectoryInterpolation::Step
+                : robottrajectory::TrajectoryInterpolation::Linear;
+            if(json.contains("points") && json.at("points").is_array()) {
+                for(const Json& pointJson : json.at("points")) {
+                    robottrajectory::TimedCartesianPoint point;
+                    point.time = pointJson.value("time", 0.0);
+                    if(pointJson.contains("tcpPose")) {
+                        point.tcpPose = readPose(pointJson.at("tcpPose"));
+                    }
+                    point.linearSpeed = pointJson.value("linearSpeed", 0.0);
+                    point.angularSpeed = pointJson.value("angularSpeed", 0.0);
                     trajectory.points.push_back(std::move(point));
                 }
             }
@@ -195,6 +273,10 @@ namespace motion_planning
                 if(planJson.contains("trajectory")) {
                     plan.trajectory = readTrajectory(planJson.at("trajectory"));
                 }
+                if(planJson.contains("cartesianControlPoints")) {
+                    plan.cartesianControlPoints =
+                        readCartesianTrajectory(planJson.at("cartesianControlPoints"));
+                }
                 if(!plan.id.empty()) {
                     result.push_back(std::move(plan));
                 }
@@ -210,9 +292,10 @@ namespace motion_planning
         const StoredMotionPlan& plan,
         std::string* errorMessage)
     {
-        if(plan.id.empty() || plan.robotId.empty() || plan.trajectory.empty()) {
+        if(plan.id.empty() || plan.robotId.empty() ||
+            (plan.trajectory.empty() && plan.cartesianControlPoints.empty())) {
             if(errorMessage != nullptr) {
-                *errorMessage = "Motion plan id, robot id, and trajectory are required.";
+                *errorMessage = "Motion plan id, robot id, and at least one trajectory/control point sequence are required.";
             }
             return false;
         }
@@ -237,7 +320,8 @@ namespace motion_planning
                 { "name", storedPlan.name },
                 { "robotId", storedPlan.robotId },
                 { "jointNames", storedPlan.jointNames },
-                { "trajectory", writeTrajectory(storedPlan.trajectory) }
+                { "trajectory", writeTrajectory(storedPlan.trajectory) },
+                { "cartesianControlPoints", writeCartesianTrajectory(storedPlan.cartesianControlPoints) }
             });
         }
         const std::string payload = Json{

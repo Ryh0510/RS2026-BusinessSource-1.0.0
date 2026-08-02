@@ -237,6 +237,9 @@ namespace robot_qt_viewer
         QVector<MotionControlWidget::TrajectoryItem> items;
         for(const motion_planning::StoredMotionPlan& plan :
             motion_planning::MotionPlanningProjectStore::plans(m_context.document())) {
+            if(plan.trajectory.empty()) {
+                continue;
+            }
             if(!m_selectedRobotId.isEmpty() && plan.robotId != m_selectedRobotId.toStdString()) {
                 continue;
             }

@@ -235,6 +235,10 @@ public:
         std::string* errorMessage = nullptr);
     bool setSurfaceScalarOverlayVisible(const std::string& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const std::string& objectId);
+    void setTrajectoryControlPointOverlay(
+        const std::string& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& controlPoints);
+    void clearTrajectoryControlPointOverlay(const std::string& trajectoryId = std::string());
     smrobot::visualization::SurfaceScalarProbeResult probeSurfaceScalarAtScreenPoint(
         const std::string& objectId,
         int x,

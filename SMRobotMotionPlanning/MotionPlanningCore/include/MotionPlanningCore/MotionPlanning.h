@@ -163,6 +163,7 @@ namespace motion_planning
         std::string robotId;
         std::vector<std::string> jointNames;
         robottrajectory::JointTrajectory trajectory;
+        robottrajectory::CartesianTrajectory cartesianControlPoints;
     };
 
     class MotionPlanningProjectStore

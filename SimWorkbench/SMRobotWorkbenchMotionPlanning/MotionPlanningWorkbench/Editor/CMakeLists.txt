@@ -25,7 +25,7 @@ target_link_libraries(${TARGET_NAME}
     PRIVATE
         $<BUILD_INTERFACE:RobotQtModulesCoreWidgets>
         $<INSTALL_INTERFACE:SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets>
-        SMRobotMotionPlanning::MotionPlanningCore
+        SMRobotMotionPlanning::ProjectMotionPlanning
 )
 
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_17)
@@ -41,7 +41,7 @@ if(ExportPacakge${PACKAGE_NAME})
     set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
         SMRobotWorkbenchCommon::RobotQtModulesShared
         SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
-        SMRobotMotionPlanning::MotionPlanningCore
+        SMRobotMotionPlanning::ProjectMotionPlanning
     )
 
     set(${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR

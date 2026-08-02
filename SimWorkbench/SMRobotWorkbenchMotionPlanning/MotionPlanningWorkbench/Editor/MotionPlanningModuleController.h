@@ -34,10 +34,14 @@ namespace robot_qt_viewer
             const QString& jointNames,
             double duration,
             int sampleCount);
+        void importTrajectory();
+        void setSelectedTrajectory(const QString& trajectoryId);
         void setSelectedRobot(const QString& robotId);
+        void refreshTrajectoryView();
 
         MotionPlanningEditorWidget& m_widget;
         RobotQtViewerDocumentContext& m_context;
         QString m_selectedRobotId;
+        QString m_selectedTrajectoryId;
     };
 }

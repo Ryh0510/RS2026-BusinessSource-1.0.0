@@ -1,23 +1,48 @@
 #pragma once
 
+#include <QString>
+#include <QVector>
 #include <QWidget>
 
 class QDoubleSpinBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QTableWidget;
 
 class MotionPlanningEditorWidget : public QWidget
 {
     Q_OBJECT
 
 public:
+    struct TrajectoryListItem
+    {
+        QString id;
+        QString label;
+        QString kind;
+        int pointCount = 0;
+    };
+
+    struct TrajectoryPointRow
+    {
+        int index = 0;
+        QString timeText;
+        QString valueText;
+        QString orientationText;
+    };
+
     explicit MotionPlanningEditorWidget(QWidget* parent = nullptr);
 
     void setRobotId(const QString& robotId);
     void setJointDefaults(const QString& jointNames, const QString& startJoints);
     void setResult(const QString& summary, bool success);
+    void setTrajectoryView(
+        const QVector<TrajectoryListItem>& trajectories,
+        const QString& selectedTrajectoryId,
+        const QVector<TrajectoryPointRow>& points,
+        const QString& emptyText);
 
 signals:
     void planRequested(
@@ -26,6 +51,8 @@ signals:
         const QString& jointNames,
         double duration,
         int sampleCount);
+    void importTrajectoryRequested();
+    void trajectorySelectionChanged(const QString& trajectoryId);
 
 private:
     QLabel* m_robotValue = nullptr;
@@ -35,5 +62,8 @@ private:
     QDoubleSpinBox* m_duration = nullptr;
     QSpinBox* m_sampleCount = nullptr;
     QPushButton* m_planButton = nullptr;
+    QPushButton* m_importButton = nullptr;
+    QComboBox* m_trajectoryCombo = nullptr;
+    QTableWidget* m_pointsTable = nullptr;
     QLabel* m_result = nullptr;
 };

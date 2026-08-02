@@ -2657,6 +2657,8 @@ struct ProjectScene::Impl
     std::string selectedJointFrameName;
     std::string selectedObjectFrameObjectId;
     std::string selectedObjectFrameId;
+    std::string trajectoryControlPointOverlayId;
+    std::vector<collision::Transform3> trajectoryControlPointOverlay;
     ProjectScene::ToolFrameVisibility toolFrameVisibility;
     bool previewSelectedLinkFrameVisible = false;
     bool previewRobotMountFrameVisible = false;
@@ -2728,6 +2730,7 @@ struct ProjectScene::Impl
     void drawPreviewRobotMountFrames();
     void drawPinnedRobotMountFrames();
     void drawActiveToolAttachmentFrames();
+    void drawTrajectoryControlPointOverlay();
     void drawRobotCollisionModelVariantPreview();
     void drawObjectCollisionModelVariantPreview();
     void updateObjectCollisionModelVariantPreviewMeshes();
@@ -4110,6 +4113,61 @@ void ProjectScene::Impl::drawActiveToolAttachmentFrames()
     }
 }
 
+void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
+{
+    if(trajectoryControlPointOverlay.empty()) {
+        return;
+    }
+
+    collision::Vec3 minPoint = trajectoryControlPointOverlay.front().translation();
+    collision::Vec3 maxPoint = minPoint;
+    for(const collision::Transform3& point : trajectoryControlPointOverlay) {
+        minPoint = minPoint.cwiseMin(point.translation());
+        maxPoint = maxPoint.cwiseMax(point.translation());
+    }
+
+    const double extent = (maxPoint - minPoint).norm();
+    const float markerRadius = static_cast<float>(
+        std::max(0.025, std::min(0.12, extent > 0.0 ? extent * 0.004 : 0.06)));
+    const float endpointRadius = markerRadius * 1.35f;
+    const glm::vec4 markerColor(1.0f, 0.82f, 0.15f, 1.0f);
+    const glm::vec4 startColor(0.1f, 0.85f, 1.0f, 1.0f);
+    const glm::vec4 endColor(1.0f, 0.25f, 0.15f, 1.0f);
+    const glm::vec4 lineColor(1.0f, 0.55f, 0.10f, 1.0f);
+    const scenecore::RenderTag tag{
+        scenecore::RenderLayer::Gizmo,
+        scenecore::RenderCategory::Debug,
+        scenecore::RenderFeature::Gizmo };
+
+    scenecore::DebugDraw& debug = renderer.debug();
+    for(std::size_t index = 0; index < trajectoryControlPointOverlay.size(); ++index) {
+        const collision::Transform3& point = trajectoryControlPointOverlay[index];
+        if(index > 0) {
+            debug.drawLine(
+                toGlmVec3(trajectoryControlPointOverlay[index - 1].translation()),
+                toGlmVec3(point.translation()),
+                lineColor,
+                tag);
+        }
+
+        const bool isStart = index == 0;
+        const bool isEnd = index + 1 == trajectoryControlPointOverlay.size();
+        const collision::Vec3 position = point.translation();
+        const glm::mat4 markerTransform = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(
+                static_cast<float>(position.x()),
+                static_cast<float>(position.y()),
+                static_cast<float>(position.z())));
+        debug.drawSphere(
+            markerTransform,
+            isStart || isEnd ? endpointRadius : markerRadius,
+            isStart ? startColor : (isEnd ? endColor : markerColor),
+            scenecore::DrawType::UsingUnlitShader,
+            tag);
+    }
+}
+
 void ProjectScene::Impl::hideObjectCollisionModelVariantPreviewMeshes()
 {
     for(auto& entry : objectCollisionVariantMeshPreviews) {
@@ -5169,6 +5227,7 @@ void ProjectScene::update(double timeSeconds)
     m_impl->drawPreviewRobotMountFrames();
     m_impl->drawPinnedRobotMountFrames();
     m_impl->drawActiveToolAttachmentFrames();
+    m_impl->drawTrajectoryControlPointOverlay();
     m_impl->drawRobotCollisionModelVariantPreview();
     m_impl->drawObjectCollisionModelVariantPreview();
     m_impl->drawInteractionModeHints();
@@ -5788,6 +5847,28 @@ bool ProjectScene::clearSurfaceScalarOverlay(const std::string& objectId)
     }
     runtime->surfaceScalarOverlay.reset();
     return true;
+}
+
+void ProjectScene::setTrajectoryControlPointOverlay(
+    const std::string& trajectoryId,
+    const std::vector<simulation_project::TransformDesc>& controlPoints)
+{
+    m_impl->trajectoryControlPointOverlayId = trajectoryId;
+    m_impl->trajectoryControlPointOverlay.clear();
+    m_impl->trajectoryControlPointOverlay.reserve(controlPoints.size());
+    for(const simulation_project::TransformDesc& point : controlPoints) {
+        m_impl->trajectoryControlPointOverlay.push_back(ProjectRuntimeBuilder::makeTransform(point));
+    }
+}
+
+void ProjectScene::clearTrajectoryControlPointOverlay(const std::string& trajectoryId)
+{
+    if(!trajectoryId.empty() && trajectoryId != m_impl->trajectoryControlPointOverlayId) {
+        return;
+    }
+
+    m_impl->trajectoryControlPointOverlayId.clear();
+    m_impl->trajectoryControlPointOverlay.clear();
 }
 
 smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScalarAtScreenPoint(

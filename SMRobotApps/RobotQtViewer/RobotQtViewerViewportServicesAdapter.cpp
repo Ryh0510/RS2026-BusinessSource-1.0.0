@@ -680,6 +680,19 @@ namespace robot_qt_viewer
         m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
     }
 
+    void RobotQtViewerViewportServicesAdapter::setTrajectoryControlPointOverlay(
+        const QString& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& controlPoints)
+    {
+        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints);
+    }
+
+    void RobotQtViewerViewportServicesAdapter::clearTrajectoryControlPointOverlay(
+        const QString& trajectoryId)
+    {
+        m_viewport.clearTrajectoryControlPointOverlay(trajectoryId);
+    }
+
     bool RobotQtViewerViewportServicesAdapter::jointValue(
         const std::string& robotId,
         const std::string& jointName,

@@ -1051,6 +1051,24 @@ void RobotViewport::setSurfaceScalarProbeEnabled(bool enabled, const QString& ob
     }
 }
 
+void RobotViewport::setTrajectoryControlPointOverlay(
+    const QString& trajectoryId,
+    const std::vector<simulation_project::TransformDesc>& controlPoints)
+{
+    if(m_scene != nullptr) {
+        m_scene->setTrajectoryControlPointOverlay(trajectoryId.toStdString(), controlPoints);
+        update();
+    }
+}
+
+void RobotViewport::clearTrajectoryControlPointOverlay(const QString& trajectoryId)
+{
+    if(m_scene != nullptr) {
+        m_scene->clearTrajectoryControlPointOverlay(trajectoryId.toStdString());
+        update();
+    }
+}
+
 bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
 {
     const auto initializeStart = std::chrono::steady_clock::now();
