@@ -1,4 +1,5 @@
 #include <ProjectMotionPlanning/ProjectMotionPlanning.h>
+#include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 
@@ -258,6 +259,95 @@ namespace
         return 0;
     }
 
+    int verifyTrajectoryControlPointEditingRegression()
+    {
+        motion_planning::StoredMotionPlan plan;
+        plan.id = "control_point_editing_regression";
+        plan.name = "Control point editing regression";
+        plan.robotId = "ABB4600_urdf";
+        plan.jointNames = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+
+        robottrajectory::TimedCartesianPoint firstPoint;
+        firstPoint.time = 0.0;
+        firstPoint.tcpPose = Eigen::Isometry3d::Identity();
+        firstPoint.tcpPose.translation().x() = 0.0;
+
+        robottrajectory::TimedCartesianPoint secondPoint = firstPoint;
+        secondPoint.time = 2.0;
+        secondPoint.tcpPose.translation().x() = 2.0;
+
+        plan.cartesianControlPoints.points.push_back(firstPoint);
+        plan.cartesianControlPoints.points.push_back(secondPoint);
+
+        robottrajectory::TimedJointPoint solvedPoint;
+        solvedPoint.time = 0.0;
+        solvedPoint.q = std::vector<double>(6, 0.0);
+        plan.trajectory.points.push_back(solvedPoint);
+
+        robottrajectory::TimedCartesianPoint insertedPoint;
+        std::string errorMessage;
+        if(!motion_planning::ProjectTrajectoryControlPointEditor::makeInsertedCartesianControlPoint(
+               plan,
+               0,
+               motion_planning::CartesianControlPointInsertLocation::After,
+               insertedPoint,
+               &errorMessage))
+            return fail("Control point insertion seed failed: " + errorMessage);
+        if(std::abs(insertedPoint.time - 1.0) > 1.0e-12)
+            return fail("Control point insertion seed did not choose midpoint time.");
+
+        insertedPoint.tcpPose.translation().x() = 1.0;
+        if(!motion_planning::ProjectTrajectoryControlPointEditor::insertCartesianControlPoint(
+               plan,
+               0,
+               motion_planning::CartesianControlPointInsertLocation::After,
+               insertedPoint,
+               &errorMessage))
+            return fail("Control point insertion failed: " + errorMessage);
+        if(plan.cartesianControlPoints.points.size() != 3 ||
+            std::abs(plan.cartesianControlPoints.points[1].time - 1.0) > 1.0e-12 ||
+            !plan.trajectory.empty())
+            return fail("Control point insertion changed the wrong data.");
+
+        plan.trajectory.points.push_back(solvedPoint);
+        robottrajectory::TimedCartesianPoint updatedPoint = plan.cartesianControlPoints.points[1];
+        updatedPoint.time = 0.5;
+        updatedPoint.tcpPose.translation().y() = 0.25;
+        if(!motion_planning::ProjectTrajectoryControlPointEditor::updateCartesianControlPoint(
+               plan,
+               1,
+               updatedPoint,
+               &errorMessage))
+            return fail("Control point update failed: " + errorMessage);
+        if(plan.cartesianControlPoints.points.size() != 3 ||
+            std::abs(plan.cartesianControlPoints.points[1].time - 0.5) > 1.0e-12 ||
+            std::abs(plan.cartesianControlPoints.points[1].tcpPose.translation().y() - 0.25) > 1.0e-12 ||
+            !plan.trajectory.empty())
+            return fail("Control point update did not persist edited pose or invalidate IK.");
+
+        plan.trajectory.points.push_back(solvedPoint);
+        if(!motion_planning::ProjectTrajectoryControlPointEditor::removeCartesianControlPoint(
+               plan,
+               1,
+               &errorMessage))
+            return fail("Control point delete failed: " + errorMessage);
+        if(plan.cartesianControlPoints.points.size() != 2 || !plan.trajectory.empty())
+            return fail("Control point delete did not remove one pose and invalidate IK.");
+
+        if(!motion_planning::ProjectTrajectoryControlPointEditor::removeCartesianControlPoint(
+               plan,
+               0,
+               &errorMessage))
+            return fail("Control point delete down to one failed: " + errorMessage);
+        if(motion_planning::ProjectTrajectoryControlPointEditor::removeCartesianControlPoint(
+               plan,
+               0,
+               &errorMessage))
+            return fail("Control point delete allowed removing the last pose.");
+
+        return 0;
+    }
+
     int runImportOnly(const Options& options)
     {
         simulation_project::ProjectDocument document;
@@ -364,6 +454,8 @@ namespace
 
         if(const int ikRegression = verifyIrb4600InverseKinematicsRegression(); ikRegression != 0)
             return ikRegression;
+        if(const int editRegression = verifyTrajectoryControlPointEditingRegression(); editRegression != 0)
+            return editRegression;
 
         std::cout << "PASS ProjectMotionPlanning import-only regression\n";
         return 0;

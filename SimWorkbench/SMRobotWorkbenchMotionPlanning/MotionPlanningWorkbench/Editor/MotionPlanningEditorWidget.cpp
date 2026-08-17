@@ -4,11 +4,15 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -46,6 +50,23 @@ namespace
         auto* item = new QTableWidgetItem(text);
         item->setFlags(item->flags() & ~Qt::ItemIsEditable);
         return item;
+    }
+
+    QDoubleSpinBox* makePoseSpinBox(
+        QWidget* parent,
+        double minimum,
+        double maximum,
+        double value,
+        double step,
+        const QString& suffix = QString())
+    {
+        auto* spinBox = new QDoubleSpinBox(parent);
+        spinBox->setRange(minimum, maximum);
+        spinBox->setDecimals(6);
+        spinBox->setSingleStep(step);
+        spinBox->setValue(value);
+        spinBox->setSuffix(suffix);
+        return spinBox;
     }
 
     void populateTrajectoryTable(
@@ -162,6 +183,7 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
         QStringLiteral("Position"),
         QStringLiteral("Euler (deg)")
     }, 145);
+    m_poseTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_poseTable);
 
     auto* jointTitle = new QLabel(QStringLiteral("IK Joint Values"), this);
@@ -178,6 +200,17 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
 
     m_applyJointPointButton = new QPushButton(QStringLiteral("Apply selected joint point"), this);
     layout->addWidget(m_applyJointPointButton);
+
+    auto* playbackLayout = new QHBoxLayout();
+    playbackLayout->setSpacing(6);
+    m_playbackDuration = new QDoubleSpinBox(this);
+    m_playbackDuration->setRange(0.1, 3600.0);
+    m_playbackDuration->setValue(5.0);
+    m_playbackDuration->setSuffix(QStringLiteral(" s"));
+    m_playbackButton = new QPushButton(QStringLiteral("Play IK result"), this);
+    playbackLayout->addWidget(m_playbackDuration);
+    playbackLayout->addWidget(m_playbackButton);
+    layout->addLayout(playbackLayout);
 
     m_result = new QLabel(QStringLiteral("Select a robot and enter joint vectors."), this);
     m_result->setWordWrap(true);
@@ -202,6 +235,15 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     connect(m_applyJointPointButton, &QPushButton::clicked, this, [this]() {
         emit applySelectedJointPointRequested(m_jointTable != nullptr ? m_jointTable->currentRow() : -1);
     });
+    connect(m_playbackButton, &QPushButton::clicked, this, [this]() {
+        if(m_playbackActive) {
+            emit playbackStopRequested();
+        } else {
+            emit playbackRequested(m_playbackDuration != nullptr ? m_playbackDuration->value() : 5.0);
+        }
+    });
+    connect(m_poseTable, &QTableWidget::customContextMenuRequested,
+        this, &MotionPlanningEditorWidget::showControlPointContextMenu);
     connect(m_trajectoryCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, [this]() {
             if(m_trajectoryCombo != nullptr) {
@@ -212,6 +254,65 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     connect(m_jointTable, &QTableWidget::currentCellChanged, this, [this]() {
         updateTrajectoryActions();
     });
+    updateTrajectoryActions();
+}
+
+bool MotionPlanningEditorWidget::editControlPointPose(
+    ControlPointPoseEditorData& data,
+    const QString& title)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+
+    auto* layout = new QFormLayout(&dialog);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    auto* time = makePoseSpinBox(&dialog, 0.0, 3600.0, data.time, 0.1, QStringLiteral(" s"));
+    auto* x = makePoseSpinBox(&dialog, -10000.0, 10000.0, data.x, 0.001, QStringLiteral(" m"));
+    auto* y = makePoseSpinBox(&dialog, -10000.0, 10000.0, data.y, 0.001, QStringLiteral(" m"));
+    auto* z = makePoseSpinBox(&dialog, -10000.0, 10000.0, data.z, 0.001, QStringLiteral(" m"));
+    auto* roll = makePoseSpinBox(&dialog, -360.0, 360.0, data.rollDeg, 1.0, QStringLiteral(" deg"));
+    auto* pitch = makePoseSpinBox(&dialog, -360.0, 360.0, data.pitchDeg, 1.0, QStringLiteral(" deg"));
+    auto* yaw = makePoseSpinBox(&dialog, -360.0, 360.0, data.yawDeg, 1.0, QStringLiteral(" deg"));
+
+    layout->addRow(QStringLiteral("Time"), time);
+    layout->addRow(QStringLiteral("X"), x);
+    layout->addRow(QStringLiteral("Y"), y);
+    layout->addRow(QStringLiteral("Z"), z);
+    layout->addRow(QStringLiteral("Roll"), roll);
+    layout->addRow(QStringLiteral("Pitch"), pitch);
+    layout->addRow(QStringLiteral("Yaw"), yaw);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog);
+    layout->addRow(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if(dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    data.time = time->value();
+    data.x = x->value();
+    data.y = y->value();
+    data.z = z->value();
+    data.rollDeg = roll->value();
+    data.pitchDeg = pitch->value();
+    data.yawDeg = yaw->value();
+    return true;
+}
+
+void MotionPlanningEditorWidget::setPlaybackActive(bool active)
+{
+    m_playbackActive = active;
+    if(m_playbackButton != nullptr) {
+        m_playbackButton->setText(active
+            ? QStringLiteral("Stop playback")
+            : QStringLiteral("Play IK result"));
+    }
     updateTrajectoryActions();
 }
 
@@ -304,6 +405,9 @@ void MotionPlanningEditorWidget::updateTrajectoryActions()
         m_jointTable->currentRow() >= 0 &&
         m_jointTable->rowCount() > 0 &&
         !(m_jointTable->rowCount() == 1 && m_jointTable->columnSpan(0, 0) > 1);
+    const bool hasAnyJointRow = m_jointTable != nullptr &&
+        m_jointTable->rowCount() > 0 &&
+        !(m_jointTable->rowCount() == 1 && m_jointTable->columnSpan(0, 0) > 1);
 
     if(m_ikToolMode != nullptr) {
         m_ikToolMode->setEnabled(hasRobot && hasCartesian);
@@ -313,5 +417,44 @@ void MotionPlanningEditorWidget::updateTrajectoryActions()
     }
     if(m_applyJointPointButton != nullptr) {
         m_applyJointPointButton->setEnabled(hasRobot && hasJoint && hasValidJointRow);
+    }
+    if(m_playbackDuration != nullptr) {
+        m_playbackDuration->setEnabled(!m_playbackActive && hasRobot && hasJoint && hasAnyJointRow);
+    }
+    if(m_playbackButton != nullptr) {
+        m_playbackButton->setEnabled(m_playbackActive || (hasRobot && hasJoint && hasAnyJointRow));
+    }
+}
+
+void MotionPlanningEditorWidget::showControlPointContextMenu(const QPoint& pos)
+{
+    if(m_poseTable == nullptr) {
+        return;
+    }
+
+    QTableWidgetItem* item = m_poseTable->itemAt(pos);
+    if(item == nullptr || m_poseTable->columnSpan(item->row(), 0) > 1) {
+        return;
+    }
+
+    const int row = item->row();
+    m_poseTable->setCurrentCell(row, item->column());
+
+    QMenu menu(this);
+    QAction* insertBefore = menu.addAction(QStringLiteral("Insert Before"));
+    QAction* insertAfter = menu.addAction(QStringLiteral("Insert After"));
+    menu.addSeparator();
+    QAction* edit = menu.addAction(QStringLiteral("Edit"));
+    QAction* remove = menu.addAction(QStringLiteral("Delete"));
+
+    QAction* selectedAction = menu.exec(m_poseTable->viewport()->mapToGlobal(pos));
+    if(selectedAction == insertBefore) {
+        emit insertControlPointBeforeRequested(row);
+    } else if(selectedAction == insertAfter) {
+        emit insertControlPointAfterRequested(row);
+    } else if(selectedAction == edit) {
+        emit editControlPointRequested(row);
+    } else if(selectedAction == remove) {
+        emit deleteControlPointRequested(row);
     }
 }

@@ -11,6 +11,7 @@ class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
+class QPoint;
 
 class MotionPlanningEditorWidget : public QWidget
 {
@@ -33,6 +34,17 @@ public:
         QString orientationText;
     };
 
+    struct ControlPointPoseEditorData
+    {
+        double time = 0.0;
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        double rollDeg = 0.0;
+        double pitchDeg = 0.0;
+        double yawDeg = 0.0;
+    };
+
     explicit MotionPlanningEditorWidget(QWidget* parent = nullptr);
 
     void setRobotId(const QString& robotId);
@@ -45,6 +57,8 @@ public:
         const QVector<TrajectoryPointRow>& jointPoints,
         const QString& emptyPoseText,
         const QString& emptyJointText);
+    bool editControlPointPose(ControlPointPoseEditorData& data, const QString& title);
+    void setPlaybackActive(bool active);
 
 signals:
     void planRequested(
@@ -56,10 +70,17 @@ signals:
     void importTrajectoryRequested();
     void inverseKinematicsRequested(bool useToolTransform);
     void applySelectedJointPointRequested(int pointIndex);
+    void insertControlPointBeforeRequested(int pointIndex);
+    void insertControlPointAfterRequested(int pointIndex);
+    void deleteControlPointRequested(int pointIndex);
+    void editControlPointRequested(int pointIndex);
+    void playbackRequested(double durationSeconds);
+    void playbackStopRequested();
     void trajectorySelectionChanged(const QString& trajectoryId);
 
 private:
     void updateTrajectoryActions();
+    void showControlPointContextMenu(const QPoint& pos);
 
     QLabel* m_robotValue = nullptr;
     QLineEdit* m_startJoints = nullptr;
@@ -72,8 +93,11 @@ private:
     QComboBox* m_ikToolMode = nullptr;
     QPushButton* m_solveIkButton = nullptr;
     QPushButton* m_applyJointPointButton = nullptr;
+    QDoubleSpinBox* m_playbackDuration = nullptr;
+    QPushButton* m_playbackButton = nullptr;
     QComboBox* m_trajectoryCombo = nullptr;
     QTableWidget* m_poseTable = nullptr;
     QTableWidget* m_jointTable = nullptr;
     QLabel* m_result = nullptr;
+    bool m_playbackActive = false;
 };
