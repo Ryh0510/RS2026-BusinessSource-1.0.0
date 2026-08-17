@@ -4128,8 +4128,8 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
 
     const double extent = (maxPoint - minPoint).norm();
     const float markerRadius = static_cast<float>(
-        std::max(0.025, std::min(0.12, extent > 0.0 ? extent * 0.004 : 0.06)));
-    const float endpointRadius = markerRadius * 1.35f;
+        std::max(0.008, std::min(0.035, extent > 0.0 ? extent * 0.0015 : 0.018)));
+    const float endpointRadius = markerRadius * 1.25f;
     const glm::vec4 markerColor(1.0f, 0.82f, 0.15f, 1.0f);
     const glm::vec4 startColor(0.1f, 0.85f, 1.0f, 1.0f);
     const glm::vec4 endColor(1.0f, 0.25f, 0.15f, 1.0f);

@@ -13,9 +13,75 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStyle>
+#include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
+
+namespace
+{
+    void configureTrajectoryTable(
+        QTableWidget* table,
+        const QStringList& headers,
+        int minimumHeight)
+    {
+        table->setColumnCount(headers.size());
+        table->setHorizontalHeaderLabels(headers);
+        table->verticalHeader()->setVisible(false);
+        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+        for(int column = 2; column < headers.size(); ++column) {
+            table->horizontalHeader()->setSectionResizeMode(column, QHeaderView::Stretch);
+        }
+        table->setColumnWidth(0, 42);
+        table->setColumnWidth(1, 56);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setMinimumHeight(minimumHeight);
+    }
+
+    QTableWidgetItem* makeReadOnlyItem(const QString& text)
+    {
+        auto* item = new QTableWidgetItem(text);
+        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+        return item;
+    }
+
+    void populateTrajectoryTable(
+        QTableWidget* table,
+        const QVector<MotionPlanningEditorWidget::TrajectoryPointRow>& points,
+        const QString& emptyText)
+    {
+        if(table == nullptr) {
+            return;
+        }
+
+        table->clearSpans();
+        table->setRowCount(points.size());
+        const int columnCount = table->columnCount();
+        for(int row = 0; row < points.size(); ++row) {
+            const MotionPlanningEditorWidget::TrajectoryPointRow& point = points[row];
+            table->setItem(row, 0, makeReadOnlyItem(QString::number(point.index)));
+            table->setItem(row, 1, makeReadOnlyItem(point.timeText));
+            table->setItem(row, 2, makeReadOnlyItem(point.valueText));
+            if(columnCount > 3) {
+                table->setItem(row, 3, makeReadOnlyItem(point.orientationText));
+            }
+        }
+
+        if(points.empty()) {
+            table->setRowCount(1);
+            table->setSpan(0, 0, 1, columnCount);
+            table->setItem(0, 0, makeReadOnlyItem(emptyText));
+        }
+        table->resizeColumnToContents(0);
+        table->resizeColumnToContents(1);
+        if(columnCount > 3) {
+            table->resizeColumnToContents(3);
+        }
+    }
+}
 
 MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     : QWidget(parent)
@@ -70,29 +136,48 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     m_importButton = new QPushButton(QStringLiteral("Import trajectory..."), this);
     layout->addWidget(m_importButton);
 
+    auto* ikForm = new QFormLayout();
+    ikForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    m_ikToolMode = new QComboBox(this);
+    m_ikToolMode->addItem(QStringLiteral("With tool TCP"), true);
+    m_ikToolMode->addItem(QStringLiteral("Robot flange"), false);
+    ikForm->addRow(QStringLiteral("IK target"), m_ikToolMode);
+    layout->addLayout(ikForm);
+
+    m_solveIkButton = new QPushButton(QStringLiteral("Solve IK and apply"), this);
+    layout->addWidget(m_solveIkButton);
+
     m_trajectoryCombo = new QComboBox(this);
     robot_qt_viewer::makeHorizontallyCompressible(m_trajectoryCombo);
     layout->addWidget(m_trajectoryCombo);
 
-    m_pointsTable = new QTableWidget(this);
-    m_pointsTable->setColumnCount(4);
-    m_pointsTable->setHorizontalHeaderLabels({
+    auto* poseTitle = new QLabel(QStringLiteral("Control Point Poses"), this);
+    poseTitle->setProperty("panelTitle", true);
+    layout->addWidget(poseTitle);
+
+    m_poseTable = new QTableWidget(this);
+    configureTrajectoryTable(m_poseTable, {
         QStringLiteral("#"),
         QStringLiteral("t"),
-        QStringLiteral("Position / joints"),
+        QStringLiteral("Position"),
         QStringLiteral("Euler (deg)")
-    });
-    m_pointsTable->verticalHeader()->setVisible(false);
-    m_pointsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    m_pointsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-    m_pointsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_pointsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-    m_pointsTable->setColumnWidth(0, 42);
-    m_pointsTable->setColumnWidth(1, 56);
-    m_pointsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_pointsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_pointsTable->setMinimumHeight(180);
-    layout->addWidget(m_pointsTable);
+    }, 145);
+    layout->addWidget(m_poseTable);
+
+    auto* jointTitle = new QLabel(QStringLiteral("IK Joint Values"), this);
+    jointTitle->setProperty("panelTitle", true);
+    layout->addWidget(jointTitle);
+
+    m_jointTable = new QTableWidget(this);
+    configureTrajectoryTable(m_jointTable, {
+        QStringLiteral("#"),
+        QStringLiteral("t"),
+        QStringLiteral("Joint values")
+    }, 145);
+    layout->addWidget(m_jointTable);
+
+    m_applyJointPointButton = new QPushButton(QStringLiteral("Apply selected joint point"), this);
+    layout->addWidget(m_applyJointPointButton);
 
     m_result = new QLabel(QStringLiteral("Select a robot and enter joint vectors."), this);
     m_result->setWordWrap(true);
@@ -109,12 +194,25 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     });
     connect(m_importButton, &QPushButton::clicked,
         this, &MotionPlanningEditorWidget::importTrajectoryRequested);
+    connect(m_solveIkButton, &QPushButton::clicked, this, [this]() {
+        const bool useToolTransform = m_ikToolMode != nullptr &&
+            m_ikToolMode->currentData().toBool();
+        emit inverseKinematicsRequested(useToolTransform);
+    });
+    connect(m_applyJointPointButton, &QPushButton::clicked, this, [this]() {
+        emit applySelectedJointPointRequested(m_jointTable != nullptr ? m_jointTable->currentRow() : -1);
+    });
     connect(m_trajectoryCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, [this]() {
             if(m_trajectoryCombo != nullptr) {
                 emit trajectorySelectionChanged(m_trajectoryCombo->currentData().toString());
             }
+            updateTrajectoryActions();
         });
+    connect(m_jointTable, &QTableWidget::currentCellChanged, this, [this]() {
+        updateTrajectoryActions();
+    });
+    updateTrajectoryActions();
 }
 
 void MotionPlanningEditorWidget::setJointDefaults(
@@ -136,6 +234,7 @@ void MotionPlanningEditorWidget::setRobotId(const QString& robotId)
     if(m_importButton != nullptr) {
         m_importButton->setEnabled(!robotId.isEmpty());
     }
+    updateTrajectoryActions();
 }
 
 void MotionPlanningEditorWidget::setResult(const QString& summary, bool success)
@@ -149,10 +248,12 @@ void MotionPlanningEditorWidget::setResult(const QString& summary, bool success)
 void MotionPlanningEditorWidget::setTrajectoryView(
     const QVector<TrajectoryListItem>& trajectories,
     const QString& selectedTrajectoryId,
-    const QVector<TrajectoryPointRow>& points,
-    const QString& emptyText)
+    const QVector<TrajectoryPointRow>& posePoints,
+    const QVector<TrajectoryPointRow>& jointPoints,
+    const QString& emptyPoseText,
+    const QString& emptyJointText)
 {
-    if(m_trajectoryCombo == nullptr || m_pointsTable == nullptr) {
+    if(m_trajectoryCombo == nullptr || m_poseTable == nullptr || m_jointTable == nullptr) {
         return;
     }
 
@@ -168,6 +269,10 @@ void MotionPlanningEditorWidget::setTrajectoryView(
                 .arg(trajectory.pointCount);
         }
         m_trajectoryCombo->addItem(label, trajectory.id);
+        m_trajectoryCombo->setItemData(
+            m_trajectoryCombo->count() - 1,
+            trajectory.kind,
+            Qt::UserRole + 1);
         if(trajectory.id == selectedTrajectoryId) {
             selectedIndex = m_trajectoryCombo->count() - 1;
         }
@@ -180,27 +285,33 @@ void MotionPlanningEditorWidget::setTrajectoryView(
     }
     m_trajectoryCombo->setEnabled(m_trajectoryCombo->count() > 0);
 
-    m_pointsTable->clearSpans();
-    m_pointsTable->setRowCount(points.size());
-    auto makeItem = [](const QString& text) {
-        auto* item = new QTableWidgetItem(text);
-        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-        return item;
-    };
+    populateTrajectoryTable(m_poseTable, posePoints, emptyPoseText);
+    populateTrajectoryTable(m_jointTable, jointPoints, emptyJointText);
+    updateTrajectoryActions();
+}
 
-    for(int row = 0; row < points.size(); ++row) {
-        const TrajectoryPointRow& point = points[row];
-        m_pointsTable->setItem(row, 0, makeItem(QString::number(point.index)));
-        m_pointsTable->setItem(row, 1, makeItem(point.timeText));
-        m_pointsTable->setItem(row, 2, makeItem(point.valueText));
-        m_pointsTable->setItem(row, 3, makeItem(point.orientationText));
+void MotionPlanningEditorWidget::updateTrajectoryActions()
+{
+    const bool hasRobot = m_robotValue != nullptr &&
+        m_robotValue->text() != QStringLiteral("No robot selected");
+    QString kind;
+    if(m_trajectoryCombo != nullptr && m_trajectoryCombo->currentIndex() >= 0) {
+        kind = m_trajectoryCombo->currentData(Qt::UserRole + 1).toString();
     }
-    if(points.empty()) {
-        m_pointsTable->setRowCount(1);
-        m_pointsTable->setSpan(0, 0, 1, 4);
-        m_pointsTable->setItem(0, 0, makeItem(emptyText));
+    const bool hasCartesian = kind.contains(QStringLiteral("cartesian"));
+    const bool hasJoint = kind.contains(QStringLiteral("joint"));
+    const bool hasValidJointRow = m_jointTable != nullptr &&
+        m_jointTable->currentRow() >= 0 &&
+        m_jointTable->rowCount() > 0 &&
+        !(m_jointTable->rowCount() == 1 && m_jointTable->columnSpan(0, 0) > 1);
+
+    if(m_ikToolMode != nullptr) {
+        m_ikToolMode->setEnabled(hasRobot && hasCartesian);
     }
-    m_pointsTable->resizeColumnToContents(0);
-    m_pointsTable->resizeColumnToContents(1);
-    m_pointsTable->resizeColumnToContents(3);
+    if(m_solveIkButton != nullptr) {
+        m_solveIkButton->setEnabled(hasRobot && hasCartesian);
+    }
+    if(m_applyJointPointButton != nullptr) {
+        m_applyJointPointButton->setEnabled(hasRobot && hasJoint && hasValidJointRow);
+    }
 }

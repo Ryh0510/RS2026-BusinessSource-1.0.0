@@ -8,6 +8,7 @@
 
 #include <MotionPlanningCore/MotionPlanning.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
+#include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 #include <SimulationProject/ProjectDocumentService.h>
 
 #include <QFileDialog>
@@ -65,7 +66,31 @@ namespace
         for(const simulation_project::JointValueDesc& joint : robotIt->initialJoints) {
             names.push_back(joint.jointName);
         }
+        if(names.empty() &&
+            (robotIt->sourcePath.find("ABB4600") != std::string::npos ||
+             robotIt->sourcePath.find("4600") != std::string::npos ||
+             robotIt->id.find("4600") != std::string::npos)) {
+            names = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        }
         return names;
+    }
+
+    bool usesIrb4600RobotSystemJointSigns(
+        const simulation_project::ProjectDocument& document,
+        const QString& robotId)
+    {
+        const auto robotIt = std::find_if(
+            document.robots.begin(),
+            document.robots.end(),
+            [&](const simulation_project::RobotDesc& robot) {
+                return robot.id == robotId.toStdString();
+            });
+        if(robotIt == document.robots.end()) {
+            return false;
+        }
+        return robotIt->sourcePath.find("ABB4600") != std::string::npos ||
+            robotIt->sourcePath.find("4600") != std::string::npos ||
+            robotIt->id.find("4600") != std::string::npos;
     }
 
     QString formatDouble(double value)
@@ -156,6 +181,10 @@ namespace robot_qt_viewer
             this, &MotionPlanningModuleController::planTrajectory);
         connect(&m_widget, &MotionPlanningEditorWidget::importTrajectoryRequested,
             this, &MotionPlanningModuleController::importTrajectory);
+        connect(&m_widget, &MotionPlanningEditorWidget::inverseKinematicsRequested,
+            this, &MotionPlanningModuleController::solveInverseKinematics);
+        connect(&m_widget, &MotionPlanningEditorWidget::applySelectedJointPointRequested,
+            this, &MotionPlanningModuleController::applySelectedJointPoint);
         connect(&m_widget, &MotionPlanningEditorWidget::trajectorySelectionChanged,
             this, &MotionPlanningModuleController::setSelectedTrajectory);
         setSelectedRobot(m_context.selectionModel().state().robotId);
@@ -322,6 +351,155 @@ namespace robot_qt_viewer
         emit statusMessageRequested(summary, 5000);
     }
 
+    void MotionPlanningModuleController::solveInverseKinematics(bool useToolTransform)
+    {
+        if(m_selectedRobotId.isEmpty()) {
+            m_widget.setResult(QStringLiteral("Select a robot before solving IK."), false);
+            return;
+        }
+        if(m_selectedTrajectoryId.isEmpty()) {
+            m_widget.setResult(QStringLiteral("Select an imported cartesian trajectory before solving IK."), false);
+            return;
+        }
+
+        const std::vector<motion_planning::StoredMotionPlan> plans =
+            motion_planning::MotionPlanningProjectStore::plans(m_context.document());
+        const std::string selectedId = m_selectedTrajectoryId.toStdString();
+        const auto planIt = std::find_if(
+            plans.begin(),
+            plans.end(),
+            [&](const motion_planning::StoredMotionPlan& plan) {
+                return plan.id == selectedId && plan.robotId == m_selectedRobotId.toStdString();
+            });
+        if(planIt == plans.end()) {
+            m_widget.setResult(QStringLiteral("Selected trajectory is not available for this robot."), false);
+            return;
+        }
+        if(planIt->cartesianControlPoints.empty()) {
+            m_widget.setResult(QStringLiteral("Selected trajectory has no cartesian control points."), false);
+            return;
+        }
+
+        motion_planning::CartesianIkOptions options;
+        options.robotId = m_selectedRobotId.toStdString();
+        options.jointNames = selectedRobotJointNames(m_context.document(), m_selectedRobotId);
+        options.toolMode = useToolTransform
+            ? motion_planning::CartesianIkToolMode::FixedTool
+            : motion_planning::CartesianIkToolMode::Flange;
+        options.maxIterations = 1500;
+        options.tolerance = 1.0e-5;
+        options.stepSize = 0.12;
+        options.damping = 0.01;
+
+        if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+            for(const std::string& jointName : options.jointNames) {
+                bool ok = false;
+                const double value = viewportServices->robotJointValue(
+                    m_selectedRobotId,
+                    QString::fromStdString(jointName),
+                    &ok);
+                if(!ok) {
+                    options.seedJoints.clear();
+                    break;
+                }
+                options.seedJoints.push_back(value);
+            }
+        }
+
+        const motion_planning::CartesianIkResult ikResult =
+            motion_planning::ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(
+                m_context.document(),
+                *planIt,
+                options);
+        if(!ikResult.success) {
+            QString message = ikResult.diagnostics.empty()
+                ? QStringLiteral("Inverse kinematics failed.")
+                : QString::fromStdString(ikResult.diagnostics.front().message);
+            message += QStringLiteral(" Solved %1/%2 points.")
+                .arg(static_cast<int>(ikResult.solvedPointCount()))
+                .arg(static_cast<int>(ikResult.points.size()));
+            m_widget.setResult(message, false);
+            emit statusMessageRequested(message, 7000);
+            return;
+        }
+
+        const motion_planning::StoredMotionPlan solvedPlan = ikResult.plan;
+        const ProjectMutationResult mutation = m_context.documentController().mutateProject(
+            QStringLiteral("motionPlanningIK"),
+            ProjectDirtyPolicy::UserEdit,
+            [solvedPlan](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                if(!motion_planning::MotionPlanningProjectStore::upsertPlan(
+                       service.document(), solvedPlan, &error)) {
+                    return false;
+                }
+                changed = true;
+                return true;
+            });
+        if(!mutation.success) {
+            m_widget.setResult(mutation.message, false);
+            emit statusMessageRequested(mutation.message, 7000);
+            return;
+        }
+
+        m_selectedTrajectoryId = QString::fromStdString(solvedPlan.id);
+        refreshTrajectoryView();
+
+        if(!solvedPlan.trajectory.points.empty()) {
+            applyJointValuesToRobot(
+                solvedPlan.jointNames,
+                solvedPlan.trajectory.points.front().q,
+                QStringLiteral("motionPlanningIKApply"));
+        }
+
+        const QString mode = useToolTransform
+            ? QStringLiteral("with tool")
+            : QStringLiteral("flange");
+        const QString summary = QStringLiteral("Solved IK for %1 points (%2) as %3")
+            .arg(static_cast<int>(solvedPlan.trajectory.points.size()))
+            .arg(mode)
+            .arg(QString::fromStdString(solvedPlan.id));
+        m_widget.setResult(summary, true);
+        emit trajectoryPlanned(QString::fromStdString(solvedPlan.id));
+        emit statusMessageRequested(summary, 5000);
+    }
+
+    void MotionPlanningModuleController::applySelectedJointPoint(int pointIndex)
+    {
+        if(pointIndex < 0 || m_selectedRobotId.isEmpty() || m_selectedTrajectoryId.isEmpty()) {
+            return;
+        }
+
+        const std::vector<motion_planning::StoredMotionPlan> plans =
+            motion_planning::MotionPlanningProjectStore::plans(m_context.document());
+        const std::string selectedId = m_selectedTrajectoryId.toStdString();
+        const auto planIt = std::find_if(
+            plans.begin(),
+            plans.end(),
+            [&](const motion_planning::StoredMotionPlan& plan) {
+                return plan.id == selectedId && plan.robotId == m_selectedRobotId.toStdString();
+            });
+        if(planIt == plans.end() || planIt->trajectory.empty()) {
+            m_widget.setResult(QStringLiteral("Selected trajectory has no joint values to apply."), false);
+            return;
+        }
+        const std::size_t index = static_cast<std::size_t>(pointIndex);
+        if(index >= planIt->trajectory.points.size()) {
+            m_widget.setResult(QStringLiteral("Selected trajectory point is out of range."), false);
+            return;
+        }
+
+        if(applyJointValuesToRobot(
+               planIt->jointNames,
+               planIt->trajectory.points[index].q,
+               QStringLiteral("motionPlanningApplyJointPoint"))) {
+            const QString summary = QStringLiteral("Applied joint point %1 to %2")
+                .arg(pointIndex + 1)
+                .arg(m_selectedRobotId);
+            m_widget.setResult(summary, true);
+            emit statusMessageRequested(summary, 4000);
+        }
+    }
+
     void MotionPlanningModuleController::setSelectedTrajectory(const QString& trajectoryId)
     {
         if(m_selectedTrajectoryId == trajectoryId) {
@@ -363,7 +541,8 @@ namespace robot_qt_viewer
     void MotionPlanningModuleController::refreshTrajectoryView()
     {
         QVector<MotionPlanningEditorWidget::TrajectoryListItem> items;
-        QVector<MotionPlanningEditorWidget::TrajectoryPointRow> rows;
+        QVector<MotionPlanningEditorWidget::TrajectoryPointRow> poseRows;
+        QVector<MotionPlanningEditorWidget::TrajectoryPointRow> jointRows;
 
         const std::vector<motion_planning::StoredMotionPlan> plans =
             motion_planning::MotionPlanningProjectStore::plans(m_context.document());
@@ -378,7 +557,9 @@ namespace robot_qt_viewer
             item.id = QString::fromStdString(plan.id);
             item.label = QString::fromStdString(plan.name.empty() ? plan.id : plan.name);
             if(!plan.trajectory.empty()) {
-                item.kind = QStringLiteral("joint");
+                item.kind = !plan.cartesianControlPoints.empty()
+                    ? QStringLiteral("joint+cartesian")
+                    : QStringLiteral("joint");
                 item.pointCount = static_cast<int>(plan.trajectory.points.size());
             } else if(!plan.cartesianControlPoints.empty()) {
                 item.kind = QStringLiteral("cartesian");
@@ -414,6 +595,19 @@ namespace robot_qt_viewer
             m_selectedTrajectoryId.clear();
         }
 
+        if(selectedPlan != nullptr && !selectedPlan->cartesianControlPoints.empty()) {
+            for(std::size_t index = 0; index < selectedPlan->cartesianControlPoints.points.size(); ++index) {
+                const robottrajectory::TimedCartesianPoint& point =
+                    selectedPlan->cartesianControlPoints.points[index];
+                MotionPlanningEditorWidget::TrajectoryPointRow row;
+                row.index = static_cast<int>(index + 1);
+                row.timeText = formatDouble(point.time);
+                row.valueText = formatCartesianPose(point);
+                row.orientationText = formatCartesianEuler(point);
+                poseRows.push_back(row);
+            }
+        }
+
         if(selectedPlan != nullptr && !selectedPlan->trajectory.empty()) {
             const std::vector<std::string>& jointNames = selectedPlan->jointNames;
             for(std::size_t index = 0; index < selectedPlan->trajectory.points.size(); ++index) {
@@ -424,25 +618,23 @@ namespace robot_qt_viewer
                 row.timeText = formatDouble(point.time);
                 row.valueText = formatJointValues(jointNames, point.q);
                 row.orientationText.clear();
-                rows.push_back(row);
-            }
-        } else if(selectedPlan != nullptr && !selectedPlan->cartesianControlPoints.empty()) {
-            for(std::size_t index = 0; index < selectedPlan->cartesianControlPoints.points.size(); ++index) {
-                const robottrajectory::TimedCartesianPoint& point =
-                    selectedPlan->cartesianControlPoints.points[index];
-                MotionPlanningEditorWidget::TrajectoryPointRow row;
-                row.index = static_cast<int>(index + 1);
-                row.timeText = formatDouble(point.time);
-                row.valueText = formatCartesianPose(point);
-                row.orientationText = formatCartesianEuler(point);
-                rows.push_back(row);
+                jointRows.push_back(row);
             }
         }
 
-        const QString emptyText = items.empty()
+        const QString emptyPoseText = items.empty()
             ? QStringLiteral("No stored trajectory for the selected robot.")
-            : QStringLiteral("No control points in the selected trajectory.");
-        m_widget.setTrajectoryView(items, m_selectedTrajectoryId, rows, emptyText);
+            : QStringLiteral("No cartesian control point poses in the selected trajectory.");
+        const QString emptyJointText = items.empty()
+            ? QStringLiteral("No stored trajectory for the selected robot.")
+            : QStringLiteral("No inverse kinematics joint values in the selected trajectory.");
+        m_widget.setTrajectoryView(
+            items,
+            m_selectedTrajectoryId,
+            poseRows,
+            jointRows,
+            emptyPoseText,
+            emptyJointText);
 
         if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
             if(selectedPlan != nullptr && !selectedPlan->cartesianControlPoints.empty()) {
@@ -453,5 +645,62 @@ namespace robot_qt_viewer
                 viewportServices->clearTrajectoryControlPointOverlay();
             }
         }
+    }
+
+    bool MotionPlanningModuleController::applyJointValuesToRobot(
+        const std::vector<std::string>& jointNames,
+        const std::vector<double>& jointValues,
+        const QString& sourceId)
+    {
+        if(m_selectedRobotId.isEmpty()) {
+            m_widget.setResult(QStringLiteral("Select a robot before applying joint values."), false);
+            return false;
+        }
+        if(jointNames.size() != jointValues.size() || jointNames.empty()) {
+            m_widget.setResult(QStringLiteral("Joint names must match joint values."), false);
+            return false;
+        }
+
+        const std::string robotId = m_selectedRobotId.toStdString();
+        const std::vector<double> robotJointValues = usesIrb4600RobotSystemJointSigns(
+            m_context.document(),
+            m_selectedRobotId)
+            ? motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(jointValues)
+            : jointValues;
+        const ProjectMutationResult mutation = m_context.documentController().mutateProject(
+            sourceId,
+            ProjectDirtyPolicy::UserEdit,
+            [&, robotJointValues](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                if(!motion_planning::ProjectTrajectoryInverseKinematics::applyJointValuesToRobotInitialJoints(
+                       service.document(),
+                       robotId,
+                       jointNames,
+                       robotJointValues,
+                       &error)) {
+                    return false;
+                }
+                changed = true;
+                return true;
+            });
+        if(!mutation.success) {
+            m_widget.setResult(mutation.message, false);
+            emit statusMessageRequested(mutation.message, 6000);
+            return false;
+        }
+
+        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        if(viewportServices == nullptr) {
+            m_widget.setResult(QStringLiteral("Viewport is not available."), false);
+            return false;
+        }
+
+        for(std::size_t index = 0; index < jointNames.size(); ++index) {
+            viewportServices->setRobotJointValue(
+                m_selectedRobotId,
+                QString::fromStdString(jointNames[index]),
+                robotJointValues[index]);
+        }
+        m_context.documentController().publishRobotRuntimeChanged(sourceId);
+        return true;
     }
 }

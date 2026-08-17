@@ -5,6 +5,9 @@
 #include <QObject>
 #include <QString>
 
+#include <string>
+#include <vector>
+
 class MotionPlanningEditorWidget;
 
 namespace robot_qt_viewer
@@ -35,9 +38,15 @@ namespace robot_qt_viewer
             double duration,
             int sampleCount);
         void importTrajectory();
+        void solveInverseKinematics(bool useToolTransform);
+        void applySelectedJointPoint(int pointIndex);
         void setSelectedTrajectory(const QString& trajectoryId);
         void setSelectedRobot(const QString& robotId);
         void refreshTrajectoryView();
+        bool applyJointValuesToRobot(
+            const std::vector<std::string>& jointNames,
+            const std::vector<double>& jointValues,
+            const QString& sourceId);
 
         MotionPlanningEditorWidget& m_widget;
         RobotQtViewerDocumentContext& m_context;

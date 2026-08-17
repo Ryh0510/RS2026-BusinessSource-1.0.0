@@ -1,9 +1,12 @@
 #include <ProjectMotionPlanning/ProjectMotionPlanning.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
+#include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 
 #include <MotionPlanningCore/MotionPlanning.h>
 #include <RobotRuntime/RobotTrajectoryExecutionSession.h>
 #include <SimulationProject/ProjectIo.h>
+
+#include <Eigen/Geometry>
 
 #include <data_path.h>
 
@@ -182,6 +185,79 @@ namespace
         return 1;
     }
 
+    Eigen::Isometry3d irb4600ZeroFlangePose()
+    {
+        Eigen::Matrix4d matrix;
+        matrix <<
+            -6.12323399573676e-17, -6.12323399573677e-17, 1.0, 1.27,
+            -6.12323399573677e-17, 1.0, 6.12323399573677e-17, 1.22464679914735e-18,
+            -1.0, -6.12323399573677e-17, -6.12323399573677e-17, 1.57,
+            0.0, 0.0, 0.0, 1.0;
+
+        Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+        pose.matrix() = matrix;
+        return pose;
+    }
+
+    int verifyIrb4600InverseKinematicsRegression()
+    {
+        simulation_project::ProjectDocument document;
+        simulation_project::RobotDesc robot;
+        robot.id = "ABB4600_urdf";
+        robot.name = "ABB4600_urdf";
+        robot.sourceType = "urdf";
+        robot.sourcePath = "data/Spray420/ABB4600_urdf/urdf/ABB4600_urdf.urdf";
+        document.robots.push_back(std::move(robot));
+
+        motion_planning::StoredMotionPlan plan;
+        plan.id = "irb4600_ik_regression";
+        plan.name = "IRB4600 IK regression";
+        plan.robotId = "ABB4600_urdf";
+        robottrajectory::TimedCartesianPoint point;
+        point.time = 0.0;
+        point.tcpPose = irb4600ZeroFlangePose();
+        plan.cartesianControlPoints.points.push_back(std::move(point));
+
+        motion_planning::CartesianIkOptions options;
+        options.robotId = plan.robotId;
+        options.jointNames = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        options.seedJoints = std::vector<double>(6, 0.0);
+        options.toolMode = motion_planning::CartesianIkToolMode::Flange;
+        options.tolerance = 1.0e-8;
+
+        const motion_planning::CartesianIkResult result =
+            motion_planning::ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(
+                document,
+                plan,
+                options);
+        if(!result.success || result.plan.trajectory.points.size() != 1)
+            return fail("IRB4600 inverse kinematics regression failed.");
+        if(result.plan.jointNames != options.jointNames)
+            return fail("IRB4600 inverse kinematics joint names were not preserved.");
+        for(double joint : result.plan.trajectory.points.front().q) {
+            if(std::abs(joint) > 1.0e-7)
+                return fail("IRB4600 inverse kinematics zero-pose solution drifted.");
+        }
+
+        const std::vector<double> mappedJoints =
+            motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(
+                { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 });
+        if(mappedJoints != std::vector<double>({ -1.0, 2.0, 3.0, -4.0, -5.0, -6.0 }))
+            return fail("IRB4600 robot system joint sign mapping changed.");
+
+        std::string errorMessage;
+        if(!motion_planning::ProjectTrajectoryInverseKinematics::applyJointValuesToRobotInitialJoints(
+                document,
+                plan.robotId,
+                result.plan.jointNames,
+                result.plan.trajectory.points.front().q,
+                &errorMessage))
+            return fail("IRB4600 inverse kinematics document joint application failed: " + errorMessage);
+        if(document.robots.front().initialJoints.size() != 6)
+            return fail("IRB4600 inverse kinematics did not write robot initial joints.");
+        return 0;
+    }
+
     int runImportOnly(const Options& options)
     {
         simulation_project::ProjectDocument document;
@@ -285,6 +361,9 @@ namespace
         if (std::abs(importedCartesianIt->cartesianControlPoints.points.back().time - 5.0) > 1.0e-9 ||
             std::abs(importedCartesianIt->cartesianControlPoints.points.front().tcpPose.translation().x() - 1.0) > 1.0e-9)
             return fail("Import-only cartesian control-point values changed during project round-trip.");
+
+        if(const int ikRegression = verifyIrb4600InverseKinematicsRegression(); ikRegression != 0)
+            return ikRegression;
 
         std::cout << "PASS ProjectMotionPlanning import-only regression\n";
         return 0;

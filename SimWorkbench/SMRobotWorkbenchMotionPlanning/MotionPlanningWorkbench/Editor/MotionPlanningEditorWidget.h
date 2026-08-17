@@ -41,8 +41,10 @@ public:
     void setTrajectoryView(
         const QVector<TrajectoryListItem>& trajectories,
         const QString& selectedTrajectoryId,
-        const QVector<TrajectoryPointRow>& points,
-        const QString& emptyText);
+        const QVector<TrajectoryPointRow>& posePoints,
+        const QVector<TrajectoryPointRow>& jointPoints,
+        const QString& emptyPoseText,
+        const QString& emptyJointText);
 
 signals:
     void planRequested(
@@ -52,9 +54,13 @@ signals:
         double duration,
         int sampleCount);
     void importTrajectoryRequested();
+    void inverseKinematicsRequested(bool useToolTransform);
+    void applySelectedJointPointRequested(int pointIndex);
     void trajectorySelectionChanged(const QString& trajectoryId);
 
 private:
+    void updateTrajectoryActions();
+
     QLabel* m_robotValue = nullptr;
     QLineEdit* m_startJoints = nullptr;
     QLineEdit* m_goalJoints = nullptr;
@@ -63,7 +69,11 @@ private:
     QSpinBox* m_sampleCount = nullptr;
     QPushButton* m_planButton = nullptr;
     QPushButton* m_importButton = nullptr;
+    QComboBox* m_ikToolMode = nullptr;
+    QPushButton* m_solveIkButton = nullptr;
+    QPushButton* m_applyJointPointButton = nullptr;
     QComboBox* m_trajectoryCombo = nullptr;
-    QTableWidget* m_pointsTable = nullptr;
+    QTableWidget* m_poseTable = nullptr;
+    QTableWidget* m_jointTable = nullptr;
     QLabel* m_result = nullptr;
 };
