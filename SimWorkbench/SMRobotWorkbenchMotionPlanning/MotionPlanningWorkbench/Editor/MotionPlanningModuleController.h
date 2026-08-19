@@ -44,8 +44,10 @@ namespace robot_qt_viewer
             double duration,
             int sampleCount);
         void importTrajectory();
+        void importCdfJointAngles();
         void solveInverseKinematics(bool useToolTransform);
         void applySelectedJointPoint(int pointIndex);
+        void applySelectedCdfJointAngles(int pointIndex);
         void insertControlPointBefore(int pointIndex);
         void insertControlPointAfter(int pointIndex);
         void deleteControlPoint(int pointIndex);
@@ -56,6 +58,7 @@ namespace robot_qt_viewer
         void setSelectedTrajectory(const QString& trajectoryId);
         void setSelectedRobot(const QString& robotId);
         void refreshTrajectoryView();
+        void refreshCdfJointAngleView();
         bool commitMotionPlanUpdate(
             const motion_planning::StoredMotionPlan& plan,
             const QString& sourceId);
@@ -70,8 +73,16 @@ namespace robot_qt_viewer
 
         MotionPlanningEditorWidget& m_widget;
         RobotQtViewerDocumentContext& m_context;
+        struct ImportedCdfJointPoint
+        {
+            double timeSeconds = 0.0;
+            std::vector<double> jointAnglesDegrees;
+        };
         QString m_selectedRobotId;
         QString m_selectedTrajectoryId;
+        QString m_cdfSourceName;
+        std::vector<std::string> m_cdfJointNames;
+        std::vector<ImportedCdfJointPoint> m_cdfJointPoints;
         QTimer* m_playbackTimer = nullptr;
         int m_playbackPointIndex = 0;
     };

@@ -45,6 +45,13 @@ public:
         double yawDeg = 0.0;
     };
 
+    struct CdfJointAngleRow
+    {
+        int index = 0;
+        QString timeText;
+        QVector<QString> jointAngleTexts;
+    };
+
     explicit MotionPlanningEditorWidget(QWidget* parent = nullptr);
 
     void setRobotId(const QString& robotId);
@@ -57,6 +64,12 @@ public:
         const QVector<TrajectoryPointRow>& jointPoints,
         const QString& emptyPoseText,
         const QString& emptyJointText);
+    void setCdfJointAngleView(
+        const QString& sourceName,
+        const QVector<QString>& jointNames,
+        const QVector<CdfJointAngleRow>& jointRows,
+        const QString& emptyText);
+    void setCdfResult(const QString& summary, bool success);
     bool editControlPointPose(ControlPointPoseEditorData& data, const QString& title);
     void setPlaybackActive(bool active);
 
@@ -70,6 +83,8 @@ signals:
     void importTrajectoryRequested();
     void inverseKinematicsRequested(bool useToolTransform);
     void applySelectedJointPointRequested(int pointIndex);
+    void importCdfJointAnglesRequested();
+    void applySelectedCdfJointAnglesRequested(int pointIndex);
     void insertControlPointBeforeRequested(int pointIndex);
     void insertControlPointAfterRequested(int pointIndex);
     void deleteControlPointRequested(int pointIndex);
@@ -80,6 +95,7 @@ signals:
 
 private:
     void updateTrajectoryActions();
+    void updateCdfActions();
     void showControlPointContextMenu(const QPoint& pos);
 
     QLabel* m_robotValue = nullptr;
@@ -98,6 +114,10 @@ private:
     QComboBox* m_trajectoryCombo = nullptr;
     QTableWidget* m_poseTable = nullptr;
     QTableWidget* m_jointTable = nullptr;
+    QPushButton* m_importCdfButton = nullptr;
+    QTableWidget* m_cdfJointTable = nullptr;
+    QPushButton* m_applyCdfJointButton = nullptr;
+    QLabel* m_cdfResult = nullptr;
     QLabel* m_result = nullptr;
     bool m_playbackActive = false;
 };

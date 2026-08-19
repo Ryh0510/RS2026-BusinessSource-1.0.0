@@ -7,6 +7,7 @@
 #include "RobotQtViewerViewportServices.h"
 
 #include <MotionPlanningCore/MotionPlanning.h>
+#include <ProjectMotionPlanning/CdfJointAngleImport.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -112,6 +114,16 @@ namespace
             parts.push_back(QStringLiteral("%1=%2").arg(name, formatDouble(values[index])));
         }
         return parts.join(QStringLiteral(", "));
+    }
+
+    std::vector<double> degreesToRadians(const std::vector<double>& degrees)
+    {
+        std::vector<double> radians;
+        radians.reserve(degrees.size());
+        for(const double value : degrees) {
+            radians.push_back(value * kPi / 180.0);
+        }
+        return radians;
     }
 
     QString formatCartesianPose(const robottrajectory::TimedCartesianPoint& point)
@@ -242,10 +254,14 @@ namespace robot_qt_viewer
             this, &MotionPlanningModuleController::planTrajectory);
         connect(&m_widget, &MotionPlanningEditorWidget::importTrajectoryRequested,
             this, &MotionPlanningModuleController::importTrajectory);
+        connect(&m_widget, &MotionPlanningEditorWidget::importCdfJointAnglesRequested,
+            this, &MotionPlanningModuleController::importCdfJointAngles);
         connect(&m_widget, &MotionPlanningEditorWidget::inverseKinematicsRequested,
             this, &MotionPlanningModuleController::solveInverseKinematics);
         connect(&m_widget, &MotionPlanningEditorWidget::applySelectedJointPointRequested,
             this, &MotionPlanningModuleController::applySelectedJointPoint);
+        connect(&m_widget, &MotionPlanningEditorWidget::applySelectedCdfJointAnglesRequested,
+            this, &MotionPlanningModuleController::applySelectedCdfJointAngles);
         connect(&m_widget, &MotionPlanningEditorWidget::insertControlPointBeforeRequested,
             this, &MotionPlanningModuleController::insertControlPointBefore);
         connect(&m_widget, &MotionPlanningEditorWidget::insertControlPointAfterRequested,
@@ -426,6 +442,53 @@ namespace robot_qt_viewer
         emit statusMessageRequested(summary, 5000);
     }
 
+    void MotionPlanningModuleController::importCdfJointAngles()
+    {
+        if(m_selectedRobotId.isEmpty()) {
+            m_widget.setCdfResult(QStringLiteral("Select a robot before importing CDF joint angles."), false);
+            return;
+        }
+
+        const QString filename = QFileDialog::getOpenFileName(
+            &m_widget,
+            QStringLiteral("Import CDF joint angles"),
+            QString(),
+            QStringLiteral("Text Files (*.txt *.csv);;All Files (*)"));
+        if(filename.isEmpty()) {
+            return;
+        }
+
+        const motion_planning::CdfJointAngleImportResult importResult =
+            motion_planning::ProjectCdfJointAngleImporter::importFile(
+                toFilesystemPath(filename));
+        if(!importResult.success) {
+            const QString message = importResult.diagnostics.empty()
+                ? QStringLiteral("CDF joint angle import failed.")
+                : QString::fromStdString(importResult.diagnostics.front());
+            m_widget.setCdfResult(message, false);
+            emit statusMessageRequested(message, 6000);
+            return;
+        }
+
+        m_cdfSourceName = QString::fromStdString(importResult.sourceName);
+        m_cdfJointNames = importResult.jointNames;
+        m_cdfJointPoints.clear();
+        m_cdfJointPoints.reserve(importResult.points.size());
+        for(const motion_planning::CdfJointAnglePoint& point : importResult.points) {
+            ImportedCdfJointPoint copy;
+            copy.timeSeconds = point.timeSeconds;
+            copy.jointAnglesDegrees = point.jointAnglesDegrees;
+            m_cdfJointPoints.push_back(std::move(copy));
+        }
+        refreshCdfJointAngleView();
+
+        const QString summary = QStringLiteral("Imported %1 CDF joint angle points from %2")
+            .arg(static_cast<int>(m_cdfJointPoints.size()))
+            .arg(m_cdfSourceName);
+        m_widget.setCdfResult(summary, true);
+        emit statusMessageRequested(summary, 5000);
+    }
+
     void MotionPlanningModuleController::solveInverseKinematics(bool useToolTransform)
     {
         if(m_selectedRobotId.isEmpty()) {
@@ -571,6 +634,47 @@ namespace robot_qt_viewer
                 .arg(pointIndex + 1)
                 .arg(m_selectedRobotId);
             m_widget.setResult(summary, true);
+            emit statusMessageRequested(summary, 4000);
+        }
+    }
+
+    void MotionPlanningModuleController::applySelectedCdfJointAngles(int pointIndex)
+    {
+        if(pointIndex < 0 || m_selectedRobotId.isEmpty()) {
+            return;
+        }
+        if(m_cdfJointPoints.empty()) {
+            m_widget.setCdfResult(QStringLiteral("Import a CDF joint angle file before applying joint angles."), false);
+            return;
+        }
+
+        const std::size_t index = static_cast<std::size_t>(pointIndex);
+        if(index >= m_cdfJointPoints.size()) {
+            m_widget.setCdfResult(QStringLiteral("Selected CDF joint angle row is out of range."), false);
+            return;
+        }
+
+        const std::vector<std::string> robotJointNames =
+            selectedRobotJointNames(m_context.document(), m_selectedRobotId);
+        if(robotJointNames.size() != m_cdfJointPoints[index].jointAnglesDegrees.size()) {
+            const QString message = QStringLiteral("CDF joint angle count (%1) does not match robot joint count (%2).")
+                .arg(static_cast<int>(m_cdfJointPoints[index].jointAnglesDegrees.size()))
+                .arg(static_cast<int>(robotJointNames.size()));
+            m_widget.setCdfResult(message, false);
+            emit statusMessageRequested(message, 6000);
+            return;
+        }
+
+        const std::vector<double> jointValuesRadians =
+            degreesToRadians(m_cdfJointPoints[index].jointAnglesDegrees);
+        if(applyJointValuesToRobot(
+               robotJointNames,
+               jointValuesRadians,
+               QStringLiteral("motionPlanningApplyCdfJointAngles"))) {
+            const QString summary = QStringLiteral("Applied CDF joint angle row %1 to %2")
+                .arg(pointIndex + 1)
+                .arg(m_selectedRobotId);
+            m_widget.setCdfResult(summary, true);
             emit statusMessageRequested(summary, 4000);
         }
     }
@@ -1030,9 +1134,39 @@ namespace robot_qt_viewer
                     QString::fromStdString(selectedPlan->id),
                     cartesianControlPointTransforms(*selectedPlan));
             } else {
-                viewportServices->clearTrajectoryControlPointOverlay();
+            viewportServices->clearTrajectoryControlPointOverlay();
             }
         }
+    }
+
+    void MotionPlanningModuleController::refreshCdfJointAngleView()
+    {
+        QVector<QString> jointNames;
+        jointNames.reserve(static_cast<int>(m_cdfJointNames.size()));
+        for(const std::string& jointName : m_cdfJointNames) {
+            jointNames.push_back(QString::fromStdString(jointName));
+        }
+
+        QVector<MotionPlanningEditorWidget::CdfJointAngleRow> jointRows;
+        jointRows.reserve(static_cast<int>(m_cdfJointPoints.size()));
+
+        for(std::size_t index = 0; index < m_cdfJointPoints.size(); ++index) {
+            const ImportedCdfJointPoint& point = m_cdfJointPoints[index];
+            MotionPlanningEditorWidget::CdfJointAngleRow row;
+            row.index = static_cast<int>(index + 1);
+            row.timeText = formatDouble(point.timeSeconds);
+            row.jointAngleTexts.reserve(static_cast<int>(point.jointAnglesDegrees.size()));
+            for(const double angle : point.jointAnglesDegrees) {
+                row.jointAngleTexts.push_back(formatDouble(angle));
+            }
+            jointRows.push_back(row);
+        }
+
+        const QString sourceText = m_cdfSourceName.isEmpty()
+            ? QStringLiteral("CDF")
+            : m_cdfSourceName;
+        const QString emptyText = QStringLiteral("No CDF joint angles imported.");
+        m_widget.setCdfJointAngleView(sourceText, jointNames, jointRows, emptyText);
     }
 
     bool MotionPlanningModuleController::commitMotionPlanUpdate(

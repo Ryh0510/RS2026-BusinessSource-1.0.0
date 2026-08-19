@@ -1,4 +1,5 @@
 #include <ProjectMotionPlanning/ProjectMotionPlanning.h>
+#include <ProjectMotionPlanning/CdfJointAngleImport.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
@@ -348,6 +349,59 @@ namespace
         return 0;
     }
 
+    int verifyCdfJointAngleImportRegression()
+    {
+        const std::filesystem::path importedCdfPath =
+            std::filesystem::current_path() / "import_only_cdf_joint_angles.txt";
+        {
+            std::ofstream text(importedCdfPath);
+            text << "# IK joint angle export\n";
+            text << "# Time unit: seconds\n";
+            text << "# Joint angle unit: degrees\n";
+            text << "time_s\tJ1_deg\tJ2_deg\tJ3_deg\tJ4_deg\tJ5_deg\tJ6_deg\n";
+            text << "0.000000\t102.522987\t-8.415644\t43.664456\t-83.828243\t101.005853\t155.247243\n";
+            text << "0.998620\t99.516875\t-9.246378\t44.016453\t-85.484835\t98.466115\t154.565709\n";
+        }
+
+        const motion_planning::CdfJointAngleImportResult importResult =
+            motion_planning::ProjectCdfJointAngleImporter::importFile(importedCdfPath);
+        std::error_code removeImportedCdfError;
+        std::filesystem::remove(importedCdfPath, removeImportedCdfError);
+
+        if(!importResult.success ||
+            importResult.points.size() != 2 ||
+            importResult.jointNames.size() != 6 ||
+            importResult.jointNames.front() != "J1")
+            return fail("CDF joint angle import failed: " + importResult.message());
+        if(std::abs(importResult.points.front().timeSeconds) > 1.0e-12 ||
+            std::abs(importResult.points.back().timeSeconds - 0.998620) > 1.0e-12 ||
+            std::abs(importResult.points.front().jointAnglesDegrees.front() - 102.522987) > 1.0e-12 ||
+            std::abs(importResult.points.front().jointAnglesDegrees[3] + 83.828243) > 1.0e-12)
+            return fail("CDF joint angle import parsed the wrong values.");
+
+        const std::filesystem::path importedRadCdfPath =
+            std::filesystem::current_path() / "import_only_cdf_joint_angles_rad.txt";
+        {
+            std::ofstream text(importedRadCdfPath);
+            text << "# Joint angle unit: radians\n";
+            text << "time_s J1_rad J2_rad\n";
+            text << "0 3.14159265358979323846 1.57079632679489661923\n";
+        }
+
+        const motion_planning::CdfJointAngleImportResult radImport =
+            motion_planning::ProjectCdfJointAngleImporter::importFile(importedRadCdfPath);
+        std::error_code removeImportedRadCdfError;
+        std::filesystem::remove(importedRadCdfPath, removeImportedRadCdfError);
+
+        if(!radImport.success ||
+            radImport.points.size() != 1 ||
+            std::abs(radImport.points.front().jointAnglesDegrees[0] - 180.0) > 1.0e-9 ||
+            std::abs(radImport.points.front().jointAnglesDegrees[1] - 90.0) > 1.0e-9)
+            return fail("CDF radian joint angle import did not convert to degrees.");
+
+        return 0;
+    }
+
     int runImportOnly(const Options& options)
     {
         simulation_project::ProjectDocument document;
@@ -456,6 +510,8 @@ namespace
             return ikRegression;
         if(const int editRegression = verifyTrajectoryControlPointEditingRegression(); editRegression != 0)
             return editRegression;
+        if(const int cdfRegression = verifyCdfJointAngleImportRegression(); cdfRegression != 0)
+            return cdfRegression;
 
         std::cout << "PASS ProjectMotionPlanning import-only regression\n";
         return 0;

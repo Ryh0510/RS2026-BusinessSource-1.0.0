@@ -20,6 +20,7 @@
 #include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 namespace
@@ -43,6 +44,23 @@ namespace
         table->setSelectionMode(QAbstractItemView::SingleSelection);
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->setMinimumHeight(minimumHeight);
+    }
+
+    void configureCdfTable(
+        QTableWidget* table,
+        int jointCount,
+        int minimumHeight)
+    {
+        QStringList headers;
+        headers << QStringLiteral("#") << QStringLiteral("time_s");
+        for(int index = 0; index < jointCount; ++index) {
+            headers << QStringLiteral("J%1").arg(index + 1);
+        }
+        configureTrajectoryTable(table, headers, minimumHeight);
+        table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+        for(int column = 3; column < headers.size(); ++column) {
+            table->horizontalHeader()->setSectionResizeMode(column, QHeaderView::Stretch);
+        }
     }
 
     QTableWidgetItem* makeReadOnlyItem(const QString& text)
@@ -107,13 +125,22 @@ namespace
 MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(8, 8, 8, 8);
+    rootLayout->setSpacing(8);
 
     auto* title = new QLabel(QStringLiteral("Motion Planning"), this);
     title->setProperty("panelTitle", true);
-    layout->addWidget(title);
+    rootLayout->addWidget(title);
+
+    auto* tabs = new QTabWidget(this);
+    rootLayout->addWidget(tabs);
+
+    auto* basicPage = new QWidget(tabs);
+    auto* layout = new QVBoxLayout(basicPage);
+    layout->setContentsMargins(4, 8, 4, 4);
+    layout->setSpacing(8);
+    tabs->addTab(basicPage, QStringLiteral("Basic Planning"));
 
     auto* form = new QFormLayout();
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
@@ -217,6 +244,31 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     layout->addWidget(m_result);
     layout->addStretch(1);
 
+    auto* cdfPage = new QWidget(tabs);
+    auto* cdfLayout = new QVBoxLayout(cdfPage);
+    cdfLayout->setContentsMargins(4, 8, 4, 4);
+    cdfLayout->setSpacing(8);
+    tabs->addTab(cdfPage, QStringLiteral("CDF"));
+
+    auto* cdfTitle = new QLabel(QStringLiteral("CDF Joint Angles"), cdfPage);
+    cdfTitle->setProperty("panelTitle", true);
+    cdfLayout->addWidget(cdfTitle);
+
+    m_importCdfButton = new QPushButton(QStringLiteral("Import CDF joint angles..."), cdfPage);
+    cdfLayout->addWidget(m_importCdfButton);
+
+    m_cdfJointTable = new QTableWidget(cdfPage);
+    configureCdfTable(m_cdfJointTable, 6, 320);
+    cdfLayout->addWidget(m_cdfJointTable);
+
+    m_applyCdfJointButton = new QPushButton(QStringLiteral("Apply selected CDF joint angles"), cdfPage);
+    cdfLayout->addWidget(m_applyCdfJointButton);
+
+    m_cdfResult = new QLabel(QStringLiteral("Import a CDF joint angle file."), cdfPage);
+    m_cdfResult->setWordWrap(true);
+    cdfLayout->addWidget(m_cdfResult);
+    cdfLayout->addStretch(1);
+
     connect(m_planButton, &QPushButton::clicked, this, [this]() {
         emit planRequested(
             m_startJoints->text(),
@@ -227,6 +279,8 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     });
     connect(m_importButton, &QPushButton::clicked,
         this, &MotionPlanningEditorWidget::importTrajectoryRequested);
+    connect(m_importCdfButton, &QPushButton::clicked,
+        this, &MotionPlanningEditorWidget::importCdfJointAnglesRequested);
     connect(m_solveIkButton, &QPushButton::clicked, this, [this]() {
         const bool useToolTransform = m_ikToolMode != nullptr &&
             m_ikToolMode->currentData().toBool();
@@ -242,6 +296,9 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
             emit playbackRequested(m_playbackDuration != nullptr ? m_playbackDuration->value() : 5.0);
         }
     });
+    connect(m_applyCdfJointButton, &QPushButton::clicked, this, [this]() {
+        emit applySelectedCdfJointAnglesRequested(m_cdfJointTable != nullptr ? m_cdfJointTable->currentRow() : -1);
+    });
     connect(m_poseTable, &QTableWidget::customContextMenuRequested,
         this, &MotionPlanningEditorWidget::showControlPointContextMenu);
     connect(m_trajectoryCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
@@ -254,7 +311,12 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     connect(m_jointTable, &QTableWidget::currentCellChanged, this, [this]() {
         updateTrajectoryActions();
     });
+    connect(m_cdfJointTable, &QTableWidget::currentCellChanged, this, [this]() {
+        updateCdfActions();
+    });
+    setCdfJointAngleView(QString(), {}, {}, QStringLiteral("No CDF joint angles imported."));
     updateTrajectoryActions();
+    updateCdfActions();
 }
 
 bool MotionPlanningEditorWidget::editControlPointPose(
@@ -336,6 +398,7 @@ void MotionPlanningEditorWidget::setRobotId(const QString& robotId)
         m_importButton->setEnabled(!robotId.isEmpty());
     }
     updateTrajectoryActions();
+    updateCdfActions();
 }
 
 void MotionPlanningEditorWidget::setResult(const QString& summary, bool success)
@@ -391,6 +454,64 @@ void MotionPlanningEditorWidget::setTrajectoryView(
     updateTrajectoryActions();
 }
 
+void MotionPlanningEditorWidget::setCdfJointAngleView(
+    const QString& sourceName,
+    const QVector<QString>& jointNames,
+    const QVector<CdfJointAngleRow>& jointRows,
+    const QString& emptyText)
+{
+    if(m_cdfJointTable == nullptr) {
+        return;
+    }
+
+    const QString displayEmptyText = sourceName.isEmpty()
+        ? emptyText
+        : QStringLiteral("%1: %2").arg(sourceName, emptyText);
+
+    QStringList headers;
+    headers << QStringLiteral("#") << QStringLiteral("time_s");
+    for(int index = 0; index < jointNames.size(); ++index) {
+        headers << QStringLiteral("%1 (deg)").arg(jointNames[index]);
+    }
+    if(headers.size() <= 2) {
+        for(int index = 0; index < 6; ++index) {
+            headers << QStringLiteral("J%1 (deg)").arg(index + 1);
+        }
+    }
+    configureTrajectoryTable(m_cdfJointTable, headers, 320);
+
+    m_cdfJointTable->clearSpans();
+    m_cdfJointTable->setRowCount(jointRows.size());
+    for(int row = 0; row < jointRows.size(); ++row) {
+        const CdfJointAngleRow& point = jointRows[row];
+        m_cdfJointTable->setItem(row, 0, makeReadOnlyItem(QString::number(point.index)));
+        m_cdfJointTable->setItem(row, 1, makeReadOnlyItem(point.timeText));
+        for(int jointIndex = 0; jointIndex < point.jointAngleTexts.size(); ++jointIndex) {
+            m_cdfJointTable->setItem(row, jointIndex + 2, makeReadOnlyItem(point.jointAngleTexts[jointIndex]));
+        }
+    }
+
+    if(jointRows.empty()) {
+        m_cdfJointTable->setRowCount(1);
+        m_cdfJointTable->setSpan(0, 0, 1, m_cdfJointTable->columnCount());
+        m_cdfJointTable->setItem(0, 0, makeReadOnlyItem(displayEmptyText));
+    }
+    m_cdfJointTable->resizeColumnToContents(0);
+    m_cdfJointTable->resizeColumnToContents(1);
+    updateCdfActions();
+}
+
+void MotionPlanningEditorWidget::setCdfResult(const QString& summary, bool success)
+{
+    if(m_cdfResult == nullptr) {
+        return;
+    }
+    m_cdfResult->setText(summary);
+    m_cdfResult->setProperty("error", !success);
+    m_cdfResult->style()->unpolish(m_cdfResult);
+    m_cdfResult->style()->polish(m_cdfResult);
+}
+
 void MotionPlanningEditorWidget::updateTrajectoryActions()
 {
     const bool hasRobot = m_robotValue != nullptr &&
@@ -423,6 +544,23 @@ void MotionPlanningEditorWidget::updateTrajectoryActions()
     }
     if(m_playbackButton != nullptr) {
         m_playbackButton->setEnabled(m_playbackActive || (hasRobot && hasJoint && hasAnyJointRow));
+    }
+}
+
+void MotionPlanningEditorWidget::updateCdfActions()
+{
+    const bool hasRobot = m_robotValue != nullptr &&
+        m_robotValue->text() != QStringLiteral("No robot selected");
+    const bool hasValidRow = m_cdfJointTable != nullptr &&
+        m_cdfJointTable->currentRow() >= 0 &&
+        m_cdfJointTable->rowCount() > 0 &&
+        !(m_cdfJointTable->rowCount() == 1 && m_cdfJointTable->columnSpan(0, 0) > 1);
+
+    if(m_importCdfButton != nullptr) {
+        m_importCdfButton->setEnabled(hasRobot);
+    }
+    if(m_applyCdfJointButton != nullptr) {
+        m_applyCdfJointButton->setEnabled(hasRobot && hasValidRow);
     }
 }
 
