@@ -789,6 +789,7 @@ namespace robot_qt_viewer
         options.finiteDifferenceStep = settings.finiteDifferenceStep;
         options.distanceThreshold = settings.distanceThreshold;
         options.trustRegion = settings.trustRegion;
+        options.seedTrackingWeight = settings.seedTrackingWeight;
         options.maxIterations = settings.maxIterations;
         options.keepEndpoints = settings.keepEndpoints;
 

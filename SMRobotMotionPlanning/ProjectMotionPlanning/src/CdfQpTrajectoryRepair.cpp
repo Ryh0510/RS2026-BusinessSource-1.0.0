@@ -584,6 +584,10 @@ namespace motion_planning
         const double trustRegion = options.trustRegion > 0.0 && std::isfinite(options.trustRegion)
             ? options.trustRegion
             : 0.03;
+        const double seedTrackingWeight = options.seedTrackingWeight > 0.0 && std::isfinite(options.seedTrackingWeight)
+            ? options.seedTrackingWeight
+            : 0.0;
+        const std::vector<std::vector<double>> seedPath = path;
 
         for(int iteration = 0; iteration < maxIterations; ++iteration) {
             std::vector<CdfLinearization> linearizations;
@@ -628,6 +632,13 @@ namespace motion_planning
                         const double smoothTarget =
                             0.5 * (path[waypoint - 1][joint] + path[waypoint + 1][joint]);
                         delta[joint] = options.smoothWeight * (smoothTarget - path[waypoint][joint]);
+                    }
+                }
+
+                if(waypoint < seedPath.size() && seedTrackingWeight > 0.0) {
+                    for(std::size_t joint = 0; joint < delta.size(); ++joint) {
+                        delta[joint] += seedTrackingWeight *
+                            (seedPath[waypoint][joint] - path[waypoint][joint]);
                     }
                 }
 

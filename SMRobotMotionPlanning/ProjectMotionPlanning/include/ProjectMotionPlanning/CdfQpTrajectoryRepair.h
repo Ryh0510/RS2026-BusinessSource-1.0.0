@@ -32,6 +32,7 @@ namespace motion_planning
         double distanceThreshold = 5.0;
         double trustRegion = 0.03;
         double smoothWeight = 0.08;
+        double seedTrackingWeight = 0.25;
         double repairGain = 0.8;
         int maxIterations = 80;
         bool keepEndpoints = true;

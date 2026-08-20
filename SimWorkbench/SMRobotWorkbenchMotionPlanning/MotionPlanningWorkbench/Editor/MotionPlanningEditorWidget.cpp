@@ -287,6 +287,9 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     m_cdfTrustRegion = makePoseSpinBox(cdfPage, 0.001, 1.0, 0.03, 0.005, QStringLiteral(" rad"));
     cdfRepairForm->addRow(QStringLiteral("Trust region"), m_cdfTrustRegion);
 
+    m_cdfSeedTrackingWeight = makePoseSpinBox(cdfPage, 0.0, 2.0, 0.25, 0.05);
+    cdfRepairForm->addRow(QStringLiteral("Seed tracking"), m_cdfSeedTrackingWeight);
+
     m_cdfMaxIterations = new QSpinBox(cdfPage);
     m_cdfMaxIterations->setRange(1, 1000);
     m_cdfMaxIterations->setValue(80);
@@ -453,6 +456,9 @@ MotionPlanningEditorWidget::CdfQpRepairSettings MotionPlanningEditorWidget::cdfQ
         ? m_cdfDistanceThreshold->value()
         : settings.distanceThreshold;
     settings.trustRegion = m_cdfTrustRegion != nullptr ? m_cdfTrustRegion->value() : settings.trustRegion;
+    settings.seedTrackingWeight = m_cdfSeedTrackingWeight != nullptr
+        ? m_cdfSeedTrackingWeight->value()
+        : settings.seedTrackingWeight;
     settings.maxIterations = m_cdfMaxIterations != nullptr ? m_cdfMaxIterations->value() : settings.maxIterations;
     settings.keepEndpoints = m_cdfKeepEndpoints != nullptr ? m_cdfKeepEndpoints->isChecked() : settings.keepEndpoints;
     return settings;
