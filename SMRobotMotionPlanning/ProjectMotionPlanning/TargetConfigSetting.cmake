@@ -4,6 +4,7 @@ set(${TARGET_NAME}_RequiredLibsPublic
     SMRobotMotionPlanning::MotionPlanningCore
     SMRobotPlatform::SimulationProject
     SMRobotPlatform::SimulationRuntime
+    osqpstatic
 )
 
 set(${TARGET_NAME}_RequiredLibsPrivate

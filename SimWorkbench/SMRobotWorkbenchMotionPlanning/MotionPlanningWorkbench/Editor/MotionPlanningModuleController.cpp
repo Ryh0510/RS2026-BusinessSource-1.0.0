@@ -279,13 +279,15 @@ namespace
         const motion_planning::ProjectCdfQpRepairResult& result,
         const QString& planId)
     {
-        return QStringLiteral("%1 %2 as %3. min phi: %4 -> %5, iterations=%6, queries=%7")
+        return QStringLiteral("%1 %2 as %3. min phi: %4 -> %5, iterations=%6, qp_iters=%7, slack=%8, queries=%9")
             .arg(result.success ? QStringLiteral("Stored repaired CDF/QP trajectory") : QStringLiteral("Stored partial CDF/QP trajectory"))
             .arg(static_cast<int>(result.plan.trajectory.points.size()))
             .arg(planId)
             .arg(formatDouble(result.statistics.initialMinimumPhi))
             .arg(formatDouble(result.statistics.finalMinimumPhi))
             .arg(result.statistics.iterations)
+            .arg(result.statistics.qpIterations)
+            .arg(formatDouble(result.statistics.maximumSlack))
             .arg(result.statistics.collisionQueries);
     }
 }

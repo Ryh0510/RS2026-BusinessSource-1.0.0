@@ -203,5 +203,14 @@ if(TARGET OpenGL::GL)
     message(STATUS "Target OpenGL::GL is FOUND!")
 endif()
 
+set(OSQP_SOURCE_DIR "${LOCAL_PREBUILD_ROOT}/osqp-0.6.3" CACHE PATH
+    "OSQP 0.6.3 source directory." FORCE)
+_rs2026_local_assert_dir("${OSQP_SOURCE_DIR}" "OSQP source directory")
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING
+    "Compatibility floor for older third-party CMake projects." FORCE)
+add_subdirectory("${OSQP_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/prebuild/osqp-0.6.3" EXCLUDE_FROM_ALL)
+_rs2026_local_assert_target(osqpstatic)
+message(STATUS "Found OSQP source tree at ${OSQP_SOURCE_DIR}")
+
 set(CMAKE_MODULE_PATH ${SAVE_MODULE_PATH})
 message(STATUS "\n------------------ End of finding packages in ${this_cmake_file} ------------------")

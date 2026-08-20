@@ -43,12 +43,14 @@ namespace motion_planning
     {
         int inputWaypointCount = 0;
         int iterations = 0;
+        int qpIterations = 0;
         int collisionQueries = 0;
         int clampedSeedValues = 0;
         int invalidSegmentCount = 0;
         double initialMinimumPhi = 0.0;
         double finalMinimumPhi = 0.0;
         double maximumCorrection = 0.0;
+        double maximumSlack = 0.0;
     };
 
     struct ProjectCdfQpRepairResult
