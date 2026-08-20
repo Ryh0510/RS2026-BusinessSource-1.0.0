@@ -8,10 +8,12 @@
 
 #include <MotionPlanningCore/MotionPlanning.h>
 #include <ProjectMotionPlanning/CdfJointAngleImport.h>
+#include <ProjectMotionPlanning/CdfQpTrajectoryRepair.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 #include <SimulationProject/ProjectDocumentService.h>
+#include <SimulationProject/RuntimePaths.h>
 
 #include <QFileDialog>
 #include <QStringList>
@@ -126,6 +128,16 @@ namespace
         return radians;
     }
 
+    std::vector<double> radiansToDegrees(const std::vector<double>& radians)
+    {
+        std::vector<double> degrees;
+        degrees.reserve(radians.size());
+        for(const double value : radians) {
+            degrees.push_back(value * 180.0 / kPi);
+        }
+        return degrees;
+    }
+
     QString formatCartesianPose(const robottrajectory::TimedCartesianPoint& point)
     {
         const Eigen::Vector3d translation = point.tcpPose.translation();
@@ -236,6 +248,46 @@ namespace
         return std::filesystem::path(path.toStdString());
 #endif
     }
+
+    std::filesystem::path projectBasePath(const simulation_project::ProjectSession& session)
+    {
+        return session.path().empty()
+            ? simulation_project::RuntimePaths::applicationRoot()
+            : session.path().parent_path();
+    }
+
+    QString firstDiagnosticMessage(
+        const std::vector<motion_planning::MotionPlanningDiagnostic>& diagnostics,
+        const QString& fallback)
+    {
+        return diagnostics.empty()
+            ? fallback
+            : QString::fromStdString(diagnostics.front().message);
+    }
+
+    std::vector<double> maybeMapIrb4600JointSigns(
+        const simulation_project::ProjectDocument& document,
+        const QString& robotId,
+        const std::vector<double>& joints)
+    {
+        return usesIrb4600RobotSystemJointSigns(document, robotId)
+            ? motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(joints)
+            : joints;
+    }
+
+    QString cdfRepairSummary(
+        const motion_planning::ProjectCdfQpRepairResult& result,
+        const QString& planId)
+    {
+        return QStringLiteral("%1 %2 as %3. min phi: %4 -> %5, iterations=%6, queries=%7")
+            .arg(result.success ? QStringLiteral("Stored repaired CDF/QP trajectory") : QStringLiteral("Stored partial CDF/QP trajectory"))
+            .arg(static_cast<int>(result.plan.trajectory.points.size()))
+            .arg(planId)
+            .arg(formatDouble(result.statistics.initialMinimumPhi))
+            .arg(formatDouble(result.statistics.finalMinimumPhi))
+            .arg(result.statistics.iterations)
+            .arg(result.statistics.collisionQueries);
+    }
 }
 
 namespace robot_qt_viewer
@@ -262,6 +314,8 @@ namespace robot_qt_viewer
             this, &MotionPlanningModuleController::applySelectedJointPoint);
         connect(&m_widget, &MotionPlanningEditorWidget::applySelectedCdfJointAnglesRequested,
             this, &MotionPlanningModuleController::applySelectedCdfJointAngles);
+        connect(&m_widget, &MotionPlanningEditorWidget::repairImportedCdfTrajectoryRequested,
+            this, &MotionPlanningModuleController::repairImportedCdfTrajectory);
         connect(&m_widget, &MotionPlanningEditorWidget::insertControlPointBeforeRequested,
             this, &MotionPlanningModuleController::insertControlPointBefore);
         connect(&m_widget, &MotionPlanningEditorWidget::insertControlPointAfterRequested,
@@ -677,6 +731,148 @@ namespace robot_qt_viewer
             m_widget.setCdfResult(summary, true);
             emit statusMessageRequested(summary, 4000);
         }
+    }
+
+    void MotionPlanningModuleController::repairImportedCdfTrajectory()
+    {
+        if(m_selectedRobotId.isEmpty()) {
+            m_widget.setCdfResult(QStringLiteral("Select ABB4600_urdf before running CDF/QP repair."), false);
+            return;
+        }
+        if(m_cdfJointPoints.size() < 2) {
+            m_widget.setCdfResult(QStringLiteral("Import at least two CDF joint angle rows before repair."), false);
+            return;
+        }
+
+        stopJointPlayback();
+
+        const std::vector<std::string> robotJointNames =
+            selectedRobotJointNames(m_context.document(), m_selectedRobotId);
+        if(robotJointNames.empty()) {
+            m_widget.setCdfResult(QStringLiteral("Selected robot has no movable joints for CDF/QP repair."), false);
+            return;
+        }
+
+        for(std::size_t index = 0; index < m_cdfJointPoints.size(); ++index) {
+            if(m_cdfJointPoints[index].jointAnglesDegrees.size() != robotJointNames.size()) {
+                const QString message = QStringLiteral("CDF joint angle row %1 has %2 joints, but robot %3 has %4 movable joints.")
+                    .arg(static_cast<int>(index + 1))
+                    .arg(static_cast<int>(m_cdfJointPoints[index].jointAnglesDegrees.size()))
+                    .arg(m_selectedRobotId)
+                    .arg(static_cast<int>(robotJointNames.size()));
+                m_widget.setCdfResult(message, false);
+                emit statusMessageRequested(message, 7000);
+                return;
+            }
+        }
+
+        robottrajectory::JointTrajectory seedTrajectory;
+        seedTrajectory.name = "cdf_import_seed";
+        seedTrajectory.interpolation = robottrajectory::TrajectoryInterpolation::Linear;
+        seedTrajectory.points.reserve(m_cdfJointPoints.size());
+        for(const ImportedCdfJointPoint& importedPoint : m_cdfJointPoints) {
+            robottrajectory::TimedJointPoint point;
+            point.time = importedPoint.timeSeconds;
+            point.q = maybeMapIrb4600JointSigns(
+                m_context.document(),
+                m_selectedRobotId,
+                degreesToRadians(importedPoint.jointAnglesDegrees));
+            seedTrajectory.points.push_back(std::move(point));
+        }
+        seedTrajectory.sortByTime();
+
+        const MotionPlanningEditorWidget::CdfQpRepairSettings settings =
+            m_widget.cdfQpRepairSettings();
+        motion_planning::ProjectCdfQpRepairOptions options;
+        options.safetyMargin = settings.safetyMargin;
+        options.targetClearance = settings.targetClearance;
+        options.finiteDifferenceStep = settings.finiteDifferenceStep;
+        options.distanceThreshold = settings.distanceThreshold;
+        options.trustRegion = settings.trustRegion;
+        options.maxIterations = settings.maxIterations;
+        options.keepEndpoints = settings.keepEndpoints;
+
+        std::string setupDetectorId;
+        std::vector<motion_planning::MotionPlanningDiagnostic> setupDiagnostics;
+        const std::string robotId = m_selectedRobotId.toStdString();
+        const ProjectMutationResult setupMutation = m_context.documentController().mutateProject(
+            QStringLiteral("motionPlanningCdfCollisionSetup"),
+            ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                if(!motion_planning::ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(
+                       service.document(),
+                       robotId,
+                       options,
+                       &setupDetectorId,
+                       &setupDiagnostics)) {
+                    error = setupDiagnostics.empty()
+                        ? std::string("Failed to set up ABB4600_urdf-burnner collision detector.")
+                        : setupDiagnostics.front().message;
+                    return false;
+                }
+                changed = true;
+                return true;
+            });
+        if(!setupMutation.success) {
+            m_widget.setCdfResult(setupMutation.message, false);
+            emit statusMessageRequested(setupMutation.message, 7000);
+            return;
+        }
+
+        const motion_planning::ProjectCdfQpTrajectoryRepairService repairService;
+        motion_planning::ProjectCdfQpRepairResult repairResult =
+            repairService.repair(
+                m_context.document(),
+                projectBasePath(m_context.projectSession()),
+                robotId,
+                robotJointNames,
+                seedTrajectory,
+                options);
+
+        if(repairResult.plan.trajectory.empty()) {
+            const QString message = firstDiagnosticMessage(
+                repairResult.diagnostics,
+                QStringLiteral("CDF/QP repair failed before producing a trajectory."));
+            m_widget.setCdfResult(message, false);
+            emit statusMessageRequested(message, 7000);
+            return;
+        }
+
+        motion_planning::StoredMotionPlan storedPlan = repairResult.plan;
+        for(robottrajectory::TimedJointPoint& point : storedPlan.trajectory.points) {
+            point.q = maybeMapIrb4600JointSigns(m_context.document(), m_selectedRobotId, point.q);
+        }
+
+        if(!commitMotionPlanUpdate(storedPlan, QStringLiteral("motionPlanningCdfQpRepair"))) {
+            m_widget.setCdfResult(QStringLiteral("CDF/QP repair produced a trajectory but storing it failed."), false);
+            return;
+        }
+
+        m_cdfSourceName = QStringLiteral("%1 repaired by CDF/QP").arg(m_cdfSourceName.isEmpty()
+            ? QStringLiteral("Imported trajectory")
+            : m_cdfSourceName);
+        m_cdfJointNames = robotJointNames;
+        m_cdfJointPoints.clear();
+        m_cdfJointPoints.reserve(storedPlan.trajectory.points.size());
+        for(const robottrajectory::TimedJointPoint& point : storedPlan.trajectory.points) {
+            ImportedCdfJointPoint importedPoint;
+            importedPoint.timeSeconds = point.time;
+            importedPoint.jointAnglesDegrees = radiansToDegrees(point.q);
+            m_cdfJointPoints.push_back(std::move(importedPoint));
+        }
+        refreshCdfJointAngleView();
+        refreshTrajectoryView();
+
+        const QString planId = QString::fromStdString(storedPlan.id);
+        QString summary = cdfRepairSummary(repairResult, planId);
+        if(!repairResult.success) {
+            summary += QStringLiteral(". %1").arg(firstDiagnosticMessage(
+                repairResult.diagnostics,
+                QStringLiteral("The repaired path still violates the requested clearance.")));
+        }
+        m_widget.setCdfResult(summary, repairResult.success);
+        emit trajectoryPlanned(planId);
+        emit statusMessageRequested(summary, repairResult.success ? 6000 : 9000);
     }
 
     void MotionPlanningModuleController::insertControlPointBefore(int pointIndex)

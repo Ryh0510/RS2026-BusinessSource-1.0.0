@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class QDoubleSpinBox;
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -52,6 +53,17 @@ public:
         QVector<QString> jointAngleTexts;
     };
 
+    struct CdfQpRepairSettings
+    {
+        double safetyMargin = 0.01;
+        double targetClearance = 0.0;
+        double finiteDifferenceStep = 5.0e-4;
+        double distanceThreshold = 0.30;
+        double trustRegion = 0.03;
+        int maxIterations = 80;
+        bool keepEndpoints = true;
+    };
+
     explicit MotionPlanningEditorWidget(QWidget* parent = nullptr);
 
     void setRobotId(const QString& robotId);
@@ -70,6 +82,7 @@ public:
         const QVector<CdfJointAngleRow>& jointRows,
         const QString& emptyText);
     void setCdfResult(const QString& summary, bool success);
+    CdfQpRepairSettings cdfQpRepairSettings() const;
     bool editControlPointPose(ControlPointPoseEditorData& data, const QString& title);
     void setPlaybackActive(bool active);
 
@@ -85,6 +98,7 @@ signals:
     void applySelectedJointPointRequested(int pointIndex);
     void importCdfJointAnglesRequested();
     void applySelectedCdfJointAnglesRequested(int pointIndex);
+    void repairImportedCdfTrajectoryRequested();
     void insertControlPointBeforeRequested(int pointIndex);
     void insertControlPointAfterRequested(int pointIndex);
     void deleteControlPointRequested(int pointIndex);
@@ -117,6 +131,14 @@ private:
     QPushButton* m_importCdfButton = nullptr;
     QTableWidget* m_cdfJointTable = nullptr;
     QPushButton* m_applyCdfJointButton = nullptr;
+    QDoubleSpinBox* m_cdfSafetyMargin = nullptr;
+    QDoubleSpinBox* m_cdfTargetClearance = nullptr;
+    QDoubleSpinBox* m_cdfFiniteDifferenceStep = nullptr;
+    QDoubleSpinBox* m_cdfDistanceThreshold = nullptr;
+    QDoubleSpinBox* m_cdfTrustRegion = nullptr;
+    QSpinBox* m_cdfMaxIterations = nullptr;
+    QCheckBox* m_cdfKeepEndpoints = nullptr;
+    QPushButton* m_repairCdfTrajectoryButton = nullptr;
     QLabel* m_cdfResult = nullptr;
     QLabel* m_result = nullptr;
     bool m_playbackActive = false;

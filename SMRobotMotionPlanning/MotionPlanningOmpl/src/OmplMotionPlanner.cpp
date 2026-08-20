@@ -69,7 +69,7 @@ namespace motion_planning
             for (std::size_t index = 0; index < problem.jointBounds.size(); ++index)
             {
                 const JointBound& bound = problem.jointBounds[index];
-                if (bound.continuous || !std::isfinite(bound.lower) || !std::isfinite(bound.upper) ||
+                if (!std::isfinite(bound.lower) || !std::isfinite(bound.upper) ||
                     !(bound.lower < bound.upper))
                 {
                     return resultWithDiagnostic(MotionPlanningStatus::InvalidRequest, "unsupported_joint_bound", "The first OMPL backend requires finite bounded joints.");

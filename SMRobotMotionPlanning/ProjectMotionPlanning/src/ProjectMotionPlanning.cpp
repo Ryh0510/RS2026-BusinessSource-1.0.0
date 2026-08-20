@@ -15,6 +15,9 @@ namespace motion_planning
 {
     namespace
     {
+        constexpr double kPi = 3.14159265358979323846;
+        constexpr double kTwoPi = 2.0 * kPi;
+
         void setError(std::string* errorMessage, const std::string& message)
         {
             if (errorMessage != nullptr)
@@ -27,6 +30,76 @@ namespace motion_planning
             result.status = MotionPlanningStatus::InvalidRequest;
             result.diagnostics.push_back({ code, message });
             return result;
+        }
+
+        bool hasFiniteOrderedPositionLimits(const robot::RobotJoint& joint)
+        {
+            return joint.hasPositionLimits &&
+                std::isfinite(joint.lowerPositionLimit) &&
+                std::isfinite(joint.upperPositionLimit) &&
+                joint.lowerPositionLimit < joint.upperPositionLimit;
+        }
+
+        double wrapContinuousAngle(double value)
+        {
+            if (!std::isfinite(value))
+                return value;
+
+            double wrapped = std::remainder(value, kTwoPi);
+            if (wrapped <= -kPi)
+                wrapped += kTwoPi;
+            else if (wrapped > kPi)
+                wrapped -= kTwoPi;
+            return wrapped;
+        }
+
+        double shortestContinuousDelta(double from, double to)
+        {
+            double delta = std::remainder(to - from, kTwoPi);
+            if (delta <= -kPi)
+                delta += kTwoPi;
+            else if (delta > kPi)
+                delta -= kTwoPi;
+            return delta;
+        }
+
+        double normalizedJointValueForBounds(
+            double value,
+            const JointBound& bound)
+        {
+            if (!bound.continuous)
+                return value;
+            return wrapContinuousAngle(value);
+        }
+
+        std::vector<double> normalizedJointValuesForBounds(
+            const std::vector<double>& values,
+            const std::vector<JointBound>& bounds)
+        {
+            std::vector<double> normalized = values;
+            const std::size_t count = std::min(normalized.size(), bounds.size());
+            for (std::size_t index = 0; index < count; ++index)
+                normalized[index] = normalizedJointValueForBounds(normalized[index], bounds[index]);
+            return normalized;
+        }
+
+        JointBound planningBoundForJoint(const robot::RobotJoint& joint)
+        {
+            JointBound bound;
+            if (joint.continuous)
+            {
+                bound.lower = -kPi;
+                bound.upper = kPi;
+            }
+            else
+            {
+                bound.lower = joint.lowerPositionLimit;
+                bound.upper = joint.upperPositionLimit;
+            }
+            bound.maxVelocity = joint.hasVelocityLimit ? joint.maxVelocity : 0.0;
+            bound.maxAcceleration = joint.hasAccelerationLimit ? joint.maxAcceleration : 0.0;
+            bound.continuous = joint.continuous;
+            return bound;
         }
 
         const simulation_project::CollisionDetectorDesc* findDetector(
@@ -87,20 +160,22 @@ namespace motion_planning
             if (jointValues.size() != jointNames.size())
                 return StateValidationResult::failure("state_size_mismatch", "Joint state size does not match the planning scene.");
 
+            std::vector<double> runtimeJointValues = jointValues;
             for (std::size_t index = 0; index < jointValues.size(); ++index)
             {
-                const double value = jointValues[index];
+                const double value = normalizedJointValueForBounds(jointValues[index], jointBounds[index]);
                 const JointBound& bound = jointBounds[index];
-                if (!std::isfinite(value))
+                if (!std::isfinite(jointValues[index]) || !std::isfinite(value))
                     return StateValidationResult::failure("non_finite_state", "Joint state contains a non-finite value.");
                 if (value < bound.lower || value > bound.upper)
                     return StateValidationResult::failure("state_out_of_bounds", "Joint state is outside the configured bounds.");
+                runtimeJointValues[index] = value;
             }
 
             const simulation_runtime::Result setResult = simulation.setRobotJointValues(
                 robotId,
                 jointNames,
-                jointValues);
+                runtimeJointValues);
             if (!setResult.success)
                 return StateValidationResult::failure("runtime_state_update_failed", setResult.message);
 
@@ -151,7 +226,13 @@ namespace motion_planning
 
         double maximumDelta = 0.0;
         for (std::size_t index = 0; index < from.size(); ++index)
-            maximumDelta = std::max(maximumDelta, std::abs(to[index] - from[index]));
+        {
+            const JointBound& bound = m_impl->jointBounds[index];
+            const double delta = bound.continuous
+                ? shortestContinuousDelta(from[index], to[index])
+                : to[index] - from[index];
+            maximumDelta = std::max(maximumDelta, std::abs(delta));
+        }
         const std::size_t stepCount = std::max<std::size_t>(
             1,
             static_cast<std::size_t>(std::ceil(maximumDelta / options.maxJointStep)));
@@ -161,7 +242,15 @@ namespace motion_planning
         {
             const double ratio = static_cast<double>(step) / static_cast<double>(stepCount);
             for (std::size_t index = 0; index < sample.size(); ++index)
-                sample[index] = from[index] + (to[index] - from[index]) * ratio;
+            {
+                const JointBound& bound = m_impl->jointBounds[index];
+                const double delta = bound.continuous
+                    ? shortestContinuousDelta(from[index], to[index])
+                    : to[index] - from[index];
+                sample[index] = from[index] + delta * ratio;
+                if (bound.continuous)
+                    sample[index] = wrapContinuousAngle(sample[index]);
+            }
 
             StateValidationResult result = m_impl->applyState(sample, true);
             if (!result.valid)
@@ -306,20 +395,21 @@ namespace motion_planning
                 setError(errorMessage, "Planning joint is missing or fixed: " + jointName);
                 return nullptr;
             }
-            if (joint->isLoop || joint->continuous || !joint->hasPositionLimits ||
-                (joint->type != robot::JointType::Revolute && joint->type != robot::JointType::Prismatic))
+            const bool supportedType =
+                joint->type == robot::JointType::Revolute ||
+                joint->type == robot::JointType::Prismatic;
+            if (joint->isLoop || !supportedType || (!joint->continuous && !hasFiniteOrderedPositionLimits(*joint)))
             {
                 setError(errorMessage, "The first planner requires a bounded non-loop revolute or prismatic joint: " + jointName);
                 return nullptr;
             }
+            if (joint->continuous && joint->type != robot::JointType::Revolute)
+            {
+                setError(errorMessage, "Continuous planning joints must be revolute: " + jointName);
+                return nullptr;
+            }
 
-            JointBound bound;
-            bound.lower = joint->lowerPositionLimit;
-            bound.upper = joint->upperPositionLimit;
-            bound.maxVelocity = joint->hasVelocityLimit ? joint->maxVelocity : 0.0;
-            bound.maxAcceleration = joint->hasAccelerationLimit ? joint->maxAcceleration : 0.0;
-            bound.continuous = joint->continuous;
-            impl->jointBounds.push_back(bound);
+            impl->jointBounds.push_back(planningBoundForJoint(*joint));
         }
 
         for (const std::string& detectorId : request.collisionDetectorIds)
@@ -410,8 +500,8 @@ namespace motion_planning
         problem.robotId = scene.robotId();
         problem.jointNames = scene.jointNames();
         problem.jointBounds = scene.jointBounds();
-        problem.start = request.start;
-        problem.goal = request.goal;
+        problem.start = normalizedJointValuesForBounds(request.start, scene.jointBounds());
+        problem.goal = normalizedJointValuesForBounds(request.goal, scene.jointBounds());
         problem.planner = request.planner;
         problem.validation = request.validation;
         problem.postProcess = request.postProcess;

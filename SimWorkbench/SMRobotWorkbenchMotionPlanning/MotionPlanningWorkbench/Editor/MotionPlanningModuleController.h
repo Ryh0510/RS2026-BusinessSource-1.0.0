@@ -48,6 +48,7 @@ namespace robot_qt_viewer
         void solveInverseKinematics(bool useToolTransform);
         void applySelectedJointPoint(int pointIndex);
         void applySelectedCdfJointAngles(int pointIndex);
+        void repairImportedCdfTrajectory();
         void insertControlPointBefore(int pointIndex);
         void insertControlPointAfter(int pointIndex);
         void deleteControlPoint(int pointIndex);

@@ -3,6 +3,7 @@
 #include "RobotQtWidgetUtils.h"
 
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -264,6 +265,42 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     m_applyCdfJointButton = new QPushButton(QStringLiteral("Apply selected CDF joint angles"), cdfPage);
     cdfLayout->addWidget(m_applyCdfJointButton);
 
+    auto* cdfRepairTitle = new QLabel(QStringLiteral("CDF/QP Collision Repair"), cdfPage);
+    cdfRepairTitle->setProperty("panelTitle", true);
+    cdfLayout->addWidget(cdfRepairTitle);
+
+    auto* cdfRepairForm = new QFormLayout();
+    cdfRepairForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    m_cdfSafetyMargin = makePoseSpinBox(cdfPage, 0.0, 1.0, 0.01, 0.001, QStringLiteral(" m"));
+    cdfRepairForm->addRow(QStringLiteral("Safety margin"), m_cdfSafetyMargin);
+
+    m_cdfTargetClearance = makePoseSpinBox(cdfPage, 0.0, 1.0, 0.0, 0.001, QStringLiteral(" m"));
+    cdfRepairForm->addRow(QStringLiteral("Target clearance"), m_cdfTargetClearance);
+
+    m_cdfFiniteDifferenceStep = makePoseSpinBox(cdfPage, 0.000001, 0.1, 0.0005, 0.0001, QStringLiteral(" rad"));
+    cdfRepairForm->addRow(QStringLiteral("Finite diff step"), m_cdfFiniteDifferenceStep);
+
+    m_cdfDistanceThreshold = makePoseSpinBox(cdfPage, 0.001, 100.0, 5.0, 0.01, QStringLiteral(" m"));
+    cdfRepairForm->addRow(QStringLiteral("Distance horizon"), m_cdfDistanceThreshold);
+
+    m_cdfTrustRegion = makePoseSpinBox(cdfPage, 0.001, 1.0, 0.03, 0.005, QStringLiteral(" rad"));
+    cdfRepairForm->addRow(QStringLiteral("Trust region"), m_cdfTrustRegion);
+
+    m_cdfMaxIterations = new QSpinBox(cdfPage);
+    m_cdfMaxIterations->setRange(1, 1000);
+    m_cdfMaxIterations->setValue(80);
+    cdfRepairForm->addRow(QStringLiteral("Max iterations"), m_cdfMaxIterations);
+
+    m_cdfKeepEndpoints = new QCheckBox(QStringLiteral("Lock endpoints"), cdfPage);
+    m_cdfKeepEndpoints->setChecked(true);
+    cdfRepairForm->addRow(QString(), m_cdfKeepEndpoints);
+
+    cdfLayout->addLayout(cdfRepairForm);
+
+    m_repairCdfTrajectoryButton = new QPushButton(QStringLiteral("Repair imported trajectory with CDF/QP"), cdfPage);
+    cdfLayout->addWidget(m_repairCdfTrajectoryButton);
+
     m_cdfResult = new QLabel(QStringLiteral("Import a CDF joint angle file."), cdfPage);
     m_cdfResult->setWordWrap(true);
     cdfLayout->addWidget(m_cdfResult);
@@ -298,6 +335,9 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     });
     connect(m_applyCdfJointButton, &QPushButton::clicked, this, [this]() {
         emit applySelectedCdfJointAnglesRequested(m_cdfJointTable != nullptr ? m_cdfJointTable->currentRow() : -1);
+    });
+    connect(m_repairCdfTrajectoryButton, &QPushButton::clicked, this, [this]() {
+        emit repairImportedCdfTrajectoryRequested();
     });
     connect(m_poseTable, &QTableWidget::customContextMenuRequested,
         this, &MotionPlanningEditorWidget::showControlPointContextMenu);
@@ -399,6 +439,23 @@ void MotionPlanningEditorWidget::setRobotId(const QString& robotId)
     }
     updateTrajectoryActions();
     updateCdfActions();
+}
+
+MotionPlanningEditorWidget::CdfQpRepairSettings MotionPlanningEditorWidget::cdfQpRepairSettings() const
+{
+    CdfQpRepairSettings settings;
+    settings.safetyMargin = m_cdfSafetyMargin != nullptr ? m_cdfSafetyMargin->value() : settings.safetyMargin;
+    settings.targetClearance = m_cdfTargetClearance != nullptr ? m_cdfTargetClearance->value() : settings.targetClearance;
+    settings.finiteDifferenceStep = m_cdfFiniteDifferenceStep != nullptr
+        ? m_cdfFiniteDifferenceStep->value()
+        : settings.finiteDifferenceStep;
+    settings.distanceThreshold = m_cdfDistanceThreshold != nullptr
+        ? m_cdfDistanceThreshold->value()
+        : settings.distanceThreshold;
+    settings.trustRegion = m_cdfTrustRegion != nullptr ? m_cdfTrustRegion->value() : settings.trustRegion;
+    settings.maxIterations = m_cdfMaxIterations != nullptr ? m_cdfMaxIterations->value() : settings.maxIterations;
+    settings.keepEndpoints = m_cdfKeepEndpoints != nullptr ? m_cdfKeepEndpoints->isChecked() : settings.keepEndpoints;
+    return settings;
 }
 
 void MotionPlanningEditorWidget::setResult(const QString& summary, bool success)
@@ -555,12 +612,39 @@ void MotionPlanningEditorWidget::updateCdfActions()
         m_cdfJointTable->currentRow() >= 0 &&
         m_cdfJointTable->rowCount() > 0 &&
         !(m_cdfJointTable->rowCount() == 1 && m_cdfJointTable->columnSpan(0, 0) > 1);
+    const bool hasImportedRows = m_cdfJointTable != nullptr &&
+        m_cdfJointTable->rowCount() > 0 &&
+        !(m_cdfJointTable->rowCount() == 1 && m_cdfJointTable->columnSpan(0, 0) > 1);
 
     if(m_importCdfButton != nullptr) {
         m_importCdfButton->setEnabled(hasRobot);
     }
     if(m_applyCdfJointButton != nullptr) {
         m_applyCdfJointButton->setEnabled(hasRobot && hasValidRow);
+    }
+    if(m_cdfSafetyMargin != nullptr) {
+        m_cdfSafetyMargin->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfTargetClearance != nullptr) {
+        m_cdfTargetClearance->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfFiniteDifferenceStep != nullptr) {
+        m_cdfFiniteDifferenceStep->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfDistanceThreshold != nullptr) {
+        m_cdfDistanceThreshold->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfTrustRegion != nullptr) {
+        m_cdfTrustRegion->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfMaxIterations != nullptr) {
+        m_cdfMaxIterations->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfKeepEndpoints != nullptr) {
+        m_cdfKeepEndpoints->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_repairCdfTrajectoryButton != nullptr) {
+        m_repairCdfTrajectoryButton->setEnabled(hasRobot && hasImportedRows);
     }
 }
 
