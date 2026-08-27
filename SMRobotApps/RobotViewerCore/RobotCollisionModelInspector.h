@@ -23,7 +23,6 @@ struct RobotCollisionModelVariantSummary
     bool replaceOriginal = false;
     bool visibleInViewport = false;
     bool selectedInViewport = false;
-    bool usedByActiveDetector = false;
     std::size_t elementCount = 0;
     std::size_t meshElementCount = 0;
     std::size_t meshVertexCount = 0;
@@ -81,14 +80,10 @@ class RobotCollisionModelInspector
 public:
     static RobotCollisionRobotSummary summarizeRobot(
         const RuntimeRobot& robot,
-        const std::string& activeDetectorRole = std::string(),
-        const std::string& activeDetectorSource = std::string(),
         const std::string& visibleVariantId = std::string());
 
     static RobotCollisionLinkSummary summarizeLink(
         const RuntimeRobot& robot,
         const std::string& linkName,
-        const std::string& activeDetectorRole = std::string(),
-        const std::string& activeDetectorSource = std::string(),
         const std::string& visibleVariantId = std::string());
 };

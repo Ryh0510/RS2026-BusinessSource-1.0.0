@@ -52,6 +52,9 @@ function(_rs_normalize_dependency dependency out_dependency out_state)
     endwhile()
 
     if(_state STREQUAL "VALID" AND
+       _dependency MATCHES "^[A-Za-z0-9_.+-]+$")
+        set(_state SKIP)
+    elseif(_state STREQUAL "VALID" AND
        NOT _dependency MATCHES "^[A-Za-z0-9_.+-]+::[A-Za-z0-9_.+-]+$")
         set(_state INVALID)
     endif()

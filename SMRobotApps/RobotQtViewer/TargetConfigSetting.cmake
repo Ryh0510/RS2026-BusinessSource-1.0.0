@@ -25,11 +25,14 @@ set(${TARGET_NAME}_RequiredLibsPublic
     SMRobotPlatform::SimulationRuntime
     SMRobotPlatform::SensorCore
     SMRobotPlatform::SensorSimulation
+    SMRobotApps::RobotViewerCore
     SMRobotWorkbenchProjectAssembly::ProjectAssemblyWorkbench
     SMRobotWorkbenchCollisionConfig::CollisionConfigWorkbench
     SMRobotWorkbenchRobotRun::RobotRunWorkbench
     SMRobotWorkbenchMotionPlanning::MotionPlanningWorkbench
     SMRobotWorkbenchPaintingAnalysis::PaintingAnalysisWorkbench
+    SMRobotWorkbenchSprayProcess::SprayProcessWorkbench
+    SMRobotWorkbenchDigitalTwin::DigitalTwinWorkbench
 )
 
 set(${TARGET_NAME}_RequiredLibsPrivate)

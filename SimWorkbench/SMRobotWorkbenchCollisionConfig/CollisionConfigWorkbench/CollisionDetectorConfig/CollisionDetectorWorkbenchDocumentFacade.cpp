@@ -88,6 +88,35 @@ namespace
         }
     }
 
+    bool hasCollisionDetectorName(
+        const simulation_project::ProjectDocument& document,
+        const std::string& name)
+    {
+        return std::any_of(
+            document.collision.detectors.begin(),
+            document.collision.detectors.end(),
+            [&](const simulation_project::CollisionDetectorDesc& detector) {
+                const std::string effectiveName = detector.name.empty() ? detector.id : detector.name;
+                return effectiveName == name;
+            });
+    }
+
+    std::string makeUniqueCollisionDetectorName(
+        const simulation_project::ProjectDocument& document,
+        const std::string& baseName)
+    {
+        int suffix = 1;
+        while(true) {
+            const std::string candidate = suffix == 1
+                ? baseName
+                : baseName + " " + std::to_string(suffix);
+            if(!hasCollisionDetectorName(document, candidate)) {
+                return candidate;
+            }
+            ++suffix;
+        }
+    }
+
     simulation_project::CollisionDetectorTargetDesc makeRobotTarget(const std::string& robotId)
     {
         simulation_project::CollisionDetectorTargetDesc target;
@@ -156,7 +185,31 @@ namespace
             addSceneAllTargets(document, detector);
         }
 
+        detector.name = makeUniqueCollisionDetectorName(document, detector.name);
+
         return detector;
+    }
+
+    CollisionDetectorQueryContractView makeQueryContract(
+        const simulation_project::CollisionDetectorDesc& detector,
+        const simulation_project::ProjectDocument* sourceDocument = nullptr)
+    {
+        CollisionDetectorQueryContractView contract;
+        contract.id = QString::fromStdString(detector.id);
+        contract.name = QString::fromStdString(detector.name);
+        contract.contacts = detector.contacts;
+        contract.normals = detector.visualization.showNormals;
+        contract.nearest = detector.nearestPoints || detector.distance;
+        contract.maxContacts = detector.maxContacts;
+        contract.distanceThreshold = detector.distanceThreshold;
+        if(sourceDocument != nullptr) {
+            simulation_project::ProjectDocument document = *sourceDocument;
+            document.collision.detectors.push_back(detector);
+            contract.modelBindings = CollisionDetectorsController::buildProperties(
+                document,
+                QString::fromStdString(detector.id)).modelBindings;
+        }
+        return contract;
     }
 
     QString memberText(const simulation_project::CollisionSelectionSetMemberDesc& member)
@@ -729,16 +782,50 @@ namespace robot_qt_viewer
         return result;
     }
 
-    CollisionDetectorAddResult CollisionDetectorWorkbenchDocumentFacade::addTaskPanelDefaultDetector()
+    CollisionDetectorQueryContractView
+    CollisionDetectorWorkbenchDocumentFacade::taskPanelDefaultDetectorContract() const
+    {
+        return makeQueryContract(makeTaskPanelDefaultDetector(m_document), &m_document);
+    }
+
+    CollisionDetectorAddResult CollisionDetectorWorkbenchDocumentFacade::addTaskPanelDefaultDetector(
+        const CollisionDetectorQueryContractView& contract)
     {
         CollisionDetectorAddResult result;
         m_appServices.mutateProject(
             QStringLiteral("collisionDetector"),
             ProjectDirtyPolicy::UserEdit,
             [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
+                simulation_project::CollisionDetectorDesc detector =
+                    makeTaskPanelDefaultDetector(service.document());
+                detector.id = contract.id.toStdString();
+
+                if(detector.id.empty()) {
+                    result.message = "Add detector failed: generated detector id is empty.";
+                    changed = false;
+                    return false;
+                }
+                if(findCollisionDetector(service.document(), detector.id) != nullptr) {
+                    result.message = QString("Add detector failed: collision detector id already exists: %1")
+                        .arg(contract.id);
+                    changed = false;
+                    return false;
+                }
+
+                const CollisionDetectorCommandResult applyResult =
+                    CollisionDetectorCommandController::applyDetectorQueryContractValues(
+                        service.document(),
+                        detector,
+                        contract);
+                if(!applyResult.success) {
+                    result.message = QString("Add detector failed: %1").arg(applyResult.message);
+                    changed = false;
+                    return false;
+                }
+
                 result = addCollisionDetector(
                     service.document(),
-                    makeTaskPanelDefaultDetector(service.document()),
+                    std::move(detector),
                     "Add detector failed",
                     "Added collision detector");
                 changed = result.success;

@@ -7,6 +7,8 @@ set(SOURCES
     MotionControlModuleController.h
     MotionControlWidget.cpp
     MotionControlWidget.h
+    RobotRunWorkbenchLifecycle.cpp
+    RobotRunWorkbenchLifecycle.h
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES})

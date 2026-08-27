@@ -24,6 +24,7 @@
 namespace
 {
     using robot_qt_viewer::configureInspectorCombo;
+    using robot_qt_viewer::configureActionButton;
     using robot_qt_viewer::configureInspectorGrid;
     using robot_qt_viewer::configureInspectorList;
     using robot_qt_viewer::makeHorizontallyCompressible;
@@ -51,15 +52,6 @@ namespace
         return value ? QStringLiteral("on") : QStringLiteral("off");
     }
 
-    bool isKnownRole(const QString& role)
-    {
-        return role == QStringLiteral("Exact")
-            || role == QStringLiteral("PlanningProxy")
-            || role == QStringLiteral("Simplified")
-            || role == QStringLiteral("SafetyMargin")
-            || role == QStringLiteral("SphereCover");
-    }
-
     CollisionDetectorQueryContractView makeQueryContract(
         const CollisionDetectorPropertiesView& properties,
         const QString& detectorId)
@@ -73,7 +65,7 @@ namespace
         contract.nearest = properties.nearest;
         contract.maxContacts = properties.maxContacts;
         contract.distanceThreshold = properties.distanceThreshold;
-        contract.role = properties.role;
+        contract.modelBindings = properties.modelBindings;
         return contract;
     }
 
@@ -89,7 +81,7 @@ namespace
         properties.nearest = contract.nearest;
         properties.maxContacts = contract.maxContacts;
         properties.distanceThreshold = contract.distanceThreshold;
-        properties.role = contract.role;
+        properties.modelBindings = contract.modelBindings;
         return properties;
     }
 
@@ -102,7 +94,7 @@ namespace
             auto* separator = new QFrame(parent);
             separator->setFrameShape(QFrame::HLine);
             separator->setFrameShadow(QFrame::Plain);
-            separator->setStyleSheet(QStringLiteral("color: rgba(110, 150, 185, 120);"));
+            separator->setProperty("sectionDivider", true);
             layout->addSpacing(12);
             layout->addWidget(separator);
             layout->addSpacing(8);
@@ -140,8 +132,11 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
             emit detectorClicked(detectorId);
         }
     });
-    selectorLayout->addWidget(m_detectorCombo, 0, 0, 1, 2);
-    selectorLayout->setColumnStretch(0, 1);
+    auto* currentDetectorLabel = new QLabel("Current Detector", this);
+    currentDetectorLabel->setToolTip("The detector currently selected for configuration and runtime results.");
+    selectorLayout->addWidget(currentDetectorLabel, 0, 0);
+    selectorLayout->addWidget(m_detectorCombo, 0, 1);
+    selectorLayout->setColumnStretch(1, 1);
     layout->addLayout(selectorLayout);
 
     auto* setupButtonLayout = new QGridLayout();
@@ -150,7 +145,7 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     configureInspectorGrid(setupButtonLayout);
 
     m_configureButton = new QPushButton("Configure...", this);
-    makeHorizontallyCompressible(m_configureButton);
+    configureActionButton(m_configureButton, robot_qt_viewer::UiActionRole::Accent);
     m_configureButton->setToolTip("Opens the detector query configuration dialog.");
     connect(m_configureButton, &QPushButton::clicked, this, [this]() {
         openQueryDialog();
@@ -158,19 +153,20 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     setupButtonLayout->addWidget(m_configureButton, 0, 0);
 
     m_addDetectorButton = new QPushButton("New Detector", this);
-    makeHorizontallyCompressible(m_addDetectorButton);
-    m_addDetectorButton->setToolTip("Creates a detector from the current collision target sets.");
+    configureActionButton(m_addDetectorButton, robot_qt_viewer::UiActionRole::Primary);
+    m_addDetectorButton->setToolTip(
+        "Opens a detector configuration draft. The detector is created only after OK.");
     connect(m_addDetectorButton, &QPushButton::clicked, this, &CollisionDetectorsWidget::addDetectorRequested);
     setupButtonLayout->addWidget(m_addDetectorButton, 0, 1);
 
     m_removeDetectorButton = new QPushButton("Delete Detector", this);
-    makeHorizontallyCompressible(m_removeDetectorButton);
+    configureActionButton(m_removeDetectorButton, robot_qt_viewer::UiActionRole::Destructive);
     m_removeDetectorButton->setToolTip("Removes the current detector. At least one detector must remain in the project.");
     connect(m_removeDetectorButton, &QPushButton::clicked, this, &CollisionDetectorsWidget::removeDetectorRequested);
     setupButtonLayout->addWidget(m_removeDetectorButton, 1, 0);
 
     m_showSelectedButton = new QPushButton("Show Selected", this);
-    makeHorizontallyCompressible(m_showSelectedButton);
+    configureActionButton(m_showSelectedButton, robot_qt_viewer::UiActionRole::Accent);
     m_showSelectedButton->setToolTip("Shows the selected detector overlay and hides the others.");
     connect(m_showSelectedButton, &QPushButton::clicked, this, &CollisionDetectorsWidget::showSelectedRequested);
     setupButtonLayout->addWidget(m_showSelectedButton, 1, 1);
@@ -263,7 +259,7 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     draftButtonLayout->addWidget(m_setBList, 3, 0, 1, 2);
 
     m_bindDraftSetsButton = new QPushButton("Add Model Pairs To Detector", this);
-    makeHorizontallyCompressible(m_bindDraftSetsButton);
+    configureActionButton(m_bindDraftSetsButton, robot_qt_viewer::UiActionRole::Primary);
     m_bindDraftSetsButton->setToolTip("Adds generated model-pair rules to this detector without removing existing rules.");
     connect(m_bindDraftSetsButton, &QPushButton::clicked, this, &CollisionDetectorsWidget::bindDraftSetsRequested);
     draftButtonLayout->addWidget(m_bindDraftSetsButton, 4, 0, 1, 2);
@@ -274,6 +270,18 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     updateSummary();
     updateActionState();
     updateDraftActionState();
+}
+
+bool CollisionDetectorsWidget::configureNewDetector(
+    CollisionDetectorQueryContractView& contract)
+{
+    CollisionDetectorQueryDialog dialog(contract, this);
+    if(dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    contract = dialog.contract();
+    return true;
 }
 
 void CollisionDetectorsWidget::setDetectors(
@@ -432,19 +440,6 @@ void CollisionDetectorsWidget::setLinkPairActionsEnabled(bool canMarkLinkA, bool
     Q_UNUSED(canCreateLinkLink);
 }
 
-bool CollisionDetectorsWidget::setCurrentRole(const QString& role)
-{
-    if(!isKnownRole(role)) {
-        return false;
-    }
-
-    m_properties.role = role;
-    m_savedProperties.role = role;
-    updateSummary();
-    emit editDetectorRequested();
-    return true;
-}
-
 void CollisionDetectorsWidget::addDraftSetMember(
     const QString& side,
     const CollisionDetectorDraftMemberView& member)
@@ -561,12 +556,12 @@ void CollisionDetectorsWidget::updateSummary()
     const QString detectorId = currentDetectorId();
     m_summaryLabel->setText(QStringLiteral(
         "%1%2\n"
-        "id: %3 | role: %4\n"
+        "id: %3 | model bindings: %4\n"
         "contacts: %5 | normals: %6 | nearest/distance: %7 | max contacts: %8 | threshold: %9")
             .arg(name)
             .arg(dirtyText)
             .arg(detectorId.isEmpty() ? QStringLiteral("<none>") : detectorId)
-            .arg(m_properties.role)
+            .arg(m_properties.modelBindings.size())
             .arg(yesNo(m_properties.contacts))
             .arg(yesNo(m_properties.normals))
             .arg(yesNo(m_properties.nearest))

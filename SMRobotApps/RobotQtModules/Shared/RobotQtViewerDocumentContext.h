@@ -11,6 +11,7 @@ namespace robot_qt_viewer
 {
     class RobotQtViewerDocumentController;
     class RobotQtViewerEventHub;
+    class RobotQtViewerOperationStatusStore;
     class RobotQtViewerSelectionModel;
     class RobotQtViewerViewportPreviewState;
     class RobotQtViewerViewportServices;
@@ -23,7 +24,8 @@ namespace robot_qt_viewer
             RobotQtViewerDocumentController& documentController,
             RobotQtViewerSelectionModel& selectionModel,
             RobotQtViewerViewportPreviewState& viewportPreviewState,
-            RobotQtViewerEventHub& eventHub);
+            RobotQtViewerEventHub& eventHub,
+            RobotQtViewerOperationStatusStore& operationStatusStore);
 
         simulation_project::ProjectSession& projectSession();
         const simulation_project::ProjectSession& projectSession() const;
@@ -36,6 +38,8 @@ namespace robot_qt_viewer
         const RobotQtViewerViewportPreviewState& viewportPreviewState() const;
         RobotQtViewerEventHub& eventHub();
         const RobotQtViewerEventHub& eventHub() const;
+        RobotQtViewerOperationStatusStore& operationStatusStore();
+        const RobotQtViewerOperationStatusStore& operationStatusStore() const;
         void setViewportServices(RobotQtViewerViewportServices* viewportServices);
         RobotQtViewerViewportServices* viewportServices() const;
 
@@ -45,6 +49,7 @@ namespace robot_qt_viewer
         RobotQtViewerSelectionModel& m_selectionModel;
         RobotQtViewerViewportPreviewState& m_viewportPreviewState;
         RobotQtViewerEventHub& m_eventHub;
+        RobotQtViewerOperationStatusStore& m_operationStatusStore;
         RobotQtViewerViewportServices* m_viewportServices = nullptr;
     };
 }

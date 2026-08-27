@@ -23,7 +23,6 @@ namespace robot_qt_viewer
         bool replaceOriginal = false;
         bool visibleInViewport = false;
         bool selectedInViewport = false;
-        bool usedByActiveDetector = false;
         std::size_t elementCount = 0;
         std::size_t meshElementCount = 0;
         std::size_t meshVertexCount = 0;
@@ -140,6 +139,8 @@ namespace robot_qt_viewer
         bool enabled = true;
         bool visible = true;
         bool active = false;
+        bool valid = true;
+        std::string errorMessage;
         std::size_t includePairCount = 0;
         std::size_t effectiveIncludePairCount = 0;
         std::size_t contactCount = 0;

@@ -16,6 +16,7 @@ namespace robot_qt_viewer
         long long elapsedMs = 0;
         QString errorMessage;
         QString sourceId;
+        QString operationId;
     };
 
     class ViewportReloadWorkflowController
@@ -23,7 +24,9 @@ namespace robot_qt_viewer
     public:
         explicit ViewportReloadWorkflowController(RobotQtViewerDocumentContext& context);
 
-        ViewportReloadWorkflowResult reload(const QString& sourceId);
+        ViewportReloadWorkflowResult reload(
+            const QString& sourceId,
+            const QString& operationId = QString());
 
     private:
         RobotQtViewerDocumentContext& m_context;

@@ -2,6 +2,7 @@
 
 #include "RobotQtViewerDocumentController.h"
 #include "RobotQtViewerEventHub.h"
+#include "RobotQtViewerOperationStatus.h"
 #include "RobotQtViewerSelectionModel.h"
 #include "RobotQtViewerViewportPreviewState.h"
 
@@ -12,12 +13,14 @@ namespace robot_qt_viewer
         RobotQtViewerDocumentController& documentController,
         RobotQtViewerSelectionModel& selectionModel,
         RobotQtViewerViewportPreviewState& viewportPreviewState,
-        RobotQtViewerEventHub& eventHub)
+        RobotQtViewerEventHub& eventHub,
+        RobotQtViewerOperationStatusStore& operationStatusStore)
         : m_session(session)
         , m_documentController(documentController)
         , m_selectionModel(selectionModel)
         , m_viewportPreviewState(viewportPreviewState)
         , m_eventHub(eventHub)
+        , m_operationStatusStore(operationStatusStore)
     {
     }
 
@@ -74,6 +77,16 @@ namespace robot_qt_viewer
     const RobotQtViewerEventHub& RobotQtViewerDocumentContext::eventHub() const
     {
         return m_eventHub;
+    }
+
+    RobotQtViewerOperationStatusStore& RobotQtViewerDocumentContext::operationStatusStore()
+    {
+        return m_operationStatusStore;
+    }
+
+    const RobotQtViewerOperationStatusStore& RobotQtViewerDocumentContext::operationStatusStore() const
+    {
+        return m_operationStatusStore;
     }
 
     void RobotQtViewerDocumentContext::setViewportServices(RobotQtViewerViewportServices* viewportServices)

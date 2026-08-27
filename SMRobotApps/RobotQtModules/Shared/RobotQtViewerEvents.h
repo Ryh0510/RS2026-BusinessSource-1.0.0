@@ -1,10 +1,15 @@
 #pragma once
 
+#include "RobotQtViewerOperationStatus.h"
+#include "RobotQtViewerWorkbench.h"
+
 #include <QVector>
 #include <QString>
 #include <QStringList>
 
 #include <SimulationProject/ProjectDocument.h>
+
+#include <cstdint>
 
 namespace robot_qt_viewer
 {
@@ -24,7 +29,9 @@ namespace robot_qt_viewer
         CollisionSelectionChanged,
         CoatingAnalysisChanged,
         TaskStateChanged,
+        WorkbenchTransitionCommitted,
         ViewportPreviewChanged,
+        OperationStatusChanged,
         StatusMessageRequested
     };
 
@@ -72,6 +79,13 @@ namespace robot_qt_viewer
         bool showThickness = false;
         double minimumThicknessMeters = 0.0;
         double maximumThicknessMeters = 0.0;
+    };
+
+    struct RobotQtViewerWorkbenchPayload
+    {
+        RobotQtViewerWorkbenchKind previousWorkbench = RobotQtViewerWorkbenchKind::Browse;
+        RobotQtViewerWorkbenchKind activeWorkbench = RobotQtViewerWorkbenchKind::Browse;
+        std::uint64_t transitionId = 0;
     };
 
     struct RobotQtViewerToolFrameVisibility
@@ -149,6 +163,8 @@ namespace robot_qt_viewer
         RobotQtViewerCollisionPayload collision;
         RobotQtViewerCoatingAnalysisPayload coatingAnalysis;
         RobotQtViewerViewportPayload viewport;
+        RobotQtViewerWorkbenchPayload workbench;
+        RobotQtViewerOperationStatus operationStatus;
     };
 
     inline QString robotQtViewerEventKindName(RobotQtViewerEventKind kind)
@@ -182,8 +198,12 @@ namespace robot_qt_viewer
             return QStringLiteral("CoatingAnalysisChanged");
         case RobotQtViewerEventKind::TaskStateChanged:
             return QStringLiteral("TaskStateChanged");
+        case RobotQtViewerEventKind::WorkbenchTransitionCommitted:
+            return QStringLiteral("WorkbenchTransitionCommitted");
         case RobotQtViewerEventKind::ViewportPreviewChanged:
             return QStringLiteral("ViewportPreviewChanged");
+        case RobotQtViewerEventKind::OperationStatusChanged:
+            return QStringLiteral("OperationStatusChanged");
         case RobotQtViewerEventKind::StatusMessageRequested:
             return QStringLiteral("StatusMessageRequested");
         }
@@ -207,7 +227,9 @@ namespace robot_qt_viewer
             RobotQtViewerEventKind::CollisionSelectionChanged,
             RobotQtViewerEventKind::CoatingAnalysisChanged,
             RobotQtViewerEventKind::TaskStateChanged,
+            RobotQtViewerEventKind::WorkbenchTransitionCommitted,
             RobotQtViewerEventKind::ViewportPreviewChanged,
+            RobotQtViewerEventKind::OperationStatusChanged,
             RobotQtViewerEventKind::StatusMessageRequested
         };
 

@@ -6,6 +6,8 @@
 #include <SimulationProject/CollisionModelSelectionIds.h>
 #include <SimulationProject/ProjectDocumentService.h>
 
+#include <algorithm>
+
 namespace
 {
     CollisionLinkModelVariantCommandResult makeFailure(const QString& message)
@@ -40,35 +42,61 @@ CollisionLinkModelVariantCommandResult CollisionLinkModelVariantCommandControlle
 }
 
 CollisionLinkModelVariantCommandResult CollisionLinkModelVariantCommandController::useVariantInDetector(
-    simulation_project::ProjectDocument& document,
+    simulation_project::ProjectDocumentService& service,
     robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
     const QString& detectorId,
-    const QString& role,
-    const QString& source)
+    const QString& robotId,
+    const QString& linkName,
+    const QString& objectId,
+    const QString& variantId)
 {
-    if(role.isEmpty()) {
-        return makeFailure("Selected collision model variant has no detector role.");
-    }
-    if(source.isEmpty()) {
-        return makeFailure("Selected collision model variant has no source.");
-    }
     if(detectorId.isEmpty()) {
         return makeFailure("Select an active collision detector first.");
     }
-
-    CollisionLinkModelDocumentFacade documentFacade(document);
-    simulation_project::CollisionDetectorDesc* detector =
-        documentFacade.findDetector(detectorId.toStdString());
-    if(detector == nullptr) {
-        return makeFailure("Selected collision detector is not in the project.");
+    if(variantId.isEmpty()) {
+        return makeFailure("Selected collision model variant has no stable modelId.");
+    }
+    if((robotId.isEmpty() || linkName.isEmpty()) && objectId.isEmpty()) {
+        return makeFailure("Select a concrete robot link, object, or attachment target first.");
     }
 
-    detector->geometryRole = role.toStdString();
-    detector->geometrySource = source.toStdString();
+    simulation_project::CollisionDetectorModelBindingDesc binding;
+    binding.context = "AnyEndpoint";
+    binding.mode = "ExplicitModel";
+    binding.modelId = variantId.toStdString();
+    if(!robotId.isEmpty() && !linkName.isEmpty()) {
+        binding.robotId = robotId.toStdString();
+        binding.linkName = linkName.toStdString();
+    } else {
+        const std::string targetId = objectId.toStdString();
+        const simulation_project::ProjectDocument& document = service.document();
+        const bool attachment = std::any_of(
+            document.mountedAttachments.begin(), document.mountedAttachments.end(),
+            [&](const simulation_project::MountedAttachmentDesc& item) { return item.id == targetId; });
+        const bool pointCloud = std::any_of(
+            document.pointClouds.begin(), document.pointClouds.end(),
+            [&](const simulation_project::PointCloudDesc& item) { return item.id == targetId; });
+        if(attachment) {
+            binding.attachmentId = targetId;
+        } else if(pointCloud) {
+            binding.pointCloudId = targetId;
+        } else {
+            binding.objectId = targetId;
+        }
+    }
+
+    bool changed = false;
+    std::string error;
+    if(!service.setCollisionDetectorModelBinding(
+           detectorId.toStdString(), binding, &changed, &error)) {
+        return makeFailure(error.empty()
+            ? QString("Failed to bind collision model to detector target.")
+            : QString::fromStdString(error));
+    }
 
     bool updatedRuntime = viewportServices == nullptr;
     if(viewportServices != nullptr) {
-        updatedRuntime = viewportServices->updateCollisionDetectorRuntimeOptions(*detector);
+        updatedRuntime = viewportServices->rebuildCollisionDetectorsFromDocument(service.document());
         if(updatedRuntime) {
             viewportServices->setActiveCollisionDetector(detectorId);
         }
@@ -76,9 +104,9 @@ CollisionLinkModelVariantCommandResult CollisionLinkModelVariantCommandControlle
 
     CollisionLinkModelVariantCommandResult result;
     result.success = true;
-    result.projectChanged = true;
+    result.projectChanged = changed;
     result.runtimeUpdateFailed = viewportServices != nullptr && !updatedRuntime;
-    result.message = QString("Active detector variant: %1 / %2").arg(role, source);
+    result.message = QString("Bound detector target to modelId: %1").arg(variantId);
     return result;
 }
 

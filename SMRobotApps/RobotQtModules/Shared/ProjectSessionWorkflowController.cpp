@@ -2,6 +2,7 @@
 
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
+#include "RobotQtViewerOperationStatus.h"
 
 #include <SimulationProject/ProjectSession.h>
 
@@ -53,16 +54,18 @@ namespace robot_qt_viewer
 
     ProjectSessionWorkflowResult ProjectSessionWorkflowController::loadFromPath(
         const std::filesystem::path& path,
-        const QString& sourceId)
+        const QString& sourceId,
+        const QString& operationId)
     {
-        return loadProject(path, sourceId, false);
+        return loadProject(path, sourceId, false, operationId);
     }
 
     ProjectSessionWorkflowResult ProjectSessionWorkflowController::loadStartupProject(
         const std::filesystem::path& path,
-        const QString& sourceId)
+        const QString& sourceId,
+        const QString& operationId)
     {
-        return loadProject(path, sourceId, true);
+        return loadProject(path, sourceId, true, operationId);
     }
 
     ProjectSessionWorkflowResult ProjectSessionWorkflowController::saveToPath(
@@ -89,17 +92,38 @@ namespace robot_qt_viewer
     ProjectSessionWorkflowResult ProjectSessionWorkflowController::loadProject(
         const std::filesystem::path& path,
         const QString& sourceId,
-        bool requireSaveAs)
+        bool requireSaveAs,
+        const QString& operationId)
     {
         const auto profileStart = std::chrono::steady_clock::now();
         ProjectSessionWorkflowResult result;
         result.sourceId = sourceId;
+        result.operationId = operationId;
+
+        if(!operationId.isEmpty()) {
+            m_context.operationStatusStore().reportProgress(
+                operationId,
+                QStringLiteral("status.operation.projectOpen.step.read"),
+                QStringLiteral("Reading and validating project"),
+                1,
+                3,
+                0,
+                3);
+        }
 
         std::string error;
         bool migratedCollisionDetectors = false;
         const auto loadStart = std::chrono::steady_clock::now();
         if(!m_context.projectSession().loadFromPath(path, &migratedCollisionDetectors, &error)) {
             result.message = QString("Open failed: %1").arg(QString::fromStdString(error));
+            if(!operationId.isEmpty()) {
+                m_context.operationStatusStore().fail(
+                    operationId,
+                    QStringLiteral("status.operation.projectOpen.failed"),
+                    QStringLiteral("Failed to open %1"),
+                    QStringLiteral("project.open.read_failed"),
+                    QString::fromStdString(error));
+            }
             printProfileRow("ProjectSession load JSON", elapsedMilliseconds(loadStart), result.message);
             return result;
         }
@@ -114,6 +138,17 @@ namespace robot_qt_viewer
 
         if(requireSaveAs) {
             m_context.projectSession().setRequiresSaveAs(true);
+        }
+
+        if(!operationId.isEmpty()) {
+            m_context.operationStatusStore().reportProgress(
+                operationId,
+                QStringLiteral("status.operation.projectOpen.step.publish"),
+                QStringLiteral("Publishing project document"),
+                2,
+                3,
+                1,
+                3);
         }
 
         const auto publishStart = std::chrono::steady_clock::now();

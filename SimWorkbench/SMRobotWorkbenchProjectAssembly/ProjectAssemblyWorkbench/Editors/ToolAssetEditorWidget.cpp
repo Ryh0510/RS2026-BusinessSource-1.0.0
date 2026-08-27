@@ -223,7 +223,9 @@ ToolAssetEditorWidget::ToolAssetEditorWidget(QWidget* parent)
     layout->addWidget(m_tcpTransformEditor);
 
     m_applyButton = new QPushButton("Apply Tool Asset", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_applyButton);
+    robot_qt_viewer::configureActionButton(
+        m_applyButton,
+        robot_qt_viewer::UiActionRole::Primary);
     m_applyButton->setVisible(false);
     layout->addWidget(m_applyButton);
 

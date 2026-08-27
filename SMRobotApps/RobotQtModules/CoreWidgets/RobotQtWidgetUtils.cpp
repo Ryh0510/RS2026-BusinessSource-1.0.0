@@ -1,10 +1,13 @@
 #include "RobotQtWidgetUtils.h"
 
+#include <QAbstractButton>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QLabel>
 #include <QLayout>
+#include <QList>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QPushButton>
@@ -12,6 +15,24 @@
 
 namespace robot_qt_viewer
 {
+    namespace
+    {
+        const char* actionRoleName(UiActionRole role)
+        {
+            switch(role) {
+            case UiActionRole::Primary:
+                return "primary";
+            case UiActionRole::Accent:
+                return "accent";
+            case UiActionRole::Destructive:
+                return "destructive";
+            case UiActionRole::Standard:
+            default:
+                return "standard";
+            }
+        }
+    }
+
     QLabel* makePanelTitle(const QString& text, QWidget* parent)
     {
         auto* label = new QLabel(text, parent);
@@ -41,6 +62,53 @@ namespace robot_qt_viewer
         button->setMinimumSize(0, 0);
         if(button->toolTip().isEmpty()) {
             button->setToolTip(button->text());
+        }
+    }
+
+    void configureActionButton(QAbstractButton* button, UiActionRole role)
+    {
+        if(button == nullptr) {
+            return;
+        }
+        makeHorizontallyCompressible(button);
+        button->setMinimumSize(0, 30);
+        button->setProperty("uiActionRole", actionRoleName(role));
+        if(button->toolTip().isEmpty()) {
+            button->setToolTip(button->text());
+        }
+    }
+
+    void configureInspectorToggle(QAbstractButton* button)
+    {
+        if(button == nullptr) {
+            return;
+        }
+        makeHorizontallyCompressible(button);
+        button->setMinimumHeight(26);
+        button->setProperty("uiControlRole", "toggle");
+    }
+
+    void configureDialogButtonBox(QDialogButtonBox* buttonBox)
+    {
+        if(buttonBox == nullptr) {
+            return;
+        }
+        const QList<QAbstractButton*> buttons = buttonBox->buttons();
+        for(QAbstractButton* button : buttons) {
+            UiActionRole role = UiActionRole::Standard;
+            switch(buttonBox->buttonRole(button)) {
+            case QDialogButtonBox::AcceptRole:
+            case QDialogButtonBox::YesRole:
+            case QDialogButtonBox::ApplyRole:
+                role = UiActionRole::Primary;
+                break;
+            case QDialogButtonBox::DestructiveRole:
+                role = UiActionRole::Destructive;
+                break;
+            default:
+                break;
+            }
+            configureActionButton(button, role);
         }
     }
 

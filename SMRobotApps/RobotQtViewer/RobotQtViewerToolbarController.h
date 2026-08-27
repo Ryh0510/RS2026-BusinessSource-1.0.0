@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 class QAction;
@@ -24,6 +25,7 @@ namespace robot_qt_viewer
         QAction* saveCollisionOverrides = nullptr;
         QAction* importRobot = nullptr;
         QAction* importObject = nullptr;
+        QAction* importPointCloud = nullptr;
         QAction* deleteSelectedItem = nullptr;
         QAction* saveImage = nullptr;
         QAction* resetCamera = nullptr;
@@ -49,7 +51,9 @@ namespace robot_qt_viewer
         explicit RobotQtViewerToolbarController(QMainWindow& window, QObject* parent = nullptr);
 
         QToolBar* toolbar() const;
-        void build(const RobotQtViewerToolbarActions& actions);
+        void build(
+            const RobotQtViewerToolbarActions& actions,
+            const QStringList& workbenchActionOrder = {});
         void retranslate(const RobotQtViewerToolbarTexts& texts);
         void setActionTextAndToolTip(QAction* action, const QString& text);
 
@@ -64,5 +68,6 @@ namespace robot_qt_viewer
         QToolBar* m_toolbar = nullptr;
         QHash<QString, QAction*> m_actions;
         QHash<QString, QLabel*> m_groupLabels;
+        QStringList m_workbenchActionOrder;
     };
 }

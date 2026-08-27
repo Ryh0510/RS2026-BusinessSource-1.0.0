@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace scenecore
@@ -14,18 +15,35 @@ namespace scenecore
     class SceneGraph;
 }
 
+namespace assetcore
+{
+    class ModelAssetLeaseCache;
+}
+
+namespace rendercore
+{
+    class GeometryResourceCache;
+}
+
 class ProjectRuntimeBuilder
 {
 public:
     static simulation_project::AssetResolveContext makeAssetResolveContext(
         const std::filesystem::path& basePath,
-        const std::vector<std::string>& assetSearchPaths);
+        const std::vector<std::string>& assetSearchPaths,
+        const std::string& projectAssetDirectory = {});
+
+    static simulation_project::AssetResolveContext makeAssetResolveContext(
+        const std::filesystem::path& basePath,
+        const simulation_project::ProjectDocument& document);
 
     static collision::Transform3 makeTransform(const simulation_project::TransformDesc& desc);
 
     static robot::RobotModel loadSingleRobot(
         const std::filesystem::path& path,
-        const std::string& sourceType);
+        const std::string& sourceType,
+        int sourceModelIndex = 0,
+        const std::vector<std::string>& resourceSearchPaths = {});
 
     static void applyInitialJoints(
         robotinstance::RobotInstance& instance,
@@ -49,9 +67,31 @@ public:
         RuntimeSceneObject& runtime,
         const simulation_project::ObjectCollisionOverrideDesc& collisionOverride,
         uint64_t runtimeIdBase,
+        const simulation_project::AssetResolveContext& assetResolveContext,
+        const std::string& collisionModelId,
+        const std::string& currentModelId);
+
+    static bool appendObjectCollisionOverrideObjects(
+        RuntimeSceneObject& runtime,
+        const simulation_project::ObjectCollisionOverrideDesc& collisionOverride,
+        uint64_t runtimeIdBase,
         const std::filesystem::path& projectBasePath,
         const std::vector<std::string>& assetSearchPaths,
-        const std::string& collisionModelId);
+        const std::string& collisionModelId,
+        const std::string& currentModelId,
+        const std::string& projectAssetDirectory = {});
+
+    static RuntimeSceneObject buildSceneObject(
+        const simulation_project::SceneObjectDesc& objectDesc,
+        const simulation_project::CollisionSceneDesc& collisionDesc,
+        uint64_t runtimeId,
+        const simulation_project::AssetResolveContext& assetResolveContext,
+        scenecore::SceneGraph& graph,
+        bool buildCollision = true,
+        const std::unordered_set<std::string>* explicitModelIds = nullptr,
+        assetcore::ModelAssetLeaseCache* assetCache = nullptr,
+        rendercore::GeometryResourceCache* geometryCache = nullptr,
+        const std::string& correlationId = {});
 
     static RuntimeSceneObject buildSceneObject(
         const simulation_project::SceneObjectDesc& objectDesc,
@@ -60,21 +100,46 @@ public:
         const std::filesystem::path& projectBasePath,
         const std::vector<std::string>& assetSearchPaths,
         scenecore::SceneGraph& graph,
-        bool buildCollision = true);
+        bool buildCollision = true,
+        const std::unordered_set<std::string>* explicitModelIds = nullptr,
+        assetcore::ModelAssetLeaseCache* assetCache = nullptr,
+        rendercore::GeometryResourceCache* geometryCache = nullptr,
+        const std::string& correlationId = {},
+        const std::string& projectAssetDirectory = {});
+
+    static bool ensureSceneObjectCollisionObjects(
+        RuntimeSceneObject& runtime,
+        const simulation_project::SceneObjectDesc& objectDesc,
+        const simulation_project::CollisionSceneDesc& collisionDesc,
+        const simulation_project::AssetResolveContext& assetResolveContext,
+        const std::unordered_set<std::string>* explicitModelIds = nullptr,
+        assetcore::ModelAssetLeaseCache* assetCache = nullptr,
+        const std::string& correlationId = {});
 
     static bool ensureSceneObjectCollisionObjects(
         RuntimeSceneObject& runtime,
         const simulation_project::SceneObjectDesc& objectDesc,
         const simulation_project::CollisionSceneDesc& collisionDesc,
         const std::filesystem::path& projectBasePath,
-        const std::vector<std::string>& assetSearchPaths);
+        const std::vector<std::string>& assetSearchPaths,
+        const std::unordered_set<std::string>* explicitModelIds = nullptr,
+        assetcore::ModelAssetLeaseCache* assetCache = nullptr,
+        const std::string& correlationId = {},
+        const std::string& projectAssetDirectory = {});
+
+    static RuntimeSceneObject buildPointCloud(
+        const simulation_project::PointCloudDesc& pointCloudDesc,
+        uint64_t runtimeId,
+        const simulation_project::AssetResolveContext& assetResolveContext,
+        scenecore::SceneGraph& graph);
 
     static RuntimeSceneObject buildPointCloud(
         const simulation_project::PointCloudDesc& pointCloudDesc,
         uint64_t runtimeId,
         const std::filesystem::path& projectBasePath,
         const std::vector<std::string>& assetSearchPaths,
-        scenecore::SceneGraph& graph);
+        scenecore::SceneGraph& graph,
+        const std::string& projectAssetDirectory = {});
 
     static bool setJointValue(RuntimeRobot& runtime, const std::string& jointName, double value);
 

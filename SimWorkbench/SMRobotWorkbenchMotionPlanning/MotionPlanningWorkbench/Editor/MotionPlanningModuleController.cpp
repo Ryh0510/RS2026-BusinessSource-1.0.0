@@ -792,6 +792,7 @@ namespace robot_qt_viewer
         options.distanceThreshold = settings.distanceThreshold;
         options.trustRegion = settings.trustRegion;
         options.seedTrackingWeight = settings.seedTrackingWeight;
+        options.segmentIntermediateSamples = settings.segmentIntermediateSamples;
         options.maxIterations = settings.maxIterations;
         options.keepEndpoints = settings.keepEndpoints;
 

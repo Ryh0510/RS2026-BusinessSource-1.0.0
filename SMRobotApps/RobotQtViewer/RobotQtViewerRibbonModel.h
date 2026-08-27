@@ -2,6 +2,7 @@
 
 #include <QStyle>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 namespace robot_qt_viewer
@@ -46,5 +47,6 @@ namespace robot_qt_viewer
     };
 
     RobotQtViewerRibbonModel makeDefaultRobotQtViewerRibbonModel(
-        const RobotQtViewerRibbonTexts& texts = RobotQtViewerRibbonTexts());
+        const RobotQtViewerRibbonTexts& texts = RobotQtViewerRibbonTexts(),
+        const QStringList& workbenchActionOrder = {});
 }

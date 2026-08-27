@@ -4,6 +4,7 @@
 #include <Collision/CollisionShapeDesc.h>
 #include <Collision/RobotCollisionInstance.h>
 #include <Collision/RobotCollisionModel.h>
+#include <Kinematics/StewartPlatformKinematics.h>
 #include <RenderCore/Material.h>
 #include <RenderCore/Model.h>
 #include <RobotCore/RobotModel.h>
@@ -17,6 +18,7 @@
 #include <Eigen/Core>
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -55,6 +57,19 @@ struct MeshOverlay
     std::string linkName;
 };
 
+struct StewartLegRuntimeControl
+{
+    bool enabled = false;
+    int legIndex = -1;
+    std::string lowerLink;
+    std::string upperLink;
+    std::array<int, 2> baseRevoluteDofIndices{ { -1, -1 } };
+    int actuatorDofIndex = -1;
+    double actuatorSign = 1.0;
+    double homeLength = 0.0;
+    collision::Vec3 platformAnchorLocalInUpperLink = collision::Vec3::Zero();
+};
+
 struct RuntimeRobot
 {
     uint64_t runtimeId = 0;
@@ -68,11 +83,38 @@ struct RuntimeRobot
     std::unordered_map<std::string, std::vector<std::shared_ptr<rendercore::Material>>> linkOriginalMaterials;
     std::unordered_set<std::string> highlightedLinks;
     std::string name;
+    std::string sourceType;
+    std::string sourcePath;
+    int sourceModelIndex = 0;
     collision::Transform3 baseTransform = collision::Transform3::Identity();
     bool collisionEnabled = true;
     bool autoMotionEnabled = false;
     double autoMotionAmplitude = 0.5;
     double autoMotionSpeed = 1.0;
+    bool parallelControlEnabled = false;
+    collision::Transform3 parallelHomeBaseTransform = collision::Transform3::Identity();
+    kine::StewartPlatformGeometry parallelGeometry;
+    kine::StewartPlatformPose parallelPose;
+    std::array<double, 6> parallelActuatorLengths{};
+    std::array<double, 6> parallelActuatorHomeLengths{};
+    std::array<double, 6> parallelActuatorRates{};
+    std::array<int, 6> parallelActuatorDofIndices{ { -1, -1, -1, -1, -1, -1 } };
+    std::array<double, 6> parallelActuatorSigns{ { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 } };
+    std::array<StewartLegRuntimeControl, 6> parallelLegControls;
+    bool parallelInternalPlatformVisualsEnabled = false;
+    std::vector<std::string> parallelInternalPlatformDrivenLinks;
+    std::unordered_map<std::string, collision::Transform3> parallelInternalPlatformHomeLocalTransforms;
+    bool parallelFollowerEnabled = false;
+    int parallelFollowerLegIndex = -1;
+    collision::Transform3 parallelFollowerHomeTransform = collision::Transform3::Identity();
+    bool parallelFollowerAnchorsValid = false;
+    collision::Vec3 parallelFollowerHomeBaseAnchor = collision::Vec3::Zero();
+    collision::Vec3 parallelFollowerHomePlatformAnchor = collision::Vec3::Zero();
+    int parallelFollowerActuatorDofIndex = -1;
+    double parallelFollowerActuatorSign = 1.0;
+    double parallelFollowerHomeLength = 0.0;
+    std::vector<std::string> parallelFollowerDrivenLinks;
+    std::unordered_map<std::string, collision::Transform3> parallelFollowerHomeLinkTransforms;
 };
 
 struct RuntimeSceneCollisionObject
@@ -80,6 +122,8 @@ struct RuntimeSceneCollisionObject
     collision::CollisionObjectPtr collisionObject;
     collision::CollisionShapeDesc collisionShape;
     collision::Transform3 localTransform = collision::Transform3::Identity();
+    std::string modelId;
+    bool currentModel = true;
 };
 
 struct RuntimeSurfaceScalarSubMesh

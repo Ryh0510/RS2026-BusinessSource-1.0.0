@@ -3,7 +3,6 @@
 #include "CollisionDetectorConfigWidget.h"
 #include "CollisionDetectorsWidget.h"
 #include "CollisionDetectorsViewModel.h"
-#include "CollisionLegacyPairsViewModel.h"
 #include "CollisionLinkModelSetupWidget.h"
 #include "CollisionLinkModelsWidget.h"
 #include "CollisionLinkModelsViewModel.h"
@@ -11,10 +10,6 @@
 #include "CollisionSelectionSetsViewModel.h"
 #include "RobotQtWidgetUtils.h"
 
-#include <QListWidget>
-#include <QListWidgetItem>
-#include <QPushButton>
-#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -22,8 +17,6 @@ namespace
 {
     using robot_qt_viewer::makeHorizontallyCompressible;
 
-    constexpr int kLegacyPairRobotRole = Qt::UserRole;
-    constexpr int kLegacyPairObjectRole = Qt::UserRole + 1;
 }
 
 CollisionWorkbenchPanel::CollisionWorkbenchPanel(QWidget* parent)
@@ -42,8 +35,6 @@ CollisionWorkbenchPanel::CollisionWorkbenchPanel(QWidget* parent)
     m_detectorConfigWidget = new CollisionDetectorConfigWidget(m_pages);
     m_selectionSetsWidget = m_detectorConfigWidget->selectionSetsWidget();
     m_detectorsWidget = m_detectorConfigWidget->detectorsWidget();
-    m_legacyPairList = m_detectorConfigWidget->legacyPairList();
-    m_autoPairAllButton = m_detectorConfigWidget->autoPairAllButton();
 
     m_pages->addWidget(m_detectorConfigWidget);
     m_pages->addWidget(m_linkModelSetupWidget);
@@ -135,6 +126,12 @@ void CollisionWorkbenchPanel::setDetectors(const QVector<CollisionDetectorListIt
     }
 }
 
+bool CollisionWorkbenchPanel::configureNewDetector(
+    CollisionDetectorQueryContractView& contract)
+{
+    return m_detectorsWidget != nullptr && m_detectorsWidget->configureNewDetector(contract);
+}
+
 void CollisionWorkbenchPanel::setDetectorProperties(const CollisionDetectorPropertiesView& view)
 {
     if(m_detectorsWidget != nullptr) {
@@ -190,11 +187,6 @@ void CollisionWorkbenchPanel::setLinkPairActionsEnabled(bool canMarkLinkA, bool 
     if(m_detectorsWidget != nullptr) {
         m_detectorsWidget->setLinkPairActionsEnabled(canMarkLinkA, canCreateLinkLink);
     }
-}
-
-bool CollisionWorkbenchPanel::setCurrentDetectorRole(const QString& role)
-{
-    return m_detectorsWidget != nullptr && m_detectorsWidget->setCurrentRole(role);
 }
 
 void CollisionWorkbenchPanel::addDetectorDraftSetMember(
@@ -274,37 +266,6 @@ void CollisionWorkbenchPanel::setVariantActionsEnabled(bool canUseVariant, bool 
     }
 }
 
-void CollisionWorkbenchPanel::setLegacyPairs(const QVector<CollisionLegacyPairItemView>& items)
-{
-    if(m_legacyPairList == nullptr) {
-        return;
-    }
-
-    const QSignalBlocker blocker(m_legacyPairList);
-    m_legacyPairList->clear();
-    for(const CollisionLegacyPairItemView& view : items) {
-        auto* item = new QListWidgetItem(view.label);
-        item->setToolTip(view.label);
-        if(view.selectable) {
-            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            item->setCheckState(view.enabled ? Qt::Checked : Qt::Unchecked);
-            item->setData(kLegacyPairRobotRole, view.robotId);
-            item->setData(kLegacyPairObjectRole, view.objectId);
-        } else {
-            item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
-        }
-
-        m_legacyPairList->addItem(item);
-    }
-}
-
-void CollisionWorkbenchPanel::setAutoPairAllEnabled(bool enabled)
-{
-    if(m_autoPairAllButton != nullptr) {
-        m_autoPairAllButton->setEnabled(enabled);
-    }
-}
-
 void CollisionWorkbenchPanel::connectChildSignals()
 {
     connect(m_selectionSetsWidget, &CollisionSelectionSetsWidget::selectionSetSelectionChanged,
@@ -350,23 +311,4 @@ void CollisionWorkbenchPanel::connectChildSignals()
     connect(m_linkModelsWidget, &CollisionLinkModelsWidget::variantSelectionChanged,
         this, &CollisionWorkbenchPanel::linkModelVariantSelectionChanged);
 
-    connect(m_legacyPairList, &QListWidget::itemChanged,
-        this, &CollisionWorkbenchPanel::handleLegacyPairItemChanged);
-    connect(m_autoPairAllButton, &QPushButton::clicked,
-        this, &CollisionWorkbenchPanel::autoPairAllRequested);
-}
-
-void CollisionWorkbenchPanel::handleLegacyPairItemChanged(QListWidgetItem* item)
-{
-    if(item == nullptr) {
-        return;
-    }
-
-    const QString robotId = item->data(kLegacyPairRobotRole).toString();
-    const QString objectId = item->data(kLegacyPairObjectRole).toString();
-    if(robotId.isEmpty() || objectId.isEmpty()) {
-        return;
-    }
-
-    emit legacyPairEnabledChanged(robotId, objectId, item->checkState() == Qt::Checked);
 }

@@ -9,17 +9,22 @@
 #include <SimulationProject/ProjectSession.h>
 
 #include <memory>
+#include <vector>
 
 #include "RobotQtViewerAppController.h"
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
 #include "RobotQtViewerDocumentViewRegistry.h"
 #include "RobotQtViewerEventHub.h"
-#include "RobotQtViewerLanguage.h"
+#include "RobotQtViewerLocalization.h"
+#include "RobotQtViewerOperationStatus.h"
 #include "RobotQtViewerSelectionModel.h"
 #include "RobotQtViewerViewportPreviewState.h"
 #include "RobotQtViewerWorkbench.h"
+#include "RobotQtViewerWorkbenchLifecycle.h"
 #include "RobotQtViewerWorkbenchPackageRegistry.h"
+#include "RobotQtViewerPlatformProfile.h"
+#include "RobotQtViewerWorkbenchTransitionCoordinator.h"
 #include "RobotQtViewerWindowConfig.h"
 #include "SceneTreeIntentController.h"
 #include "SceneExplorerViewModel.h"
@@ -31,8 +36,10 @@ class QLineEdit;
 class QAction;
 class QDockWidget;
 class QEvent;
+class QCloseEvent;
 class QMenu;
 class QPushButton;
+class QProgressBar;
 class QPoint;
 class QStackedWidget;
 class QTreeWidget;
@@ -59,6 +66,7 @@ namespace robot_qt_viewer
     class RobotQtViewerToolbarController;
     class RobotQtViewerToolSetupAppServicesAdapter;
     class RobotQtViewerViewportEventController;
+    class RobotQtViewerViewportPresentationController;
     class RobotQtViewerViewportServicesAdapter;
     class SceneExplorerModuleController;
     class ThicknessLegendWidget;
@@ -75,35 +83,60 @@ namespace sdk
 }
 }
 
-class MainWindow : public QMainWindow
+class MainWindow
+    : public QMainWindow
+    , public robot_qt_viewer::IRobotQtViewerLanguageParticipant
 {
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    MainWindow(
+        robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry workbenchCatalog,
+        robot_qt_viewer::RobotQtViewerPlatformProfile platformProfile,
+        robot_qt_viewer::RobotQtViewerPlatformUserOverlay platformOverlay,
+        robot_qt_viewer::RobotQtViewerResolvedPlatformComposition platformComposition,
+        std::filesystem::path platformProfilesDirectory,
+        std::filesystem::path platformOverlaysDirectory,
+        const QString& startupLanguageId = QString(),
+        QWidget* parent = nullptr);
     ~MainWindow() override;
     bool openProjectPathForProfiling(
         const std::filesystem::path& path,
         int exitDelayMs = -1,
         int repeatCount = 1,
         bool enableCollisionAfterLoad = false,
-        const QString& profileGenerateObjectCoacdId = QString());
+        const QString& profileGenerateObjectCoacdId = QString(),
+        bool setGeneratedCollisionCurrent = false,
+        const std::filesystem::path& profileSavePath = std::filesystem::path());
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void applyIndustrialStyle();
     void applyTheme(const QString& themeName);
     void applyLanguage(const QString& languageName);
     QString uiText(const QString& key) const;
-    void retranslateUi();
+    void retranslateUi(
+        const robot_qt_viewer::RobotQtViewerLocalizationService& localization) noexcept override;
+    QString beginProjectOpenOperation(
+        const std::filesystem::path& path,
+        const QString& sourceId);
+    void refreshOperationStatusPresentation(const QString& focusOperationId = QString());
     void createActions();
     void createCameraViewOverlay();
     void showCameraViewPalette();
     void updateCameraViewOverlayGeometry();
+    void setViewportPresentationMode(bool active);
+    void updateViewportPresentationAction();
     void updateThicknessLegendOverlayGeometry();
     void createPanels();
+    void initializeWorkbenchLifecycles();
+    void configureSimulationPlatform();
     void applyInitialPanelLayout();
     void enterWorkbench(robot_qt_viewer::RobotQtViewerWorkbenchKind kind, const QString& sourceId);
+    void showWorkbenchTransitionResult(
+        const robot_qt_viewer::RobotQtViewerWorkbenchTransitionResult& result,
+        const QString& fallbackMessage = QString());
     void updateWorkbenchActions();
     void setRobotRunDetailsRequested(bool requested);
     void updateRobotRunDetailsDockVisibility();
@@ -163,7 +196,6 @@ private:
         const QString& sourceId,
         const QString& detectorId = QString());
     bool collisionUiUpdating() const;
-    void refreshCollisionPairList();
     void refreshCollisionDetectorList();
     void refreshCollisionDetectorPropertyEditors();
     void refreshCollisionSelectionSetList();
@@ -179,7 +211,7 @@ private:
     void updateRobotPanel(const smrobotgen2::sdk::IRobotModel& model);
     void saveViewportImage();
     bool saveProjectToPath(const std::filesystem::path& path, bool saveAsV3 = false);
-    bool reloadViewportProject();
+    bool reloadViewportProject(const QString& operationId = QString());
     std::string makePortableAssetPath(const std::filesystem::path& assetPath) const;
     QTreeWidget* robotTree() const;
 
@@ -189,8 +221,10 @@ private:
     std::unique_ptr<robot_qt_viewer::RobotQtViewerToolSetupAppServicesAdapter> m_toolSetupServices;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerCollisionWorkbenchServicesAdapter> m_collisionWorkbenchServices;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerSceneExplorerActionRouter> m_sceneExplorerActionRouter;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerViewportPresentationController>
+        m_viewportPresentationController;
     robot_qt_viewer::RobotQtViewerViewportEventController* m_viewportEventController = nullptr;
-    robot_qt_viewer::LanguageKind m_language = robot_qt_viewer::LanguageKind::English;
+    QString m_languageId = QStringLiteral("en-US");
     QMenu* m_fileMenu = nullptr;
     QMenu* m_viewMenu = nullptr;
     QMenu* m_windowMenu = nullptr;
@@ -223,9 +257,11 @@ private:
     QAction* m_deleteRobotAction = nullptr;
     QAction* m_saveImageAction = nullptr;
     QAction* m_resetCameraAction = nullptr;
+    QAction* m_viewportPresentationAction = nullptr;
     QAction* m_collisionGeometryAction = nullptr;
     QAction* m_collisionQueriesAction = nullptr;
     QAction* m_robotRunDetailsAction = nullptr;
+    QAction* m_configurePlatformAction = nullptr;
     QAction* m_browseWorkbenchAction = nullptr;
     QAction* m_motionWorkbenchAction = nullptr;
     QAction* m_toolSetupWorkbenchAction = nullptr;
@@ -235,6 +271,7 @@ private:
     QAction* m_coatingAnalysisWorkbenchAction = nullptr;
     QAction* m_digitalTwinWorkbenchAction = nullptr;
     QLabel* m_statusLabel = nullptr;
+    QProgressBar* m_operationProgressBar = nullptr;
     SceneExplorerWidget* m_sceneExplorerWidget = nullptr;
     SceneExplorerTaskWidget* m_sceneExplorerTaskWidget = nullptr;
     robot_qt_viewer::SceneExplorerModuleController* m_sceneExplorerController = nullptr;
@@ -267,16 +304,31 @@ private:
     simulation_project::ProjectSession m_projectSession;
     robot_qt_viewer::RobotQtViewerWindowConfig m_windowConfig;
     robot_qt_viewer::RobotQtViewerEventHub m_eventHub;
+    robot_qt_viewer::RobotQtViewerOperationStatusStore m_operationStatusStore;
     robot_qt_viewer::RobotQtViewerDocumentViewRegistry m_documentViewRegistry;
     robot_qt_viewer::RobotQtViewerDocumentController m_documentController;
     robot_qt_viewer::RobotQtViewerSelectionModel m_selectionModel;
     robot_qt_viewer::RobotQtViewerViewportPreviewState m_viewportPreviewState;
+    robot_qt_viewer::RobotQtViewerPlatformProfile m_platformProfile;
+    robot_qt_viewer::RobotQtViewerPlatformUserOverlay m_platformOverlay;
+    robot_qt_viewer::RobotQtViewerResolvedPlatformComposition m_platformComposition;
+    std::filesystem::path m_platformProfilesDirectory;
+    std::filesystem::path m_platformOverlaysDirectory;
     robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry m_workbenchPackageRegistry;
     robot_qt_viewer::RobotQtViewerWorkbenchManager m_workbenchManager;
     robot_qt_viewer::RobotQtViewerDocumentContext m_documentContext;
     robot_qt_viewer::RobotQtViewerAppController m_appController;
+    std::vector<std::unique_ptr<robot_qt_viewer::IRobotQtViewerWorkbenchLifecycle>>
+        m_workbenchLifecycles;
+    std::vector<std::unique_ptr<robot_qt_viewer::IRobotQtViewerLanguageParticipant>>
+        m_workbenchLanguageParticipants;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerLocalizationService> m_localization;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerOperationStatusPresenter>
+        m_operationStatusPresenter;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerLanguageCoordinator>
+        m_languageCoordinator;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerWorkbenchTransitionCoordinator>
+        m_workbenchTransitionCoordinator;
     std::filesystem::path& m_projectPath;
-    bool& m_projectDirty;
-    bool& m_projectRequiresSaveAs;
     bool m_robotRunDetailsRequested = false;
 };

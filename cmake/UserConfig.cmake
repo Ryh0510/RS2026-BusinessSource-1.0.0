@@ -26,48 +26,6 @@ list( APPEND USER_GROUP
 )
 
 
-# foreach(user ${USER_GROUP})
-#     string(REPLACE "_" " " user_desc ${user})
-#     option(${user} "Enable build config for ${user_desc}" OFF)
-#     list( APPEND User_Options ${user} )
-# endforeach()
-
-
-
-
-# #   Only one option must be set to ON
-# set( at_least_one_ON FALSE )
-# foreach(option IN LISTS User_Options)
-#     if(${option})
-#         set(at_least_one_ON TRUE)
-#     endif()
-# endforeach()
-
-# if(NOT at_least_one_ON)
-#     message( FATAL_ERROR "Error: Only one option must be set to ON.\n"
-#                         "Optional options: ${User_Options}" )
-#     return()
-# endif()
-
-
-
-
-
-# #   Find packages for each user/computer
-# foreach( each_user_ ${USER_GROUP} )
-#     if( ${each_user_} )
-#         message( STATUS "Current User is ${each_user_}. " )
-#         string( REGEX REPLACE "USER_" "" user_config_filename ${each_user_} )
-#         message( STATUS "User's config filename is ${user_config_filename}." )
-
-#         include( UserConfigs/${user_config_filename} )
-#     endif()
-# endforeach()
-
-
-
-
-
 
 foreach(user ${USER_GROUP})
     string(REPLACE "_" " " user_desc ${user})

@@ -136,7 +136,9 @@ namespace
         }
 
         return pathToUtf8(simulation_project::AssetResolver::resolveProjectPath(
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, document.assetSearchPaths),
+            ProjectRuntimeBuilder::makeAssetResolveContext(
+                projectBasePath,
+                document),
             meshPath));
     }
 
@@ -151,7 +153,9 @@ namespace
         }
 
         const std::filesystem::path path = simulation_project::AssetResolver::resolveProjectPath(
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, document.assetSearchPaths),
+            ProjectRuntimeBuilder::makeAssetResolveContext(
+                projectBasePath,
+                document),
             collisionOverride.overridePath);
         std::string error;
         robotio::RobotCollisionOverrideDesc robotIoOverride;

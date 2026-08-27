@@ -19,7 +19,7 @@
 
 #include <QApplication>
 #include <QByteArray>
-#include <QFileDialog>
+#include <RobotQtViewerFileDialog.h>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QStringList>
@@ -753,7 +753,8 @@ namespace robot_qt_viewer
 
     void ToolSetupModuleController::importToolAsset()
     {
-        const QString fileName = QFileDialog::getOpenFileName(
+        const QString fileName = robot_qt_viewer::getOpenFileName(
+            QStringLiteral("toolSetup.asset.import"),
             &m_widget,
             "Import tool model",
             QString(),
@@ -2182,7 +2183,8 @@ namespace robot_qt_viewer
                 if(!service.addAttachmentAsset(asset, &error) ||
                     !service.addMountedAttachment(attachment, &error) ||
                     !service.setActiveMountedAttachment(mountFrameId, attachment.id, &error) ||
-                    !service.setSceneObjectVisibility(sourceObjectId, false, &error)) {
+                    !service.setSceneObjectVisibility(sourceObjectId, false, &error) ||
+                    !service.setSceneObjectCollisionEnabled(sourceObjectId, false, &error)) {
                     return false;
                 }
                 changed = true;
@@ -2445,7 +2447,8 @@ namespace robot_qt_viewer
             ProjectDirtyPolicy::UserEdit,
             [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
                 if(!sourceObjectId.empty() &&
-                    !service.setSceneObjectVisibility(sourceObjectId, true, &error)) {
+                    (!service.setSceneObjectVisibility(sourceObjectId, true, &error) ||
+                     !service.setSceneObjectCollisionEnabled(sourceObjectId, true, &error))) {
                     return false;
                 }
                 if(!service.removeMountedAttachment(attachmentId.toStdString(), &error)) {

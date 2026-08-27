@@ -32,11 +32,13 @@ public:
         const QString& variantId);
 
     static CollisionLinkModelVariantCommandResult useVariantInDetector(
-        simulation_project::ProjectDocument& document,
+        simulation_project::ProjectDocumentService& service,
         robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
         const QString& detectorId,
-        const QString& role,
-        const QString& source);
+        const QString& robotId,
+        const QString& linkName,
+        const QString& objectId,
+        const QString& variantId);
 
     static CollisionLinkModelVariantCommandResult setCurrentLinkModel(
         simulation_project::ProjectDocumentService& service,

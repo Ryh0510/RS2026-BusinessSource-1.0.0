@@ -2,6 +2,8 @@
 
 #include <QString>
 
+#include <map>
+
 namespace robot_qt_viewer
 {
     enum class RobotQtViewerWorkbenchKind
@@ -82,6 +84,10 @@ namespace robot_qt_viewer
     };
 
     QString robotQtViewerWorkbenchName(RobotQtViewerWorkbenchKind kind);
+    QString robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind kind);
+    bool robotQtViewerWorkbenchKindFromId(
+        const QString& modeId,
+        RobotQtViewerWorkbenchKind* kind);
     const RobotQtViewerWorkbenchDescriptor& robotQtViewerWorkbenchDescriptor(
         RobotQtViewerWorkbenchKind kind);
     QString robotQtViewerViewportInteractionModeName(RobotQtViewerViewportInteractionMode mode);
@@ -95,7 +101,10 @@ namespace robot_qt_viewer
         const RobotQtViewerTaskSession& session() const;
 
         bool enterWorkbench(RobotQtViewerWorkbenchKind kind, const QString& sourceId = QString());
+        void setInitialWorkbench(RobotQtViewerWorkbenchKind kind);
+        void commitWorkbench(RobotQtViewerWorkbenchKind kind, const QString& sourceId = QString());
         bool exitToBrowse(const QString& sourceId = QString());
+        void releaseProjectSessions();
         bool canExitActiveWorkbench() const;
         void setSessionDirty(bool dirty);
         void setSessionCanExit(bool canExit);
@@ -108,6 +117,7 @@ namespace robot_qt_viewer
 
     private:
         RobotQtViewerTaskSession m_session;
+        std::map<RobotQtViewerWorkbenchKind, RobotQtViewerTaskSession> m_suspendedSessions;
     };
 }
 

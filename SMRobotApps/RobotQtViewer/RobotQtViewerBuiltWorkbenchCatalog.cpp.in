@@ -1,0 +1,17 @@
+#include "RobotQtViewerBuiltWorkbenchCatalog.h"
+
+@ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_INCLUDES@
+
+namespace robot_qt_viewer
+{
+    RobotQtViewerWorkbenchPackageRegistry makeRobotQtViewerBuiltWorkbenchCatalog(
+        QString* errorMessage)
+    {
+        RobotQtViewerWorkbenchPackageRegistry catalog;
+@ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_CALLS@
+        if(errorMessage != nullptr) {
+            errorMessage->clear();
+        }
+        return catalog;
+    }
+}

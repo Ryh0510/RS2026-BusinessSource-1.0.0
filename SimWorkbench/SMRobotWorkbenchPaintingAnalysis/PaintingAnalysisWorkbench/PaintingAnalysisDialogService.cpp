@@ -1,12 +1,13 @@
 #include "PaintingAnalysisDialogService.h"
 
-#include <QFileDialog>
+#include <RobotQtViewerFileDialog.h>
 
 namespace robot_qt_viewer
 {
     QString PaintingAnalysisDialogService::selectModelFile(QWidget* parent)
     {
-        return QFileDialog::getOpenFileName(
+        return getOpenFileName(
+            QStringLiteral("paintingAnalysis.model.open"),
             parent,
             QStringLiteral("Open Coating Analysis Model"),
             QString(),

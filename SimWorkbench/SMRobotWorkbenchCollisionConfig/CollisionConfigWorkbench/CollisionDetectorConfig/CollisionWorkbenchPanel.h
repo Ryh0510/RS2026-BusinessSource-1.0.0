@@ -11,9 +11,6 @@ class CollisionDetectorConfigWidget;
 class CollisionLinkModelSetupWidget;
 class CollisionLinkModelsWidget;
 class CollisionSelectionSetsWidget;
-class QListWidget;
-class QListWidgetItem;
-class QPushButton;
 class QStackedWidget;
 
 struct CollisionDetectorListItemView;
@@ -21,7 +18,6 @@ struct CollisionDetectorPairsViewModel;
 struct CollisionDetectorPropertiesView;
 struct CollisionDetectorQueryContractView;
 struct CollisionDetectorDraftMemberView;
-struct CollisionLegacyPairItemView;
 struct CollisionLinkModelsSummaryView;
 struct CollisionLinkModelsViewModel;
 struct CollisionSelectionSetListItemView;
@@ -53,6 +49,7 @@ public:
     int currentSelectionSetMemberIndex() const;
 
     void setDetectors(const QVector<CollisionDetectorListItemView>& items, const QString& preferredId);
+    bool configureNewDetector(CollisionDetectorQueryContractView& contract);
     void setDetectorProperties(const CollisionDetectorPropertiesView& view);
     void setDetectorPairs(const CollisionDetectorPairsViewModel& view);
     CollisionDetectorPropertiesView currentDetectorProperties() const;
@@ -62,7 +59,6 @@ public:
     void selectDetector(const QString& detectorId);
     void setDetectorActionsEnabled(bool canAdd, bool hasDetector, bool canRemove);
     void setLinkPairActionsEnabled(bool canMarkLinkA, bool canCreateLinkLink);
-    bool setCurrentDetectorRole(const QString& role);
     void addDetectorDraftSetMember(const QString& side, const CollisionDetectorDraftMemberView& member);
     void clearDetectorDraftPairBuilder();
     QVector<CollisionDetectorDraftMemberView> detectorDraftSetMembers(const QString& side) const;
@@ -76,8 +72,6 @@ public:
     bool selectVariantBySourceRole(const QString& source, const QString& role);
     void setContextActionsEnabled(bool hasRobot, bool hasLink);
     void setVariantActionsEnabled(bool canUseVariant, bool canShowVariant);
-    void setLegacyPairs(const QVector<CollisionLegacyPairItemView>& items);
-    void setAutoPairAllEnabled(bool enabled);
 
 signals:
     void rightPanelTitleChanged(const QString& title);
@@ -117,12 +111,8 @@ signals:
 
     void linkModelVariantSelectionChanged();
 
-    void legacyPairEnabledChanged(const QString& robotId, const QString& objectId, bool enabled);
-    void autoPairAllRequested();
-
 private:
     void connectChildSignals();
-    void handleLegacyPairItemChanged(QListWidgetItem* item);
 
     QStackedWidget* m_pages = nullptr;
     CollisionLinkModelSetupWidget* m_linkModelSetupWidget = nullptr;
@@ -130,6 +120,4 @@ private:
     CollisionSelectionSetsWidget* m_selectionSetsWidget = nullptr;
     CollisionDetectorsWidget* m_detectorsWidget = nullptr;
     CollisionLinkModelsWidget* m_linkModelsWidget = nullptr;
-    QListWidget* m_legacyPairList = nullptr;
-    QPushButton* m_autoPairAllButton = nullptr;
 };

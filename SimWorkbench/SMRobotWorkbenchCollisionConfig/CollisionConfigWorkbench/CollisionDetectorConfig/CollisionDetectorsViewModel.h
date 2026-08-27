@@ -20,6 +20,19 @@ struct CollisionDetectorSelectionSetOptionView
     QString text;
 };
 
+struct CollisionDetectorModelBindingView
+{
+    QString targetLabel;
+    QString context = "AnyEndpoint";
+    QString robotId;
+    QString linkName;
+    QString objectId;
+    QString attachmentId;
+    QString pointCloudId;
+    QString mode = "Current";
+    QString modelId;
+};
+
 struct CollisionDetectorPropertiesView
 {
     bool hasDetector = false;
@@ -33,11 +46,11 @@ struct CollisionDetectorPropertiesView
     bool nearest = false;
     double maxContacts = 0.0;
     double distanceThreshold = 0.0;
-    QString role = "Exact";
     QString policy = "Legacy";
     QString setA;
     QString setB;
     QVector<CollisionDetectorSelectionSetOptionView> selectionSets;
+    QVector<CollisionDetectorModelBindingView> modelBindings;
 };
 
 struct CollisionDetectorQueryContractView
@@ -50,7 +63,7 @@ struct CollisionDetectorQueryContractView
     bool nearest = false;
     double maxContacts = 0.0;
     double distanceThreshold = 0.0;
-    QString role = "Exact";
+    QVector<CollisionDetectorModelBindingView> modelBindings;
 };
 
 struct CollisionDetectorPairItemView

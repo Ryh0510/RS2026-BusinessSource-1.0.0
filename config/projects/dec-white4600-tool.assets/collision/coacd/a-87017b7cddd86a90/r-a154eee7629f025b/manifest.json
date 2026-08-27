@@ -1,0 +1,17 @@
+{
+  "generator": "RS2026 CoACD",
+  "source": "coacdVisual",
+  "layout": "smrobot.coacd.v2",
+  "assetKey": "a-87017b7cddd86a90",
+  "revision": "r-a154eee7629f025b",
+  "sourceKeyFingerprint": "fnv1a64:a680d7599341f878",
+  "targetKey": "gun_attachment",
+  "role": "CoACD",
+  "inputFingerprint": "fnv1a64:a154eee7629f025b",
+  "partCount": 3,
+  "parts": ["p-000001.obj", "p-000002.obj", "p-000003.obj"],
+  "inputVertexCount": 11985,
+  "inputTriangleCount": 6244,
+  "outputTriangleCount": 702,
+  "elapsedMs": 15759.2
+}

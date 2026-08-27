@@ -11,33 +11,7 @@ if(NOT TARGET SMRobotCore::RobotSDK)
 endif()
 
 set(${APP_TARGET_NAME}_REQUIRED_TARGETS
-    Qt5::Widgets
-    Qt5::OpenGL
-    Common::GLRuntime
-    Common::CustomLog
-    Common::Utility
-    SMRobotPlatform::AssetCore
-    SMRobotPlatform::CameraCore
-    SMRobotCore::Collision
-    SMRobotCore::Kinematics
-    SMRobotPlatform::RenderCore
-    SMRobotCore::RobotCore
-    SMRobotCore::RobotIO
-    SMRobotCore::RobotInstance
-    SMRobotPlatform::RobotRenderBridge
-    SMRobotCore::RobotSDK
-    SMRobotCore::RobotRuntime
-    SMRobotPlatform::SceneCore
-    SMRobotPlatform::SimulationProject
-    SMRobotPlatform::SimulationRuntime
-    SMRobotPlatform::SensorCore
-    SMRobotPlatform::SensorSimulation
-    SMRobotApps::RobotViewerCore
-    SMRobotWorkbenchProjectAssembly::ProjectAssemblyWorkbench
-    SMRobotWorkbenchCollisionConfig::CollisionConfigWorkbench
-    SMRobotWorkbenchRobotRun::RobotRunWorkbench
-    SMRobotWorkbenchMotionPlanning::MotionPlanningWorkbench
-    SMRobotWorkbenchPaintingAnalysis::PaintingAnalysisWorkbench
+    ${${PACKAGE_NAME}${APP_TARGET_NAME}_RequiredLibsPublic}
 )
 
 set(${APP_TARGET_NAME}_MISSING_TARGETS)
@@ -59,10 +33,69 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+set(ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS
+    SMRobotWorkbenchProjectAssembly::ProjectAssemblyWorkbench
+    SMRobotWorkbenchCollisionConfig::CollisionConfigWorkbench
+    SMRobotWorkbenchRobotRun::RobotRunWorkbench
+    SMRobotWorkbenchMotionPlanning::MotionPlanningWorkbench
+    SMRobotWorkbenchPaintingAnalysis::PaintingAnalysisWorkbench
+    SMRobotWorkbenchSprayProcess::SprayProcessWorkbench
+    SMRobotWorkbenchDigitalTwin::DigitalTwinWorkbench
+)
+set(SMROBOT_ROBOT_QT_VIEWER_EXTRA_WORKBENCH_TARGETS "" CACHE STRING
+    "Additional static Workbench targets contributing to RobotQtViewer.")
+list(APPEND ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS
+    ${SMROBOT_ROBOT_QT_VIEWER_EXTRA_WORKBENCH_TARGETS})
+
+set(ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_INCLUDES)
+set(ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_CALLS)
+foreach(workbench_target_ IN LISTS ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS)
+    if(NOT TARGET ${workbench_target_})
+        message(FATAL_ERROR
+            "RobotQtViewer Workbench contribution target is missing: ${workbench_target_}")
+    endif()
+    get_target_property(workbench_registrar_header_
+        ${workbench_target_} SMROBOT_WORKBENCH_REGISTRAR_HEADER)
+    get_target_property(workbench_registrar_function_
+        ${workbench_target_} SMROBOT_WORKBENCH_REGISTRAR_FUNCTION)
+    if(NOT workbench_registrar_header_ OR NOT workbench_registrar_function_)
+        message(FATAL_ERROR
+            "Workbench target ${workbench_target_} does not expose registrar metadata.")
+    endif()
+    get_target_property(workbench_target_imported_ ${workbench_target_} IMPORTED)
+    if(workbench_target_imported_)
+        set(workbench_source_kind_
+            "RobotQtViewerWorkbenchPackageSource::Prebuilt")
+    else()
+        set(workbench_source_kind_
+            "RobotQtViewerWorkbenchPackageSource::BuiltInSource")
+    endif()
+    string(APPEND ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_INCLUDES
+        "#include \"${workbench_registrar_header_}\"\n")
+    string(APPEND ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_CALLS
+        "        if(!${workbench_registrar_function_}(catalog, ${workbench_source_kind_})) {\n"
+        "            if(errorMessage != nullptr) {\n"
+        "                *errorMessage = QStringLiteral(\"Workbench contribution registration failed: ${workbench_target_}\");\n"
+        "            }\n"
+        "            return {};\n"
+        "        }\n")
+endforeach()
+
+set(ROBOT_QT_VIEWER_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${ROBOT_QT_VIEWER_GENERATED_DIR})
+configure_file(
+    RobotQtViewerBuiltWorkbenchCatalog.cpp.in
+    ${ROBOT_QT_VIEWER_GENERATED_DIR}/RobotQtViewerBuiltWorkbenchCatalog.cpp
+    @ONLY)
+
 set(${APP_TARGET_NAME}_SHELL_SOURCES
     main.cpp
     MainWindow.cpp
     MainWindow.h
+    RobotQtViewerBuiltWorkbenchCatalog.h
+    ${ROBOT_QT_VIEWER_GENERATED_DIR}/RobotQtViewerBuiltWorkbenchCatalog.cpp
+    RobotQtViewerPlatformConfigurationDialog.cpp
+    RobotQtViewerPlatformConfigurationDialog.h
     RobotQtViewerRibbonModel.cpp
     RobotQtViewerRibbonModel.h
     RobotQtViewerResources.qrc
@@ -76,10 +109,10 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
     RobotQtViewerToolSetupAppServicesAdapter.h
     RobotQtViewerViewportEventController.cpp
     RobotQtViewerViewportEventController.h
+    RobotQtViewerViewportPresentationController.cpp
+    RobotQtViewerViewportPresentationController.h
     RobotQtViewerViewportServicesAdapter.cpp
     RobotQtViewerViewportServicesAdapter.h
-    RobotQtViewerLanguage.cpp
-    RobotQtViewerLanguage.h
     RobotQtViewerTheme.cpp
     RobotQtViewerTheme.h
 )
@@ -87,11 +120,18 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
 if(WIN32)
     list(APPEND ${APP_TARGET_NAME}_SHELL_SOURCES
         RobotQtViewer.rc
+        RobotQtViewerResource.h
     )
 endif()
 
 add_executable(${APP_TARGET_NAME}
     ${${APP_TARGET_NAME}_SHELL_SOURCES}
+)
+
+target_include_directories(${APP_TARGET_NAME}
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ROBOT_QT_VIEWER_GENERATED_DIR}
 )
 
 add_executable(SMRobotApps::${APP_TARGET_NAME} ALIAS ${APP_TARGET_NAME})
@@ -101,11 +141,6 @@ target_link_libraries(${APP_TARGET_NAME}
     PRIVATE
         SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
         SMRobotWorkbenchCommon::RobotQtModulesShared
-        SMRobotWorkbenchProjectAssembly::ProjectAssemblyWorkbench
-        SMRobotWorkbenchCollisionConfig::CollisionConfigWorkbench
-        SMRobotWorkbenchRobotRun::RobotRunWorkbench
-        SMRobotWorkbenchMotionPlanning::MotionPlanningWorkbench
-        SMRobotWorkbenchPaintingAnalysis::PaintingAnalysisWorkbench
         RobotQtModulesStatus
         ${${APP_TARGET_NAME}_REQUIRED_TARGETS}
 )
@@ -124,7 +159,7 @@ target_compile_features(${APP_TARGET_NAME}
 
 target_compile_definitions(${APP_TARGET_NAME}
     PRIVATE
-        ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH="projects/ABB4600-burner.sys.json"
+        ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH="projects/ABB4600-burnner.sys.json"
 )
 
 set_target_properties(${APP_TARGET_NAME}
@@ -144,81 +179,22 @@ endif()
 #############################################################
 copy_runtime_dlls( ${APP_TARGET_NAME} )
 
-if(TARGET SMRobotPlatform::RenderCore)
-    get_target_property(_robot_qt_viewer_rendercore_release
-        SMRobotPlatform::RenderCore IMPORTED_LOCATION_RELEASE)
-    get_target_property(_robot_qt_viewer_rendercore_debug
-        SMRobotPlatform::RenderCore IMPORTED_LOCATION_DEBUG)
-
-    if(_robot_qt_viewer_rendercore_release)
-        get_filename_component(_robot_qt_viewer_rendercore_release_dir
-            "${_robot_qt_viewer_rendercore_release}" DIRECTORY)
-        set(_robot_qt_viewer_shader_resources_release
-            "${_robot_qt_viewer_rendercore_release_dir}/RenderCoreShaderResources_shared_rx64.dll")
-    endif()
-
-    if(_robot_qt_viewer_rendercore_debug)
-        get_filename_component(_robot_qt_viewer_rendercore_debug_dir
-            "${_robot_qt_viewer_rendercore_debug}" DIRECTORY)
-        set(_robot_qt_viewer_shader_resources_debug
-            "${_robot_qt_viewer_rendercore_debug_dir}/RenderCoreShaderResources_shared_dx64.dll")
-    endif()
-endif()
-
-if(EXISTS "${_robot_qt_viewer_shader_resources_release}"
-   OR EXISTS "${_robot_qt_viewer_shader_resources_debug}")
-    add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<IF:$<CONFIG:Debug>,${_robot_qt_viewer_shader_resources_debug},${_robot_qt_viewer_shader_resources_release}>"
-            "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>"
-        COMMENT "Copying RenderCore shader resources for ${APP_TARGET_NAME}"
-        VERBATIM
-    )
-endif()
-
-set(_robot_qt_viewer_config_dir "${PROJECT_SOURCE_DIR}/config")
-if(EXISTS "${_robot_qt_viewer_config_dir}")
-    add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${_robot_qt_viewer_config_dir}"
-            "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/config"
-        COMMENT "Copying local configuration for ${APP_TARGET_NAME}"
-        VERBATIM
-    )
-endif()
-
-option(Copy_DataFor_${APP_TARGET_NAME}
-    "Copy SMROBOT_DATA_ROOT into the ${APP_TARGET_NAME} output directory"
-    ON
-)
-
-if(Copy_DataFor_${APP_TARGET_NAME} AND EXISTS "${SMROBOT_DATA_ROOT}")
-    add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${SMROBOT_DATA_ROOT}"
-            "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/data"
-        COMMENT "Copying local data for ${APP_TARGET_NAME}"
-        VERBATIM
-    )
-endif()
-
 if(TARGET CoACD::coacd AND COMMAND CoACD_CopyRuntimeDependencies)
     CoACD_CopyRuntimeDependencies(${APP_TARGET_NAME})
 endif()
 
 deploy_qt( ${APP_TARGET_NAME} )
 
-set(_robot_qt_viewer_local_license "${PROJECT_SOURCE_DIR}/license/license-dev.LIC")
-if(EXISTS "${_robot_qt_viewer_local_license}")
-    add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/license"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_robot_qt_viewer_local_license}"
-            "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/license/license-dev.LIC"
-        COMMENT "Copying local development license for ${APP_TARGET_NAME}"
-        VERBATIM
-    )
+add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/config"
+        "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/config"
+    COMMENT "Deploy RobotQtViewer runtime configuration"
+)
+
+rs_example_category_enabled(_build_regression Regression ${PACKAGE_NAME})
+if(_build_regression)
+    add_subdirectory(regression)
 endif()
 
 if(ExportPacakge${PACKAGE_NAME})
@@ -247,6 +223,12 @@ if(ExportPacakge${PACKAGE_NAME})
             PATTERN "imageformats/*"
             PATTERN "platforms/*"
             PATTERN "styles/*"
+    )
+
+    install(DIRECTORY
+        ${PROJECT_SOURCE_DIR}/config/platforms/
+        DESTINATION ${PACKAGE_NAME}/bin/config/platforms
+        FILES_MATCHING PATTERN "*.platform.json"
     )
 endif()
 

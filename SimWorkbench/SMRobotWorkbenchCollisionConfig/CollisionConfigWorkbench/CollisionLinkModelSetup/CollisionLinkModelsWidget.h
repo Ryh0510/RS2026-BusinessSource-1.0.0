@@ -8,9 +8,11 @@
 #include <string>
 
 class QLabel;
-class QListWidget;
 class QPushButton;
 class QTableWidget;
+class QTreeWidget;
+class QTreeWidgetItem;
+class QEvent;
 class QString;
 class QStringList;
 
@@ -49,6 +51,8 @@ signals:
     void cancelConfigurationRequested();
 
 private:
+    void changeEvent(QEvent* event) override;
+    void retranslateUi();
     bool selectedVariantIsCurrent() const;
     void updateSelectedVariantSummary();
     void updateComplexityTable(const QStringList& rows);
@@ -57,9 +61,12 @@ private:
 
     QLabel* m_targetLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
+    QLabel* m_targetTitleLabel = nullptr;
+    QLabel* m_variantsTitleLabel = nullptr;
+    QLabel* m_generateTitleLabel = nullptr;
     QLabel* m_complexityTitleLabel = nullptr;
     QTableWidget* m_complexityTable = nullptr;
-    QListWidget* m_variantList = nullptr;
+    QTreeWidget* m_variantTree = nullptr;
     QPushButton* m_setCurrentVariantButton = nullptr;
     QPushButton* m_generateCoacdButton = nullptr;
     QPushButton* m_applyButton = nullptr;

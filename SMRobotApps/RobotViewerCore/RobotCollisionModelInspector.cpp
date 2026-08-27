@@ -88,23 +88,6 @@ namespace
         return geometryTypeName(geometry.type);
     }
 
-    std::string stableHashHex(const std::vector<std::string>& values)
-    {
-        std::uint64_t hash = 1469598103934665603ull;
-        for(const std::string& value : values) {
-            for(char c : value) {
-                hash ^= static_cast<unsigned char>(c);
-                hash *= 1099511628211ull;
-            }
-            hash ^= 0xffu;
-            hash *= 1099511628211ull;
-        }
-
-        std::ostringstream text;
-        text << std::hex << std::setw(16) << std::setfill('0') << hash;
-        return text.str();
-    }
-
     std::string makeVariantId(
         const std::string& robotId,
         const std::string& linkName,
@@ -112,7 +95,8 @@ namespace
         const std::string& role,
         const std::vector<std::string>& elementNames)
     {
-        return robotId + "|" + linkName + "|" + source + "|" + role + "|" + stableHashHex(elementNames);
+        return simulation_project::makeGeneratedRobotLinkCollisionModelId(
+            robotId, linkName, source, role, elementNames);
     }
 
     void finalizeVariantIds(
@@ -226,9 +210,7 @@ namespace
         RobotCollisionLinkSummary& summary,
         const std::string& robotId,
         const std::string& role,
-        const std::string& source,
-        const std::string& activeDetectorRole,
-        const std::string& activeDetectorSource)
+        const std::string& source)
     {
         auto it = std::find_if(
             summary.variants.begin(),
@@ -247,9 +229,6 @@ namespace
         variant.linkName = summary.linkName;
         variant.role = role;
         variant.source = source;
-        variant.usedByActiveDetector = !activeDetectorRole.empty() &&
-            role == normalizedRole(activeDetectorRole) &&
-            (activeDetectorSource.empty() || source == normalizedSource(activeDetectorSource));
         summary.variants.push_back(std::move(variant));
         return summary.variants.back();
     }
@@ -257,9 +236,7 @@ namespace
     void appendVisualMeshVariant(
         RobotCollisionLinkSummary& summary,
         const robot::RobotLink& link,
-        const std::string& robotId,
-        const std::string& activeDetectorRole,
-        const std::string& activeDetectorSource)
+        const std::string& robotId)
     {
         if(link.visuals.empty()) {
             return;
@@ -269,9 +246,7 @@ namespace
             summary,
             robotId,
             "Exact",
-            simulation_project::kConvertFromVisualCollisionSource,
-            activeDetectorRole,
-            activeDetectorSource);
+            simulation_project::kConvertFromVisualCollisionSource);
 
         for(std::size_t visualIndex = 0; visualIndex < link.visuals.size(); ++visualIndex) {
             const robot::RobotVisual& visual = link.visuals[visualIndex];
@@ -299,8 +274,6 @@ namespace
 
 RobotCollisionRobotSummary RobotCollisionModelInspector::summarizeRobot(
     const RuntimeRobot& robot,
-    const std::string& activeDetectorRole,
-    const std::string& activeDetectorSource,
     const std::string& visibleVariantId)
 {
     RobotCollisionRobotSummary summary;
@@ -315,8 +288,6 @@ RobotCollisionRobotSummary RobotCollisionModelInspector::summarizeRobot(
         RobotCollisionLinkSummary linkSummary = summarizeLink(
             robot,
             linkName,
-            activeDetectorRole,
-            activeDetectorSource,
             visibleVariantId);
 
         if(linkSummary.hasVisual) {
@@ -353,8 +324,6 @@ RobotCollisionRobotSummary RobotCollisionModelInspector::summarizeRobot(
 RobotCollisionLinkSummary RobotCollisionModelInspector::summarizeLink(
     const RuntimeRobot& robot,
     const std::string& linkName,
-    const std::string& activeDetectorRole,
-    const std::string& activeDetectorSource,
     const std::string& visibleVariantId)
 {
     RobotCollisionLinkSummary summary;
@@ -371,9 +340,7 @@ RobotCollisionLinkSummary RobotCollisionModelInspector::summarizeLink(
     appendVisualMeshVariant(
         summary,
         link,
-        robot.documentId,
-        activeDetectorRole,
-        activeDetectorSource);
+        robot.documentId);
 
     for(const robot::RobotCollisionGeometry& geometry : link.collisions) {
         if(!geometry.enabled) {
@@ -400,7 +367,7 @@ RobotCollisionLinkSummary RobotCollisionModelInspector::summarizeLink(
         addStat(summary.sources, source);
 
         RobotCollisionModelVariantSummary& variant =
-            findOrCreateVariant(summary, robot.documentId, role, source, activeDetectorRole, activeDetectorSource);
+            findOrCreateVariant(summary, robot.documentId, role, source);
         ++variant.elementCount;
         variant.elementNames.push_back(elementNameForSignature(geometry));
         addStat(variant.geometryTypes, geometryTypeName(geometry.type));

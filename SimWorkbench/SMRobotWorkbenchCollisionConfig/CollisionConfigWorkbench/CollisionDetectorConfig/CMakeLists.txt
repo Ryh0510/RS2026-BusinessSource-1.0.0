@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.20)
 set(TARGET_NAME CollisionDetectorConfig)
 
 set(SOURCES
+    CollisionConfigWorkbenchLifecycle.cpp
+    CollisionConfigWorkbenchLifecycle.h
     CollisionDetectorCommandController.cpp
     CollisionDetectorCommandController.h
     CollisionDetectorConfigModuleController.cpp
@@ -24,13 +26,6 @@ set(SOURCES
     CollisionDetectorsWidget.h
     CollisionDocumentEventPublisher.cpp
     CollisionDocumentEventPublisher.h
-    CollisionLegacyPairDocumentFacade.cpp
-    CollisionLegacyPairDocumentFacade.h
-    CollisionLegacyPairWorkbenchController.cpp
-    CollisionLegacyPairWorkbenchController.h
-    CollisionLegacyPairsViewModel.h
-    CollisionPairWorkflowController.cpp
-    CollisionPairWorkflowController.h
     CollisionSelectionSetDocumentFacade.cpp
     CollisionSelectionSetDocumentFacade.h
     CollisionSelectionSetDocumentStorage.cpp

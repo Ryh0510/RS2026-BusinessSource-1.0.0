@@ -94,11 +94,6 @@ namespace robot_qt_viewer
                           m_callbacks.refreshDetectorProperties();
                       }
                   },
-                  [this](const QString& role) {
-                      return m_callbacks.setCurrentDetectorRole
-                          ? m_callbacks.setCurrentDetectorRole(role)
-                          : false;
-                  },
                   [this]() {
                       return m_collisionModelConfigurationActive;
                   }}))

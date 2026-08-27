@@ -96,7 +96,9 @@ namespace robot_qt_viewer
             RobotQtViewerViewportServices* viewportServices,
             const QString& detectorId);
 
-        CollisionDetectorAddResult addTaskPanelDefaultDetector();
+        CollisionDetectorQueryContractView taskPanelDefaultDetectorContract() const;
+        CollisionDetectorAddResult addTaskPanelDefaultDetector(
+            const CollisionDetectorQueryContractView& contract);
         CollisionDetectorAddResult addSceneAllDetector();
 
     private:

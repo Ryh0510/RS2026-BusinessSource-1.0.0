@@ -233,6 +233,51 @@ namespace motion_planning
             return value;
         }
 
+        std::vector<robottrajectory::TimedJointPoint> densifyTrajectory(
+            const robottrajectory::JointTrajectory& trajectory,
+            int intermediateSamples)
+        {
+            std::vector<robottrajectory::TimedJointPoint> densePoints;
+            if(trajectory.points.empty()) {
+                return densePoints;
+            }
+
+            const int samplesPerSegment = std::max(0, intermediateSamples);
+            densePoints.reserve(
+                trajectory.points.size() +
+                (trajectory.points.size() > 1
+                    ? (trajectory.points.size() - 1) * static_cast<std::size_t>(samplesPerSegment)
+                    : 0));
+            densePoints.push_back(trajectory.points.front());
+
+            if(trajectory.points.size() == 1) {
+                return densePoints;
+            }
+
+            for(std::size_t index = 0; index + 1 < trajectory.points.size(); ++index) {
+                const robottrajectory::TimedJointPoint& start = trajectory.points[index];
+                const robottrajectory::TimedJointPoint& end = trajectory.points[index + 1];
+                for(int sampleIndex = 1; sampleIndex <= samplesPerSegment; ++sampleIndex) {
+                    const double fraction = static_cast<double>(sampleIndex) /
+                        static_cast<double>(samplesPerSegment + 1);
+                    robottrajectory::TimedJointPoint sample = start;
+                    sample.time = start.time + (end.time - start.time) * fraction;
+                    sample.q.resize(start.q.size());
+                    for(std::size_t jointIndex = 0; jointIndex < start.q.size(); ++jointIndex) {
+                        const double startValue = jointIndex < start.q.size() ? start.q[jointIndex] : 0.0;
+                        const double endValue = jointIndex < end.q.size() ? end.q[jointIndex] : startValue;
+                        sample.q[jointIndex] = startValue + (endValue - startValue) * fraction;
+                    }
+                    sample.qd.clear();
+                    sample.qdd.clear();
+                    densePoints.push_back(std::move(sample));
+                }
+                densePoints.push_back(end);
+            }
+
+            return densePoints;
+        }
+
         struct SignedDistanceSample
         {
             bool valid = false;
@@ -928,6 +973,10 @@ namespace motion_planning
             return result;
         }
 
+        const std::vector<robottrajectory::TimedJointPoint> denseSeedTrajectory =
+            densifyTrajectory(seedTrajectory, options.segmentIntermediateSamples);
+        result.statistics.inputWaypointCount = static_cast<int>(denseSeedTrajectory.size());
+
         planningDocument.collision.detectors.erase(
             std::remove_if(
                 planningDocument.collision.detectors.begin(),
@@ -958,8 +1007,8 @@ namespace motion_planning
         }
 
         std::vector<std::vector<double>> path;
-        path.reserve(seedTrajectory.points.size());
-        for(const robottrajectory::TimedJointPoint& point : seedTrajectory.points) {
+        path.reserve(denseSeedTrajectory.size());
+        for(const robottrajectory::TimedJointPoint& point : denseSeedTrajectory) {
             path.push_back(clampToBounds(
                 point.q,
                 scene->jointBounds(),
@@ -1072,10 +1121,10 @@ namespace motion_planning
         result.plan.robotId = robotId;
         result.plan.jointNames = jointNames;
         result.plan.trajectory.name = result.plan.id;
-        result.plan.trajectory.interpolation = seedTrajectory.interpolation;
-        result.plan.trajectory.points.reserve(seedTrajectory.points.size());
-        for(std::size_t index = 0; index < seedTrajectory.points.size(); ++index) {
-            robottrajectory::TimedJointPoint point = seedTrajectory.points[index];
+        result.plan.trajectory.interpolation = robottrajectory::TrajectoryInterpolation::Linear;
+        result.plan.trajectory.points.reserve(denseSeedTrajectory.size());
+        for(std::size_t index = 0; index < denseSeedTrajectory.size(); ++index) {
+            robottrajectory::TimedJointPoint point = denseSeedTrajectory[index];
             point.q = path[index];
             point.qd.clear();
             point.qdd.clear();

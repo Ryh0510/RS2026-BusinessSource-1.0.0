@@ -1,6 +1,6 @@
 #include "CollisionConfigDialogService.h"
 
-#include <QFileDialog>
+#include <RobotQtViewerFileDialog.h>
 
 namespace robot_qt_viewer {
 
@@ -8,7 +8,8 @@ QString CollisionConfigDialogService::selectOverrideSidecarForSave(
     QWidget* parent,
     const QString& initialPath)
 {
-    return QFileDialog::getSaveFileName(
+    return getSaveFileName(
+        QStringLiteral("collisionConfig.override.save"),
         parent,
         QStringLiteral("Save collision override sidecar"),
         initialPath,
@@ -19,7 +20,8 @@ QString CollisionConfigDialogService::selectUrdfForExport(
     QWidget* parent,
     const QString& initialPath)
 {
-    return QFileDialog::getSaveFileName(
+    return getSaveFileName(
+        QStringLiteral("collisionConfig.urdf.export"),
         parent,
         QStringLiteral("Export robot URDF with collision"),
         initialPath,

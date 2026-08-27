@@ -5,6 +5,7 @@
 #include "RobotQtViewerViewportServices.h"
 
 #include <SimulationProject/CollisionModelSelectionIds.h>
+#include <SimulationProject/ProjectAssetStore.h>
 #include <SimulationProject/ProjectDocumentService.h>
 
 #include <algorithm>
@@ -87,6 +88,224 @@ namespace
         result.selectedRole =
             QString::fromStdString(normalizedCollisionRole(elements.front().role));
     }
+
+    bool describeGeneratedProjectAsset(
+        const simulation_project::ProjectDocument& document,
+        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        const std::string& meshUri,
+        simulation_project::ProjectAssetDesc& asset,
+        QString& errorMessage)
+    {
+        if(meshUri.rfind("project://assets/", 0) != 0) {
+            errorMessage = "Save the project before applying a generated COACD model.";
+            return false;
+        }
+        if(viewportServices == nullptr || viewportServices->projectBasePath().empty()
+            || document.assetStore.directory.empty()) {
+            errorMessage = "The project asset store is unavailable. Save and reload the project first.";
+            return false;
+        }
+
+        std::filesystem::path relative;
+        std::string error;
+        if(!simulation_project::ProjectAssetStore::relativePathFromUri(meshUri, relative, &error)) {
+            errorMessage = QString::fromStdString(error);
+            return false;
+        }
+        std::vector<std::string> parts;
+        for(const auto& part : relative)
+            parts.push_back(part.generic_u8string());
+        if(parts.size() < 5 || parts[0] != "collision" || parts[1] != "coacd") {
+            errorMessage = "Generated COACD URI does not follow the project asset layout.";
+            return false;
+        }
+
+        const bool compactLayout = parts.size() == 5
+            && parts[2].rfind("a-", 0) == 0
+            && parts[3].rfind("r-", 0) == 0;
+        const bool legacyLayout = parts.size() == 6
+            && parts[4].rfind("input-", 0) == 0;
+        if(!compactLayout && !legacyLayout) {
+            errorMessage = "Generated COACD URI uses an unsupported project asset layout.";
+            return false;
+        }
+
+        const std::filesystem::path revisionRelative = relative.parent_path();
+        const std::filesystem::path manifestRelative = revisionRelative / "manifest.json";
+        const std::string manifestUri =
+            simulation_project::ProjectAssetStore::makeProjectAssetUri(manifestRelative);
+        const std::filesystem::path projectMarker =
+            viewportServices->projectBasePath() / "project.sys.json";
+        const std::filesystem::path manifestPath =
+            simulation_project::ProjectAssetStore::resolvePath(
+                projectMarker,
+                document.assetStore,
+                manifestUri,
+                &error);
+        if(manifestPath.empty() || !std::filesystem::exists(manifestPath)) {
+            errorMessage = error.empty()
+                ? QString("Generated COACD manifest is missing.")
+                : QString::fromStdString(error);
+            return false;
+        }
+
+        asset.id = compactLayout
+            ? "asset.collision." + parts[2] + ".coacd"
+            : "asset.collision." + parts[2] + "." + parts[3] + ".coacd";
+        asset.kind = "collision-derived";
+        asset.uri = manifestUri;
+        asset.format = "smrobot-collision-manifest-json";
+        asset.revision = compactLayout ? parts[3] : parts[4];
+        asset.contentHash = simulation_project::ProjectAssetStore::sha256Directory(
+            manifestPath.parent_path(),
+            &error);
+        if(asset.contentHash.empty()) {
+            errorMessage = QString::fromStdString(error);
+            return false;
+        }
+        asset.storagePolicy = "ProjectOwned";
+        if(asset.revision.rfind("r-", 0) == 0) {
+            asset.sourceFingerprint = "fnv1a64:" + asset.revision.substr(2);
+        } else if(asset.revision.rfind("input-", 0) == 0) {
+            asset.sourceFingerprint = "fnv1a64:" + asset.revision.substr(6);
+        } else {
+            asset.sourceFingerprint = asset.revision;
+        }
+        asset.generator.id = "smrobot.coacd";
+        asset.generator.version = compactLayout ? "2" : "1";
+        asset.generator.serializedOptions = "{\"preset\":\"fastPreviewDefaults\"}";
+        return true;
+    }
+
+    bool registerGeneratedRobotAsset(
+        simulation_project::ProjectDocument& document,
+        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        const std::string& robotId,
+        const std::string& linkName,
+        std::vector<simulation_project::CollisionElementOverrideDesc>& elements,
+        QString& errorMessage)
+    {
+        if(elements.empty())
+            return false;
+        simulation_project::ProjectAssetDesc asset;
+        if(!describeGeneratedProjectAsset(
+               document, viewportServices, elements.front().meshPath, asset, errorMessage)) {
+            return false;
+        }
+
+        std::vector<std::string> elementIds;
+        elementIds.reserve(elements.size());
+        for(const auto& element : elements)
+            elementIds.push_back(element.id);
+
+        simulation_project::CollisionModelRecordDesc model;
+        model.modelId = simulation_project::makeGeneratedRobotLinkCollisionModelId(
+            robotId,
+            linkName,
+            elements.front().source,
+            elements.front().role,
+            elementIds);
+        model.target.kind = "robot-link";
+        model.target.robotId = robotId;
+        model.target.linkName = linkName;
+        model.role = elements.front().role;
+        model.source = elements.front().source;
+        model.assetId = asset.id;
+        model.assetRevision = asset.revision;
+        simulation_project::ProjectAssetStore::upsertAssetRevision(document, asset);
+        simulation_project::ProjectDocumentService service(document);
+        service.replaceGeneratedRobotLinkCollisionVariant(model, elements);
+        return true;
+    }
+
+    bool registerGeneratedObjectAsset(
+        simulation_project::ProjectDocument& document,
+        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        const std::string& objectId,
+        std::vector<simulation_project::ObjectCollisionElementOverrideDesc>& elements,
+        QString& errorMessage)
+    {
+        if(elements.empty())
+            return false;
+        simulation_project::ProjectAssetDesc asset;
+        if(!describeGeneratedProjectAsset(
+               document, viewportServices, elements.front().meshPath, asset, errorMessage)) {
+            return false;
+        }
+
+        std::vector<std::string> elementIds;
+        elementIds.reserve(elements.size());
+        for(const auto& element : elements)
+            elementIds.push_back(element.id);
+
+        const bool attachment = std::any_of(
+            document.mountedAttachments.begin(),
+            document.mountedAttachments.end(),
+            [&](const simulation_project::MountedAttachmentDesc& candidate) {
+                return candidate.id == objectId;
+            });
+        simulation_project::CollisionModelRecordDesc model;
+        model.modelId = simulation_project::makeGeneratedObjectCollisionModelId(
+            objectId,
+            elements.front().source,
+            elements.front().role,
+            elementIds);
+        model.target.kind = attachment ? "attachment" : "object";
+        if(attachment)
+            model.target.attachmentId = objectId;
+        else
+            model.target.objectId = objectId;
+        model.role = elements.front().role;
+        model.source = elements.front().source;
+        model.assetId = asset.id;
+        model.assetRevision = asset.revision;
+        simulation_project::ProjectAssetStore::upsertAssetRevision(document, asset);
+        simulation_project::ProjectDocumentService service(document);
+        service.replaceGeneratedObjectCollisionVariant(model, elements);
+        return true;
+    }
+
+    void registerInlineRobotModels(
+        simulation_project::ProjectDocument& document,
+        const std::string& robotId,
+        const std::vector<simulation_project::CollisionElementOverrideDesc>& elements)
+    {
+        std::vector<std::string> linkNames;
+        for(const auto& element : elements) {
+            if(!element.linkName.empty()
+                && std::find(linkNames.begin(), linkNames.end(), element.linkName) == linkNames.end()) {
+                linkNames.push_back(element.linkName);
+            }
+        }
+
+        for(const std::string& linkName : linkNames) {
+            std::vector<std::string> elementIds;
+            const simulation_project::CollisionElementOverrideDesc* first = nullptr;
+            for(const auto& element : elements) {
+                if(element.linkName != linkName)
+                    continue;
+                if(first == nullptr)
+                    first = &element;
+                elementIds.push_back(element.id);
+            }
+            if(first == nullptr)
+                continue;
+
+            simulation_project::CollisionModelRecordDesc model;
+            model.modelId = simulation_project::makeGeneratedRobotLinkCollisionModelId(
+                robotId,
+                linkName,
+                first->source,
+                first->role,
+                elementIds);
+            model.target.kind = "robot-link";
+            model.target.robotId = robotId;
+            model.target.linkName = linkName;
+            model.role = first->role;
+            model.source = first->source;
+            simulation_project::ProjectAssetStore::upsertCollisionModel(document, model);
+        }
+    }
 }
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateFromVisual(
@@ -130,6 +349,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateF
         result.qualityMessage = collisionProxyQualityText(qualitySummary);
     }
 
+    registerInlineRobotModels(document, robotId.toStdString(), elements);
     documentFacade.appendUniqueElements(robotId.toStdString(), elements);
 
     const QString qualitySuffix = result.qualityMessage.isEmpty()
@@ -187,6 +407,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateF
         result.qualityMessage = collisionProxyQualityText(qualitySummary);
     }
 
+    registerInlineRobotModels(document, robotId.toStdString(), elements);
     documentFacade.appendUniqueElements(robotId.toStdString(), elements);
 
     const QString qualitySuffix = result.qualityMessage.isEmpty()
@@ -226,6 +447,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateR
     result.success = true;
     result.projectChanged = true;
     populateGeneratedVariantResult(result, elements);
+    registerInlineRobotModels(document, robotId.toStdString(), elements);
     documentFacade.appendUniqueElements(robotId.toStdString(), elements);
 
     result.message = QString("Generated %1 robot %2 element(s) from existing collision")
@@ -260,6 +482,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateM
     result.success = true;
     result.projectChanged = true;
     populateGeneratedVariantResult(result, elements);
+    registerInlineRobotModels(document, robotId.toStdString(), elements);
     documentFacade.appendUniqueElements(robotId.toStdString(), elements);
 
     result.message =
@@ -300,8 +523,16 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateC
     result.projectChanged = true;
     populateGeneratedVariantResult(result, elements);
 
-    simulation_project::ProjectDocumentService service(document);
-    service.appendUniqueCollisionElements(robotId.toStdString(), elements);
+    QString registrationError;
+    if(!registerGeneratedRobotAsset(
+           document,
+           viewportServices,
+           robotId.toStdString(),
+           linkName.toStdString(),
+           elements,
+           registrationError)) {
+        return makeFailure(registrationError);
+    }
 
     result.message = QString("Generated %1 COACD collision part(s) from %2.")
         .arg(result.generatedCount)
@@ -331,9 +562,15 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateC
     result.projectChanged = true;
     populateGeneratedObjectVariantResult(result, elements);
 
-    simulation_project::ProjectDocumentService service(document);
-    service.ensureObjectCollisionOverride(objectId.toStdString());
-    service.appendUniqueObjectCollisionElements(objectId.toStdString(), elements);
+    QString registrationError;
+    if(!registerGeneratedObjectAsset(
+           document,
+           viewportServices,
+           objectId.toStdString(),
+           elements,
+           registrationError)) {
+        return makeFailure(registrationError);
+    }
 
     result.message = QString("Generated %1 COACD object collision part(s).")
         .arg(result.generatedCount);

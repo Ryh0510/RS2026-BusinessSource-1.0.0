@@ -20,8 +20,6 @@ namespace robot_qt_viewer
     class CollisionDetectorWorkbenchDocumentFacade;
     class CollisionDocumentEventPublisher;
     class CollisionWorkbenchServices;
-    class CollisionLegacyPairDocumentFacade;
-    class CollisionLegacyPairWorkbenchController;
     class CollisionSelectionSetDocumentFacade;
     class CollisionSelectionSetViewController;
     class CollisionSelectionSetWorkbenchController;
@@ -38,7 +36,6 @@ namespace robot_qt_viewer
             std::function<void()> refreshDetectorProperties;
             std::function<void()> refreshDetectorDetails;
             std::function<void(const QString&)> refreshElementList;
-            std::function<void()> viewportReload;
             std::function<void(const QString&, int)> statusMessage;
         };
 
@@ -52,20 +49,15 @@ namespace robot_qt_viewer
         ~CollisionDetectorConfigModuleController();
 
         CollisionDetectorWorkbenchDocumentFacade& detectorDocument();
-        CollisionLegacyPairWorkbenchController& legacyPairWorkbench();
         CollisionSelectionSetViewController& selectionSetView();
 
         void connectPanelSignals(QObject& receiver);
         QString currentSelectionSetId() const;
         QString currentDetectorId() const;
-        void refreshPairList();
         void refreshDetectorList();
         void refreshSelectionSetList();
         void refreshSelectionSetMemberList();
         void refreshDetectorPropertyEditors();
-        bool syncLegacyRobotObjectPairs();
-        void autoPairAllRobotObjects();
-        void setLegacyPairEnabled(const QString& robotId, const QString& objectId, bool enabled);
         void previewSelectionSetMember();
         void addSelectionSet();
         void renameSelectedSelectionSet();
@@ -103,8 +95,6 @@ namespace robot_qt_viewer
         bool& m_updating;
         std::unique_ptr<CollisionDetectorWorkbenchDocumentFacade> m_detectorDocument;
         std::unique_ptr<CollisionDetectorWorkbenchController> m_detectorWorkbench;
-        std::unique_ptr<CollisionLegacyPairDocumentFacade> m_legacyPairDocument;
-        std::unique_ptr<CollisionLegacyPairWorkbenchController> m_legacyPairWorkbench;
         std::unique_ptr<CollisionSelectionSetDocumentFacade> m_selectionSetDocument;
         std::unique_ptr<CollisionSelectionSetViewController> m_selectionSetView;
         std::unique_ptr<CollisionSelectionSetWorkbenchController> m_selectionSetWorkbench;

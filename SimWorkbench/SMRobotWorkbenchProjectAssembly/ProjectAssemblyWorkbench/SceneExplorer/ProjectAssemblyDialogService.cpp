@@ -1,6 +1,6 @@
 #include "ProjectAssemblyDialogService.h"
 
-#include <QFileDialog>
+#include <RobotQtViewerFileDialog.h>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -11,7 +11,8 @@ QString ProjectAssemblyDialogService::selectRobotPackageForImport(
     QWidget* parent,
     const QString& initialPath)
 {
-    return QFileDialog::getOpenFileName(
+    return getOpenFileName(
+        QStringLiteral("projectAssembly.robotPackage.import"),
         parent,
         QStringLiteral("Import robot package"),
         initialPath,
@@ -22,7 +23,8 @@ QString ProjectAssemblyDialogService::selectRobotPackageForExport(
     QWidget* parent,
     const QString& initialPath)
 {
-    return QFileDialog::getSaveFileName(
+    return getSaveFileName(
+        QStringLiteral("projectAssembly.robotPackage.export"),
         parent,
         QStringLiteral("Export robot package"),
         initialPath,
@@ -31,7 +33,8 @@ QString ProjectAssemblyDialogService::selectRobotPackageForExport(
 
 QString ProjectAssemblyDialogService::selectRobotForImport(QWidget* parent)
 {
-    return QFileDialog::getOpenFileName(
+    return getOpenFileName(
+        QStringLiteral("projectAssembly.robot.import"),
         parent,
         QStringLiteral("Import robot"),
         QString(),
@@ -40,7 +43,8 @@ QString ProjectAssemblyDialogService::selectRobotForImport(QWidget* parent)
 
 QString ProjectAssemblyDialogService::selectObjectForImport(QWidget* parent)
 {
-    return QFileDialog::getOpenFileName(
+    return getOpenFileName(
+        QStringLiteral("projectAssembly.object.import"),
         parent,
         QStringLiteral("Import object"),
         QString(),
@@ -49,7 +53,8 @@ QString ProjectAssemblyDialogService::selectObjectForImport(QWidget* parent)
 
 QString ProjectAssemblyDialogService::selectPointCloudForImport(QWidget* parent)
 {
-    return QFileDialog::getOpenFileName(
+    return getOpenFileName(
+        QStringLiteral("projectAssembly.pointCloud.import"),
         parent,
         QStringLiteral("Import point cloud"),
         QString(),

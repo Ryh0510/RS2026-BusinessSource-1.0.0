@@ -52,6 +52,8 @@ namespace
         result.enabled = value.enabled;
         result.visible = value.visible;
         result.active = value.active;
+        result.valid = value.valid;
+        result.errorMessage = value.errorMessage;
         result.includePairCount = value.includePairCount;
         result.effectiveIncludePairCount = value.effectiveIncludePairCount;
         result.contactCount = value.contactCount;
@@ -117,7 +119,6 @@ namespace
         result.replaceOriginal = value.replaceOriginal;
         result.visibleInViewport = value.visibleInViewport;
         result.selectedInViewport = value.selectedInViewport;
-        result.usedByActiveDetector = value.usedByActiveDetector;
         result.elementCount = value.elementCount;
         result.meshElementCount = value.meshElementCount;
         result.meshVertexCount = value.meshVertexCount;
@@ -447,6 +448,11 @@ namespace robot_qt_viewer
         return result;
     }
 
+    std::filesystem::path RobotQtViewerViewportServicesAdapter::projectBasePath() const
+    {
+        return m_viewport.projectBasePath();
+    }
+
     bool RobotQtViewerViewportServicesAdapter::refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath)
@@ -517,12 +523,9 @@ namespace robot_qt_viewer
     }
 
     CollisionRuntimeRobotSummary RobotQtViewerViewportServicesAdapter::robotCollisionSummary(
-        const QString& robotId,
-        const QString& activeDetectorRole,
-        const QString& activeDetectorSource) const
+        const QString& robotId) const
     {
-        return toRuntimeRobotSummary(
-            m_viewport.robotCollisionSummary(robotId, activeDetectorRole, activeDetectorSource));
+        return toRuntimeRobotSummary(m_viewport.robotCollisionSummary(robotId));
     }
 
     std::vector<CollisionRuntimeDetectorInfo> RobotQtViewerViewportServicesAdapter::collisionRuntimeDetectors() const
@@ -673,13 +676,6 @@ namespace robot_qt_viewer
         return m_viewport.clearSurfaceScalarOverlay(objectId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::setSurfaceScalarProbeEnabled(
-        bool enabled,
-        const QString& objectId)
-    {
-        m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
-    }
-
     void RobotQtViewerViewportServicesAdapter::setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints)
@@ -691,6 +687,13 @@ namespace robot_qt_viewer
         const QString& trajectoryId)
     {
         m_viewport.clearTrajectoryControlPointOverlay(trajectoryId);
+    }
+
+    void RobotQtViewerViewportServicesAdapter::setSurfaceScalarProbeEnabled(
+        bool enabled,
+        const QString& objectId)
+    {
+        m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
     }
 
     bool RobotQtViewerViewportServicesAdapter::jointValue(

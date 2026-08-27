@@ -17,6 +17,12 @@ set(SOURCES
     RobotQtViewerEventHub.cpp
     RobotQtViewerEventHub.h
     RobotQtViewerEvents.h
+    RobotQtViewerFileDialog.cpp
+    RobotQtViewerFileDialog.h
+    RobotQtViewerLocalization.cpp
+    RobotQtViewerLocalization.h
+    RobotQtViewerOperationStatus.cpp
+    RobotQtViewerOperationStatus.h
     RobotQtViewerAppController.cpp
     RobotQtViewerAppController.h
     RobotQtViewerSelectionModel.cpp
@@ -26,8 +32,14 @@ set(SOURCES
     RobotQtViewerViewportServices.h
     RobotQtViewerWorkbench.cpp
     RobotQtViewerWorkbench.h
+    RobotQtViewerWorkbenchLifecycle.cpp
+    RobotQtViewerWorkbenchLifecycle.h
     RobotQtViewerWorkbenchPackageRegistry.cpp
     RobotQtViewerWorkbenchPackageRegistry.h
+    RobotQtViewerPlatformProfile.cpp
+    RobotQtViewerPlatformProfile.h
+    RobotQtViewerWorkbenchTransitionCoordinator.cpp
+    RobotQtViewerWorkbenchTransitionCoordinator.h
     RobotQtViewerWindowConfig.cpp
     RobotQtViewerWindowConfig.h
     SceneEntityWorkflowController.cpp
@@ -52,8 +64,11 @@ target_link_libraries(${TARGET_NAME}
     PUBLIC
         Qt5::Widgets
         Common::Utility
+        SMRobotCore::RobotIO
         SMRobotPlatform::SimulationProject
         SMRobotPlatform::VisualizationSDK
+    PRIVATE
+        Common::CustomLog
 )
 
 target_compile_features(${TARGET_NAME}
@@ -68,10 +83,26 @@ set_target_properties(${TARGET_NAME}
         RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX}
 )
 
+if(BuildTests)
+    add_subdirectory(
+        regression/WorkbenchLifecycleTest
+        ${PROJECT_BINARY_DIR}/tests/robot_qt_workbench_lifecycle)
+    add_subdirectory(
+        regression/LocalizationTest
+        ${PROJECT_BINARY_DIR}/tests/robot_qt_localization)
+    add_subdirectory(
+        regression/FileDialogTest
+        ${PROJECT_BINARY_DIR}/tests/robot_qt_file_dialog)
+    add_subdirectory(
+        regression/OperationStatusTest
+        ${PROJECT_BINARY_DIR}/tests/robot_qt_operation_status)
+endif()
+
 if(ExportPacakgeSMRobotWorkbenchCommon)
     set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
         Qt5::Widgets
         Common::Utility
+        SMRobotCore::RobotIO
         SMRobotPlatform::SimulationProject
         SMRobotPlatform::VisualizationSDK
     )

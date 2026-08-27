@@ -44,7 +44,6 @@ namespace robot_qt_viewer
         QString currentCollisionSelectionSetId() const;
         QString currentCollisionDetectorId() const;
         void refreshInspector(const QString& qualityMessage);
-        void refreshCollisionPairList();
         void refreshCollisionDetectorList();
         void refreshCollisionSelectionSetList();
         void refreshCollisionSelectionSetMemberList();
@@ -52,7 +51,6 @@ namespace robot_qt_viewer
         void refreshCollisionDetectorDetails();
         void refreshCollisionElementList(const QString& qualityMessage);
         void refreshCollisionModelSummary(const QString& qualityMessage);
-        bool syncLegacyRobotObjectPairs();
         void previewCollisionSelectionSetMember();
         void addCollisionSelectionSet();
         void renameSelectedCollisionSelectionSet();
@@ -72,6 +70,7 @@ namespace robot_qt_viewer
         void cancelCollisionModelConfigurationForHandoff(const QString& sourceId);
         void handleCollisionVariantSelectionChanged();
         void showSelectedCollisionVariantOnly();
+        void setSelectedCollisionVariantCurrent();
         void useSelectedCollisionVariantInActiveDetector();
         void selectCollisionVariantBySourceRole(const QString& source, const QString& role);
         void handleCollisionReplaceOriginalChanged(bool replaceOriginal);
@@ -111,9 +110,6 @@ namespace robot_qt_viewer
         void statusMessageRequested(const QString& message, int timeoutMs);
 
     private:
-        void autoPairAllRobotObjects();
-        void handleLegacyPairEnabledChanged(const QString& robotId, const QString& objectId, bool enabled);
-
         CollisionWorkbenchPanel& m_panel;
         RobotQtViewerDocumentContext& m_context;
         CollisionWorkbenchServices& m_appServices;

@@ -3,6 +3,7 @@
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
 #include "RobotQtViewerEventHub.h"
+#include "RobotQtViewerOperationStatus.h"
 #include "RobotQtViewerSelectionModel.h"
 
 #include <SimulationProject/ProjectDocument.h>
@@ -62,6 +63,11 @@ namespace robot_qt_viewer
         return m_context.eventHub();
     }
 
+    RobotQtViewerOperationStatusStore& RobotQtViewerAppController::operationStatusStore()
+    {
+        return m_context.operationStatusStore();
+    }
+
     ProjectSessionWorkflowResult RobotQtViewerAppController::resetProject(const QString& sourceId)
     {
         return m_projectWorkflow.resetNew(sourceId);
@@ -69,16 +75,18 @@ namespace robot_qt_viewer
 
     ProjectSessionWorkflowResult RobotQtViewerAppController::loadProject(
         const std::filesystem::path& path,
-        const QString& sourceId)
+        const QString& sourceId,
+        const QString& operationId)
     {
-        return m_projectWorkflow.loadFromPath(path, sourceId);
+        return m_projectWorkflow.loadFromPath(path, sourceId, operationId);
     }
 
     ProjectSessionWorkflowResult RobotQtViewerAppController::loadStartupProject(
         const std::filesystem::path& path,
-        const QString& sourceId)
+        const QString& sourceId,
+        const QString& operationId)
     {
-        return m_projectWorkflow.loadStartupProject(path, sourceId);
+        return m_projectWorkflow.loadStartupProject(path, sourceId, operationId);
     }
 
     ProjectSessionWorkflowResult RobotQtViewerAppController::saveProject(
@@ -89,9 +97,11 @@ namespace robot_qt_viewer
         return m_projectWorkflow.saveToPath(path, saveAsV3, sourceId);
     }
 
-    ViewportReloadWorkflowResult RobotQtViewerAppController::reloadViewport(const QString& sourceId)
+    ViewportReloadWorkflowResult RobotQtViewerAppController::reloadViewport(
+        const QString& sourceId,
+        const QString& operationId)
     {
-        return m_viewportReloadWorkflow.reload(sourceId);
+        return m_viewportReloadWorkflow.reload(sourceId, operationId);
     }
 
     void RobotQtViewerAppController::setCollisionGeometryVisible(bool visible, const QString& sourceId)

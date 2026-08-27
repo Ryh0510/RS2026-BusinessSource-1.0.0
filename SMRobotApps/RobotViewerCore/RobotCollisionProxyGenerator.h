@@ -42,6 +42,7 @@ struct RobotCollisionProxyQualitySummary
 struct CollisionGeneratedAssetRequest
 {
     std::filesystem::path generatedAssetRoot;
+    std::string uriPrefix = "appGenerated://collision/coacd";
     std::string sourceKey;
     std::string targetKey;
     std::string role = "CoACD";

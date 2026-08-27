@@ -15,6 +15,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
+
 namespace
 {
     QString generatedIconResourcePath(const QString& actionId)
@@ -39,6 +41,9 @@ namespace
         }
         if(actionId == QStringLiteral("importObject")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/import_object.png");
+        }
+        if(actionId == QStringLiteral("importPointCloud")) {
+            return QStringLiteral(":/RobotQtViewer/icons/ribbon/import_point_cloud.png");
         }
         if(actionId == QStringLiteral("deleteSelectedItem")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/delete_selected.png");
@@ -142,7 +147,9 @@ namespace robot_qt_viewer
         return m_toolbar;
     }
 
-    void RobotQtViewerToolbarController::build(const RobotQtViewerToolbarActions& actions)
+    void RobotQtViewerToolbarController::build(
+        const RobotQtViewerToolbarActions& actions,
+        const QStringList& workbenchActionOrder)
     {
         if(m_toolbar == nullptr) {
             m_toolbar = m_window.addToolBar(QString());
@@ -150,7 +157,9 @@ namespace robot_qt_viewer
         }
 
         m_actions = makeActionMap(actions);
-        renderModel(makeDefaultRobotQtViewerRibbonModel());
+        m_workbenchActionOrder = workbenchActionOrder;
+        renderModel(makeDefaultRobotQtViewerRibbonModel(
+            RobotQtViewerRibbonTexts{}, m_workbenchActionOrder));
     }
 
     void RobotQtViewerToolbarController::retranslate(const RobotQtViewerToolbarTexts& texts)
@@ -159,7 +168,8 @@ namespace robot_qt_viewer
             m_toolbar->setWindowTitle(texts.toolbarTitle);
         }
 
-        const RobotQtViewerRibbonModel model = makeDefaultRobotQtViewerRibbonModel(texts);
+        const RobotQtViewerRibbonModel model =
+            makeDefaultRobotQtViewerRibbonModel(texts, m_workbenchActionOrder);
         for(const RobotQtViewerRibbonPageSpec& page : model.pages) {
             for(const RobotQtViewerRibbonGroupSpec& group : page.groups) {
                 QLabel* label = m_groupLabels.value(group.groupId, nullptr);
@@ -234,6 +244,15 @@ namespace robot_qt_viewer
         for(const RobotQtViewerRibbonPageSpec& page : model.pages) {
             Q_UNUSED(page.title);
             for(const RobotQtViewerRibbonGroupSpec& group : page.groups) {
+                const bool hasAvailableAction = std::any_of(
+                    group.actions.cbegin(),
+                    group.actions.cend(),
+                    [this](const RobotQtViewerRibbonActionSpec& actionSpec) {
+                        return m_actions.value(actionSpec.actionId, nullptr) != nullptr;
+                    });
+                if(!hasAvailableAction) {
+                    continue;
+                }
                 if(needsSeparator) {
                     auto* separator = new QFrame(ribbonSurface);
                     separator->setFrameShape(QFrame::VLine);
@@ -310,6 +329,7 @@ namespace robot_qt_viewer
         actionMap.insert(QStringLiteral("saveCollisionOverrides"), actions.saveCollisionOverrides);
         actionMap.insert(QStringLiteral("importRobot"), actions.importRobot);
         actionMap.insert(QStringLiteral("importObject"), actions.importObject);
+        actionMap.insert(QStringLiteral("importPointCloud"), actions.importPointCloud);
         actionMap.insert(QStringLiteral("deleteSelectedItem"), actions.deleteSelectedItem);
         actionMap.insert(QStringLiteral("saveImage"), actions.saveImage);
         actionMap.insert(QStringLiteral("resetCamera"), actions.resetCamera);

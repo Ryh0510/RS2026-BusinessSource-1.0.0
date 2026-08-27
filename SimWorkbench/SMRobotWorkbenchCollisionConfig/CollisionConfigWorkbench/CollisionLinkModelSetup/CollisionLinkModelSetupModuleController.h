@@ -35,7 +35,6 @@ namespace robot_qt_viewer
             std::function<void()> refreshDetectorDetails;
             std::function<void()> refreshDetectorProperties;
             std::function<void(bool, bool)> setLinkPairActionsEnabled;
-            std::function<bool(const QString&)> setCurrentDetectorRole;
             std::function<void(const QString&, int)> statusMessage;
             std::function<void()> saveSidecarRequested;
             std::function<void()> exportUrdfRequested;

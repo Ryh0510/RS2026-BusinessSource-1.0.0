@@ -228,7 +228,14 @@ namespace robot_qt_viewer
             return;
         }
 
-        const CollisionDetectorAddResult result = m_documentFacade.addTaskPanelDefaultDetector();
+        CollisionDetectorQueryContractView contract =
+            m_documentFacade.taskPanelDefaultDetectorContract();
+        if(!m_panel.configureNewDetector(contract)) {
+            return;
+        }
+
+        const CollisionDetectorAddResult result =
+            m_documentFacade.addTaskPanelDefaultDetector(contract);
         if(!result.success) {
             showStatus(result.message, 5000);
             return;
@@ -240,6 +247,10 @@ namespace robot_qt_viewer
         }
         m_appServices.setActiveCollisionDetectorContext(result.detectorId);
         publishCollisionChanged(QStringLiteral("addCollisionDetectorFromTaskPanel"), result.detectorId);
+        m_panel.selectDetector(result.detectorId);
+        refreshDetectorProperties();
+        refreshDetectorDetails();
+        refreshElementList(QString());
         showStatus(result.message, 3000);
     }
 

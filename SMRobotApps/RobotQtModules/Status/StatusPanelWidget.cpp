@@ -20,11 +20,7 @@ StatusPanelWidget::StatusPanelWidget(QWidget* parent)
     robot_qt_viewer::configureInspectorList(m_resultList, true);
     layout->addWidget(m_resultList, 1);
 
-    setStatusItems({
-        "Dual robot collision scene: active",
-        "Selection highlight: visual mesh",
-        "Collision highlight: orange overlay"
-    });
+    setStatusItems({});
 }
 
 void StatusPanelWidget::setStatusItems(const QStringList& items)

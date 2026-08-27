@@ -43,8 +43,8 @@ if(${TARGET_NAME}_MISSING_TARGETS)
 endif()
 
 add_library(${TARGET_NAME} STATIC
-    ProjectCollisionDetectorRuntime.cpp
-    ProjectCollisionDetectorRuntime.h
+    ProjectCollisionRuntimeProjection.cpp
+    ProjectCollisionRuntimeProjection.h
     ProjectRuntimeBuilder.cpp
     ProjectRuntimeBuilder.h
     ProjectRuntimeTypes.h
@@ -118,7 +118,6 @@ if(ExportPacakge${PACKAGE_NAME})
     )
 
     install(FILES
-        ProjectCollisionDetectorRuntime.h
         ProjectRuntimeBuilder.h
         ProjectRuntimeTypes.h
         ProjectScene.h

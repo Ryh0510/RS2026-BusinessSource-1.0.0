@@ -1,22 +1,28 @@
 #include "MainWindow.h"
 
 #include "CollisionWorkbenchModuleController.h"
+#include "CollisionConfigWorkbenchLifecycle.h"
 #include "CollisionWorkbenchPanel.h"
 #include "CollisionRuntimeResultsWidget.h"
 #include "CoatingAnalysisModuleController.h"
+#include "CoatingAnalysisWorkbenchLifecycle.h"
 #include "CoatingAnalysisPanel.h"
 #include "MotionControlModuleController.h"
 #include "MotionControlWidget.h"
 #include "MotionPlanningEditorWidget.h"
 #include "MotionPlanningModuleController.h"
-#include "RobotQtViewerLanguage.h"
+#include "MotionPlanningWorkbenchLifecycle.h"
+#include "RobotRunWorkbenchLifecycle.h"
+#include "RobotQtViewerPlatformConfigurationDialog.h"
 #include "RobotQtViewerSceneExplorerActionRouter.h"
 #include "RobotQtViewerTheme.h"
 #include "RobotQtViewerToolbarController.h"
 #include "RobotQtViewerCollisionWorkbenchServicesAdapter.h"
 #include "RobotQtViewerToolSetupAppServicesAdapter.h"
 #include "RobotQtViewerViewportEventController.h"
+#include "RobotQtViewerViewportPresentationController.h"
 #include "RobotQtViewerViewportServicesAdapter.h"
+#include <RobotQtViewerFileDialog.h>
 #include "ProjectAssemblyDialogService.h"
 #include "CollisionConfigDialogService.h"
 #include "RobotQtWidgetUtils.h"
@@ -30,6 +36,7 @@
 #include "StatusPanelWidget.h"
 #include "ThicknessLegendWidget.h"
 #include "ToolSetupModuleController.h"
+#include "ToolSetupWorkbenchLifecycle.h"
 #include "ToolSetupWidget.h"
 
 #include <SimulationProject/ProjectDocumentService.h>
@@ -48,15 +55,18 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QByteArray>
+#include <QColor>
+#include <QCloseEvent>
 #include <QCursor>
 #include <QDockWidget>
 #include <QEvent>
-#include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QIcon>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLayout>
 #include <QList>
@@ -64,7 +74,11 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPoint>
+#include <QPainter>
+#include <QPen>
+#include <QPixmap>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QStackedWidget>
@@ -333,25 +347,6 @@ namespace
         return isProjectDirty ? !isProjectDirty() : true;
     }
 
-    bool syncLegacyRobotObjectPairsPreservingDirty(
-        robot_qt_viewer::CollisionWorkbenchModuleController* controller,
-        simulation_project::ProjectSession& session,
-        robot_qt_viewer::RobotQtViewerDocumentController& documentController,
-        const QString& sourceId)
-    {
-        if(controller == nullptr) {
-            return false;
-        }
-
-        const bool previousDirty = session.isDirty();
-        const bool changed = controller->syncLegacyRobotObjectPairs();
-        if(session.isDirty() != previousDirty) {
-            session.setDirty(previousDirty);
-            documentController.publishDirtyChanged(sourceId);
-        }
-        return changed;
-    }
-
     constexpr double kPi = 3.14159265358979323846;
 
     double toDegrees(double radians)
@@ -432,6 +427,7 @@ namespace
     QToolButton* makeCameraViewButton(QAction* action, QWidget* parent)
     {
         auto* button = new QToolButton(parent);
+        button->setProperty("cameraViewControl", true);
         if(action != nullptr) {
             button->setDefaultAction(action);
         }
@@ -442,30 +438,103 @@ namespace
         return button;
     }
 
+    QIcon viewportPresentationIcon(bool leavePresentationMode)
+    {
+        QPixmap pixmap(64, 64);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(48, 63, 74), 5.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+
+        if(!leavePresentationMode) {
+            painter.drawLine(10, 25, 10, 10);
+            painter.drawLine(10, 10, 25, 10);
+            painter.drawLine(39, 10, 54, 10);
+            painter.drawLine(54, 10, 54, 25);
+            painter.drawLine(10, 39, 10, 54);
+            painter.drawLine(10, 54, 25, 54);
+            painter.drawLine(39, 54, 54, 54);
+            painter.drawLine(54, 39, 54, 54);
+        } else {
+            painter.drawLine(9, 24, 24, 24);
+            painter.drawLine(24, 9, 24, 24);
+            painter.drawLine(40, 9, 40, 24);
+            painter.drawLine(40, 24, 55, 24);
+            painter.drawLine(9, 40, 24, 40);
+            painter.drawLine(24, 40, 24, 55);
+            painter.drawLine(40, 40, 55, 40);
+            painter.drawLine(40, 40, 40, 55);
+        }
+
+        return QIcon(pixmap);
+    }
+
 }
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(
+    robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry workbenchCatalog,
+    robot_qt_viewer::RobotQtViewerPlatformProfile platformProfile,
+    robot_qt_viewer::RobotQtViewerPlatformUserOverlay platformOverlay,
+    robot_qt_viewer::RobotQtViewerResolvedPlatformComposition platformComposition,
+    std::filesystem::path platformProfilesDirectory,
+    std::filesystem::path platformOverlaysDirectory,
+    const QString& startupLanguageId,
+    QWidget* parent)
     : QMainWindow(parent)
     , m_windowConfig(robot_qt_viewer::defaultRobotQtViewerWindowConfig())
     , m_eventHub(this)
+    , m_operationStatusStore(m_eventHub)
     , m_documentViewRegistry(m_eventHub, m_windowConfig)
     , m_documentController(m_projectSession, m_eventHub, this)
     , m_selectionModel(m_eventHub)
     , m_viewportPreviewState(m_eventHub)
-    , m_workbenchPackageRegistry(robot_qt_viewer::defaultRobotQtViewerWorkbenchPackageRegistry())
+    , m_platformProfile(std::move(platformProfile))
+    , m_platformOverlay(std::move(platformOverlay))
+    , m_platformComposition(std::move(platformComposition))
+    , m_platformProfilesDirectory(std::move(platformProfilesDirectory))
+    , m_platformOverlaysDirectory(std::move(platformOverlaysDirectory))
+    , m_workbenchPackageRegistry(std::move(workbenchCatalog))
     , m_documentContext(
           m_projectSession,
           m_documentController,
           m_selectionModel,
           m_viewportPreviewState,
-          m_eventHub)
+          m_eventHub,
+          m_operationStatusStore)
     , m_appController(m_documentContext)
     , m_projectPath(m_projectSession.path())
-    , m_projectDirty(m_projectSession.dirtyFlag())
-    , m_projectRequiresSaveAs(m_projectSession.requiresSaveAsFlag())
 {
-    m_language = robot_qt_viewer::LanguageManager::savedLanguage();
-    setWindowTitle(uiText("window.title"));
+    robot_qt_viewer::RobotQtViewerWorkbenchKind initialWorkbench;
+    if(!robot_qt_viewer::robotQtViewerWorkbenchKindFromId(
+           m_platformComposition.defaultModeId, &initialWorkbench)) {
+        throw std::runtime_error(
+            QStringLiteral("Platform default mode is not supported by this Viewer: %1")
+                .arg(m_platformComposition.defaultModeId)
+                .toStdString());
+    }
+    m_workbenchManager.setInitialWorkbench(initialWorkbench);
+    m_localization = std::make_unique<robot_qt_viewer::RobotQtViewerLocalizationService>(
+        QString::fromStdWString(
+            (simulation_project::RuntimePaths::configRoot() / "translations").wstring()),
+        this);
+    QString localizationError;
+    if(!m_localization->reloadCatalogs(&localizationError)) {
+        throw std::runtime_error(localizationError.toStdString());
+    }
+    m_localization->installOnApplication(*qApp);
+    m_operationStatusPresenter =
+        std::make_unique<robot_qt_viewer::RobotQtViewerOperationStatusPresenter>(
+            *m_localization);
+    m_languageId = startupLanguageId.trimmed().isEmpty()
+        ? m_localization->savedLanguageId()
+        : startupLanguageId;
+    if(!m_localization->setLanguage(m_languageId, false, &localizationError)) {
+        throw std::runtime_error(localizationError.toStdString());
+    }
+    m_languageId = m_localization->currentLanguageId();
+    setWindowTitle(QStringLiteral("%1 - %2")
+        .arg(uiText("window.title"), m_platformComposition.displayName));
     applyIndustrialStyle();
 
     m_sdk = createRobotSdk();
@@ -517,6 +586,15 @@ MainWindow::MainWindow(QWidget* parent)
         });
     m_documentContext.setViewportServices(m_viewportServices.get());
     setCentralWidget(m_viewport);
+    m_viewportPresentationController =
+        std::make_unique<robot_qt_viewer::RobotQtViewerViewportPresentationController>(
+            *this,
+            *m_viewport);
+    connect(m_viewport, &RobotViewport::backgroundDoubleClicked, this, [this]() {
+        const bool active = m_viewportPresentationController != nullptr &&
+            m_viewportPresentationController->isActive();
+        setViewportPresentationMode(!active);
+    });
     connect(m_viewport, &RobotViewport::robotLinksAvailable, this, &MainWindow::addRobotLinksToTree);
     connect(m_viewport, &RobotViewport::sceneObjectAvailable, this, &MainWindow::addSceneObjectToTree);
     connect(m_viewport, &RobotViewport::scenePicked, this,
@@ -551,20 +629,34 @@ MainWindow::MainWindow(QWidget* parent)
 
     createActions();
     createPanels();
+    initializeWorkbenchLifecycles();
+
+    m_operationProgressBar = new QProgressBar(this);
+    m_operationProgressBar->setRange(0, 100);
+    m_operationProgressBar->setFixedWidth(150);
+    m_operationProgressBar->setTextVisible(false);
+    m_operationProgressBar->hide();
+    statusBar()->addPermanentWidget(m_operationProgressBar);
 
     const std::filesystem::path defaultProjectPath =
         simulation_project::RuntimePaths::configRoot() / ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH;
+    const QString startupOperationId = beginProjectOpenOperation(
+        defaultProjectPath,
+        QStringLiteral("startup"));
     const robot_qt_viewer::ProjectSessionWorkflowResult startupResult =
-        m_appController.loadStartupProject(defaultProjectPath, QStringLiteral("startup"));
+        m_appController.loadStartupProject(
+            defaultProjectPath,
+            QStringLiteral("startup"),
+            startupOperationId);
     if(startupResult.success) {
-        syncLegacyRobotObjectPairsPreservingDirty(
-            m_collisionWorkbenchController,
-            m_projectSession,
-            m_documentController,
-            QStringLiteral("startupSyncLegacyPairs"));
-        reloadViewportProject();
+        reloadViewportProject(startupOperationId);
     } else {
         statusBar()->showMessage(QString("Default project load failed: %1").arg(startupResult.message), 5000);
+    }
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        showWorkbenchTransitionResult(
+            m_workbenchTransitionCoordinator->initializeActiveWorkbench(
+                QStringLiteral("startupWorkbench")));
     }
 
     const char* version = getSdkVersion();
@@ -585,6 +677,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 MainWindow::~MainWindow()
 {
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        m_workbenchTransitionCoordinator->shutdownAll(QStringLiteral("mainWindowDestructor"));
+    }
     if(m_sdk != nullptr) {
         if(m_robotModel != nullptr) {
             m_sdk->destroyRobotModel(m_robotModel);
@@ -599,6 +694,64 @@ MainWindow::~MainWindow()
 
     destroyRobotSdk(m_sdk);
     m_sdk = nullptr;
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if(event == nullptr) {
+        return;
+    }
+    if(m_workbenchTransitionCoordinator == nullptr ||
+        m_workbenchTransitionCoordinator->shutdownComplete()) {
+        QMainWindow::closeEvent(event);
+        return;
+    }
+
+    const auto prepare = m_workbenchTransitionCoordinator->prepareActiveDeactivation(
+        robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ApplicationShutdown,
+        QStringLiteral("applicationClose"),
+        this);
+    if(!prepare.succeeded()) {
+        showWorkbenchTransitionResult(prepare);
+        event->ignore();
+        return;
+    }
+
+    if(m_projectSession.isDirty()) {
+        const QMessageBox::StandardButton choice = QMessageBox::warning(
+            this,
+            QStringLiteral("Close RobotQtViewer"),
+            QStringLiteral("The current project has unsaved changes. Save them before closing?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+        if(choice == QMessageBox::Cancel) {
+            m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+            event->ignore();
+            return;
+        }
+        if(choice == QMessageBox::Save) {
+            saveProject();
+            if(m_projectSession.isDirty()) {
+                m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+                event->ignore();
+                return;
+            }
+        }
+    }
+
+    const auto deactivate = m_workbenchTransitionCoordinator->deactivateActive(
+        robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ApplicationShutdown,
+        QStringLiteral("applicationClose"),
+        this,
+        true);
+    if(!deactivate.succeeded()) {
+        showWorkbenchTransitionResult(deactivate);
+        event->ignore();
+        return;
+    }
+    m_workbenchTransitionCoordinator->shutdownAll(QStringLiteral("applicationClose"));
+    event->accept();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::applyIndustrialStyle()
@@ -628,19 +781,75 @@ void MainWindow::applyTheme(const QString& themeName)
 
 void MainWindow::applyLanguage(const QString& languageName)
 {
-    m_language = robot_qt_viewer::LanguageManager::languageFromName(languageName);
-    robot_qt_viewer::LanguageManager::save(m_language);
-    retranslateUi();
+    if(m_languageCoordinator == nullptr) {
+        return;
+    }
+    QString errorMessage;
+    if(!m_languageCoordinator->switchLanguage(languageName, &errorMessage)) {
+        statusBar()->showMessage(errorMessage, 8000);
+        return;
+    }
+    m_languageId = m_localization->currentLanguageId();
 }
 
 QString MainWindow::uiText(const QString& key) const
 {
-    return robot_qt_viewer::LanguageManager::text(m_language, key);
+    return m_localization == nullptr ? key : m_localization->text(key, key);
 }
 
-void MainWindow::retranslateUi()
+QString MainWindow::beginProjectOpenOperation(
+    const std::filesystem::path& path,
+    const QString& sourceId)
 {
-    setWindowTitle(uiText("window.title"));
+    return m_operationStatusStore.begin(
+        sourceId,
+        QStringLiteral("status.operation.projectOpen.title"),
+        QStringLiteral("Opening %1"),
+        QString::fromStdWString(path.filename().wstring()),
+        3,
+        true);
+}
+
+void MainWindow::refreshOperationStatusPresentation(const QString& focusOperationId)
+{
+    if(m_operationStatusPresenter == nullptr) {
+        return;
+    }
+
+    const robot_qt_viewer::RobotQtViewerOperationStatusViewModel viewModel =
+        m_operationStatusPresenter->build(m_operationStatusStore.history(), focusOperationId);
+    if(!viewModel.currentMessage.isEmpty()) {
+        statusBar()->showMessage(viewModel.currentMessage, viewModel.timeoutMs);
+    }
+    if(m_operationProgressBar != nullptr) {
+        m_operationProgressBar->setVisible(viewModel.progressVisible);
+        if(viewModel.progressVisible) {
+            m_operationProgressBar->setRange(
+                viewModel.progressMinimum,
+                viewModel.progressMaximum);
+            m_operationProgressBar->setValue(viewModel.progressValue);
+        }
+    }
+    if(m_statusPanelWidget != nullptr) {
+        m_statusPanelWidget->setStatusItems(viewModel.historyItems);
+    }
+
+    // Project loading is currently synchronous on the GUI thread. Repaint only
+    // the presentation surface so each published phase is visible without
+    // dispatching nested user-input or business events.
+    statusBar()->repaint();
+    if(m_operationProgressBar != nullptr && m_operationProgressBar->isVisible()) {
+        m_operationProgressBar->repaint();
+    }
+}
+
+void MainWindow::retranslateUi(
+    const robot_qt_viewer::RobotQtViewerLocalizationService&) noexcept
+{
+    setWindowTitle(QStringLiteral("%1 - %2")
+        .arg(uiText("window.title"), m_platformComposition.displayName));
+
+    refreshOperationStatusPresentation();
 
     if(m_fileMenu != nullptr) {
         m_fileMenu->setTitle(uiText("menu.file"));
@@ -689,10 +898,8 @@ void MainWindow::retranslateUi()
         it.value()->setText(uiText(QString("theme.%1").arg(it.key())));
     }
     for(auto it = m_languageActions.begin(); it != m_languageActions.end(); ++it) {
-        const robot_qt_viewer::LanguageKind actionLanguage =
-            robot_qt_viewer::LanguageManager::languageFromName(it.key());
-        it.value()->setText(uiText(QString("language.%1").arg(it.key())));
-        it.value()->setChecked(actionLanguage == m_language);
+        it.value()->setText(m_localization->languageNativeName(it.key()));
+        it.value()->setChecked(it.key() == m_localization->currentLanguageId());
     }
 
     if(m_loadRobotAction != nullptr) {
@@ -735,9 +942,7 @@ void MainWindow::retranslateUi()
         setAction(m_importObjectAction, uiText("action.importObject"));
     }
     if(m_importPointCloudAction != nullptr) {
-        setAction(m_importPointCloudAction, m_language == robot_qt_viewer::LanguageKind::Chinese
-            ? QString::fromWCharArray(L"\u5bfc\u5165\u70b9\u4e91")
-            : QStringLiteral("Import Point Cloud"));
+        setAction(m_importPointCloudAction, uiText("action.importPointCloud"));
     }
     if(m_deleteRobotAction != nullptr) {
         setAction(m_deleteRobotAction, uiText("action.deleteSelectedItem"));
@@ -748,6 +953,7 @@ void MainWindow::retranslateUi()
     if(m_resetCameraAction != nullptr) {
         setAction(m_resetCameraAction, uiText("action.viewOrientation"));
     }
+    updateViewportPresentationAction();
     for(auto it = m_cameraViewActions.begin(); it != m_cameraViewActions.end(); ++it) {
         setAction(it.value(), uiText(QString("action.cameraView.%1").arg(it.key())));
     }
@@ -759,6 +965,9 @@ void MainWindow::retranslateUi()
     }
     if(m_robotRunDetailsAction != nullptr) {
         setAction(m_robotRunDetailsAction, uiText("action.robotRunDetails"));
+    }
+    if(m_configurePlatformAction != nullptr) {
+        setAction(m_configurePlatformAction, uiText("action.configurePlatform"));
     }
     if(m_browseWorkbenchAction != nullptr) {
         setAction(m_browseWorkbenchAction, uiText("action.projectAssemblyMode"));
@@ -811,16 +1020,16 @@ void MainWindow::createActions()
 
     QActionGroup* languageGroup = new QActionGroup(this);
     languageGroup->setExclusive(true);
-    for(const QString& languageName : { QString("English"), QString("Chinese") }) {
+    for(const robot_qt_viewer::RobotQtViewerLanguageInfo& language :
+        m_localization->availableLanguages()) {
         QAction* languageAction = m_languageMenu->addAction(QString());
         languageAction->setCheckable(true);
         languageAction->setActionGroup(languageGroup);
-        languageAction->setChecked(
-            robot_qt_viewer::LanguageManager::languageFromName(languageName) == m_language);
-        connect(languageAction, &QAction::triggered, this, [this, languageName]() {
-            applyLanguage(languageName);
+        languageAction->setChecked(language.id == m_localization->currentLanguageId());
+        connect(languageAction, &QAction::triggered, this, [this, languageId = language.id]() {
+            applyLanguage(languageId);
         });
-        m_languageActions.insert(languageName, languageAction);
+        m_languageActions.insert(language.id, languageAction);
     }
 
     m_loadRobotAction = new QAction(this);
@@ -876,6 +1085,14 @@ void MainWindow::createActions()
     m_resetCameraAction = new QAction(this);
     connect(m_resetCameraAction, &QAction::triggered, this, &MainWindow::showCameraViewPalette);
 
+    m_viewportPresentationAction = new QAction(this);
+    m_viewportPresentationAction->setCheckable(true);
+    m_viewportPresentationAction->setShortcut(QKeySequence(Qt::Key_F11));
+    m_viewportPresentationAction->setShortcutContext(Qt::ApplicationShortcut);
+    connect(m_viewportPresentationAction, &QAction::triggered, this, [this](bool checked) {
+        setViewportPresentationMode(checked);
+    });
+
     m_cameraViewMenu = new QMenu(this);
     auto addCameraViewAction = [this](const QString& id, ProjectSceneCameraView view) {
         QAction* action = m_cameraViewMenu->addAction(QString());
@@ -921,6 +1138,10 @@ void MainWindow::createActions()
     connect(m_robotRunDetailsAction, &QAction::toggled, this, [this](bool checked) {
         setRobotRunDetailsRequested(checked);
     });
+
+    m_configurePlatformAction = new QAction(this);
+    connect(m_configurePlatformAction, &QAction::triggered,
+        this, &MainWindow::configureSimulationPlatform);
 
     auto* workbenchGroup = new QActionGroup(this);
     workbenchGroup->setExclusive(true);
@@ -1020,10 +1241,14 @@ void MainWindow::createActions()
     m_fileMenu->addSeparator();
     m_fileMenu->addAction(m_loadRobotAction);
     m_fileMenu->addAction(m_saveImageAction);
+    m_viewMenu->addAction(m_viewportPresentationAction);
+    m_viewMenu->addSeparator();
     m_viewMenu->addAction(m_resetCameraAction);
     m_viewMenu->addMenu(m_cameraViewMenu);
     m_viewMenu->addAction(m_collisionGeometryAction);
     m_viewMenu->addAction(m_collisionQueriesAction);
+    m_viewMenu->addSeparator();
+    m_viewMenu->addAction(m_configurePlatformAction);
 
     m_toolbarController = new robot_qt_viewer::RobotQtViewerToolbarController(*this, this);
     robot_qt_viewer::RobotQtViewerToolbarActions toolbarActions;
@@ -1034,36 +1259,70 @@ void MainWindow::createActions()
     toolbarActions.saveCollisionOverrides = m_saveCollisionOverridesAction;
     toolbarActions.importRobot = m_importRobotAction;
     toolbarActions.importObject = m_importObjectAction;
+    toolbarActions.importPointCloud = m_importPointCloudAction;
     toolbarActions.deleteSelectedItem = m_deleteRobotAction;
     toolbarActions.saveImage = m_saveImageAction;
     toolbarActions.resetCamera = m_resetCameraAction;
     toolbarActions.collisionGeometry = m_collisionGeometryAction;
     toolbarActions.collisionQueries = m_collisionQueriesAction;
-    toolbarActions.browseWorkbench = m_browseWorkbenchAction;
-    toolbarActions.motionWorkbench = m_motionWorkbenchAction;
-    toolbarActions.toolSetupWorkbench = m_toolSetupWorkbenchAction;
-    toolbarActions.collisionWorkbench = m_collisionWorkbenchAction;
-    toolbarActions.trajectoryPlanningWorkbench = m_trajectoryPlanningWorkbenchAction;
-    toolbarActions.sprayProcessWorkbench = m_sprayProcessWorkbenchAction;
-    toolbarActions.coatingAnalysisWorkbench = m_coatingAnalysisWorkbenchAction;
-    toolbarActions.digitalTwinWorkbench = m_digitalTwinWorkbenchAction;
-    m_toolbarController->build(toolbarActions);
+    toolbarActions.browseWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse) ? m_browseWorkbenchAction : nullptr;
+    toolbarActions.motionWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion) ? m_motionWorkbenchAction : nullptr;
+    toolbarActions.toolSetupWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::ToolSetup) ? m_toolSetupWorkbenchAction : nullptr;
+    toolbarActions.collisionWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision) ? m_collisionWorkbenchAction : nullptr;
+    toolbarActions.trajectoryPlanningWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::TrajectoryPlanning)
+        ? m_trajectoryPlanningWorkbenchAction : nullptr;
+    toolbarActions.sprayProcessWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::SprayProcess)
+        ? m_sprayProcessWorkbenchAction : nullptr;
+    toolbarActions.coatingAnalysisWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis)
+        ? m_coatingAnalysisWorkbenchAction : nullptr;
+    toolbarActions.digitalTwinWorkbench = m_workbenchPackageRegistry.hasMode(
+        robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin)
+        ? m_digitalTwinWorkbenchAction : nullptr;
+    QStringList workbenchActionOrder;
+    for(const QString& modeId : m_platformComposition.enabledModeIds) {
+        const robot_qt_viewer::RobotQtViewerWorkbenchModeDesc* modeDesc =
+            m_workbenchPackageRegistry.registeredMode(modeId);
+        if(modeDesc != nullptr &&
+            modeDesc->toolbarActionId != QStringLiteral("toolSetupWorkbench") &&
+            !modeDesc->toolbarActionId.isEmpty()) {
+            workbenchActionOrder.push_back(modeDesc->toolbarActionId);
+        }
+    }
+    m_toolbarController->build(toolbarActions, workbenchActionOrder);
     createCameraViewOverlay();
 
-    retranslateUi();
+    retranslateUi(*m_localization);
     updateWorkbenchActions();
+}
+
+void MainWindow::configureSimulationPlatform()
+{
+    robot_qt_viewer::RobotQtViewerPlatformConfigurationDialog dialog(
+        m_workbenchPackageRegistry,
+        m_platformProfilesDirectory,
+        m_platformOverlaysDirectory,
+        m_platformProfile.id,
+        this);
+    if(dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    QMessageBox::information(
+        this,
+        QStringLiteral("Simulation Platform"),
+        QStringLiteral("The platform configuration was saved. Restart RobotQtViewer to apply it."));
 }
 
 void MainWindow::showCameraViewPalette()
 {
     QMenu palette(this);
     palette.setObjectName(QStringLiteral("RobotQtViewerCameraViewPalette"));
-    palette.setStyleSheet(QStringLiteral(
-        "QMenu#RobotQtViewerCameraViewPalette { padding: 8px; }"
-        "QToolButton { min-width: 58px; max-width: 58px; min-height: 58px; max-height: 58px; "
-        "border: 1px solid transparent; border-radius: 4px; padding: 4px; }"
-        "QToolButton:hover { background: rgba(70, 138, 180, 45); border-color: rgba(70, 138, 180, 130); }"
-        "QToolButton:pressed { background: rgba(70, 138, 180, 90); }"));
 
     auto* container = new QWidget(&palette);
     auto* grid = new QGridLayout(container);
@@ -1073,6 +1332,7 @@ void MainWindow::showCameraViewPalette()
 
     auto addButton = [&](int row, int column, QAction* action) {
         auto* button = new QToolButton(container);
+        button->setProperty("cameraViewControl", true);
         if(action != nullptr) {
             button->setDefaultAction(action);
         }
@@ -1107,19 +1367,11 @@ void MainWindow::createCameraViewOverlay()
     auto* overlay = new QFrame(m_viewport);
     overlay->setObjectName(QStringLiteral("RobotQtViewerCameraViewOverlay"));
     overlay->setAttribute(Qt::WA_StyledBackground, true);
-    overlay->setStyleSheet(QStringLiteral(
-        "QFrame#RobotQtViewerCameraViewOverlay {"
-        "background: rgba(248, 250, 252, 218);"
-        "border: 1px solid rgba(110, 122, 132, 160);"
-        "border-radius: 4px;"
-        "}"
-        "QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 2px; }"
-        "QToolButton:hover { background: rgba(70, 138, 180, 45); border-color: rgba(70, 138, 180, 130); }"
-        "QToolButton:pressed { background: rgba(70, 138, 180, 90); }"));
 
     auto* overlayLayout = new QHBoxLayout(overlay);
     overlayLayout->setContentsMargins(4, 4, 4, 4);
     overlayLayout->setSpacing(0);
+    overlayLayout->addWidget(makeCameraViewButton(m_viewportPresentationAction, overlay));
     overlayLayout->addWidget(makeCameraViewButton(m_resetCameraAction, overlay));
 
     m_cameraViewOverlay = overlay;
@@ -1140,6 +1392,39 @@ void MainWindow::updateCameraViewOverlayGeometry()
     const int x = std::max(margin, m_viewport->width() - size.width() - margin);
     m_cameraViewOverlay->move(x, margin);
     m_cameraViewOverlay->raise();
+}
+
+void MainWindow::setViewportPresentationMode(bool active)
+{
+    if(m_viewportPresentationController == nullptr) {
+        return;
+    }
+
+    m_viewportPresentationController->setActive(active);
+    updateViewportPresentationAction();
+    updateCameraViewOverlayGeometry();
+    updateThicknessLegendOverlayGeometry();
+}
+
+void MainWindow::updateViewportPresentationAction()
+{
+    if(m_viewportPresentationAction == nullptr) {
+        return;
+    }
+
+    const bool active = m_viewportPresentationController != nullptr &&
+        m_viewportPresentationController->isActive();
+    const QSignalBlocker blocker(m_viewportPresentationAction);
+    m_viewportPresentationAction->setChecked(active);
+    m_viewportPresentationAction->setIcon(viewportPresentationIcon(active));
+
+    const QString text = uiText(active
+        ? QStringLiteral("action.exitViewportFullscreen")
+        : QStringLiteral("action.enterViewportFullscreen"));
+    m_viewportPresentationAction->setText(text);
+    m_viewportPresentationAction->setIconText(text);
+    m_viewportPresentationAction->setToolTip(text);
+    m_viewportPresentationAction->setStatusTip(text);
 }
 
 void MainWindow::updateThicknessLegendOverlayGeometry()
@@ -1166,9 +1451,8 @@ void MainWindow::enterWorkbench(
     robot_qt_viewer::RobotQtViewerWorkbenchKind kind,
     const QString& sourceId)
 {
-    const robot_qt_viewer::RobotQtViewerWorkbenchKind previousKind =
-        m_workbenchManager.activeWorkbench();
-    if(!m_workbenchPackageRegistry.hasMode(kind)) {
+    if(m_workbenchTransitionCoordinator == nullptr ||
+        !m_workbenchPackageRegistry.isModeReady(kind)) {
         statusBar()->showMessage(
             QString("Workbench package is not available: %1")
                 .arg(robot_qt_viewer::robotQtViewerWorkbenchName(kind)),
@@ -1177,32 +1461,14 @@ void MainWindow::enterWorkbench(
         return;
     }
 
-    if(m_workbenchManager.activeWorkbench() == robot_qt_viewer::RobotQtViewerWorkbenchKind::ToolSetup &&
-        kind != robot_qt_viewer::RobotQtViewerWorkbenchKind::ToolSetup &&
-        !resolveToolSetupPendingChanges()) {
+    const robot_qt_viewer::RobotQtViewerWorkbenchTransitionResult transition =
+        m_workbenchTransitionCoordinator->requestTransition(kind, sourceId, this);
+    if(!transition.succeeded()) {
+        showWorkbenchTransitionResult(
+            transition,
+            QStringLiteral("Finish or cancel the current task first."));
         updateWorkbenchActions();
         return;
-    }
-
-    if(!m_workbenchManager.enterWorkbench(kind, sourceId)) {
-        statusBar()->showMessage("Finish or cancel the current task first.", 3000);
-        updateWorkbenchActions();
-        return;
-    }
-
-    if(m_coatingAnalysisController != nullptr && previousKind != kind) {
-        if(previousKind == robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis) {
-            m_coatingAnalysisController->deactivate();
-        }
-        if(kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis) {
-            m_coatingAnalysisController->activate();
-        }
-    }
-
-    if(previousKind != kind && m_collisionWorkbenchController != nullptr &&
-        (previousKind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision ||
-            kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision)) {
-        m_collisionWorkbenchController->showDetectorConfiguration();
     }
 
     robot_qt_viewer::RobotQtViewerEvent taskEvent;
@@ -1227,49 +1493,81 @@ void MainWindow::enterWorkbench(
     m_eventHub.publish(event);
 }
 
+void MainWindow::showWorkbenchTransitionResult(
+    const robot_qt_viewer::RobotQtViewerWorkbenchTransitionResult& result,
+    const QString& fallbackMessage)
+{
+    updateWorkbenchActions();
+    if(result.succeeded()) {
+        if(!result.message.isEmpty()) {
+            statusBar()->showMessage(result.message, 3000);
+        }
+        return;
+    }
+    const QString message = !result.message.isEmpty()
+        ? result.message
+        : fallbackMessage;
+    statusBar()->showMessage(
+        message.isEmpty() ? QStringLiteral("Workbench transition failed.") : message,
+        5000);
+}
+
 void MainWindow::updateWorkbenchActions()
 {
     const robot_qt_viewer::RobotQtViewerWorkbenchKind kind = m_workbenchManager.activeWorkbench();
+    const bool transitionAvailable = m_workbenchTransitionCoordinator == nullptr ||
+        (!m_workbenchTransitionCoordinator->transitionInProgress() &&
+            m_workbenchTransitionCoordinator->lifecycleState(kind) ==
+                robot_qt_viewer::RobotQtViewerWorkbenchLifecycleState::Active);
+    const auto modeAvailable = [this, transitionAvailable](
+                                   robot_qt_viewer::RobotQtViewerWorkbenchKind candidate) {
+        return transitionAvailable &&
+            m_workbenchPackageRegistry.isModeReady(candidate) &&
+            (m_workbenchTransitionCoordinator == nullptr ||
+                m_workbenchTransitionCoordinator->lifecycleState(candidate) !=
+                    robot_qt_viewer::RobotQtViewerWorkbenchLifecycleState::Failed);
+    };
     if(m_browseWorkbenchAction != nullptr) {
+        m_browseWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse));
         m_browseWorkbenchAction->setChecked(kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse);
     }
     if(m_motionWorkbenchAction != nullptr) {
-        m_motionWorkbenchAction->setEnabled(
-            m_workbenchPackageRegistry.hasMode(robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion));
+        m_motionWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion));
         m_motionWorkbenchAction->setChecked(kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion);
     }
     if(m_toolSetupWorkbenchAction != nullptr) {
         m_toolSetupWorkbenchAction->setEnabled(
             currentSceneExplorerNodeIsLink() &&
-            m_workbenchPackageRegistry.hasMode(robot_qt_viewer::RobotQtViewerWorkbenchKind::ToolSetup));
+            modeAvailable(robot_qt_viewer::RobotQtViewerWorkbenchKind::ToolSetup));
     }
     if(m_collisionWorkbenchAction != nullptr) {
-        m_collisionWorkbenchAction->setEnabled(
-            m_workbenchPackageRegistry.hasMode(robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision));
+        m_collisionWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision));
         m_collisionWorkbenchAction->setChecked(kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision);
     }
     if(m_trajectoryPlanningWorkbenchAction != nullptr) {
-        m_trajectoryPlanningWorkbenchAction->setEnabled(
-            m_workbenchPackageRegistry.hasMode(
-                robot_qt_viewer::RobotQtViewerWorkbenchKind::TrajectoryPlanning));
+        m_trajectoryPlanningWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::TrajectoryPlanning));
         m_trajectoryPlanningWorkbenchAction->setChecked(
             kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::TrajectoryPlanning);
     }
     if(m_sprayProcessWorkbenchAction != nullptr) {
-        m_sprayProcessWorkbenchAction->setEnabled(
-            m_workbenchPackageRegistry.hasMode(robot_qt_viewer::RobotQtViewerWorkbenchKind::SprayProcess));
+        m_sprayProcessWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::SprayProcess));
         m_sprayProcessWorkbenchAction->setChecked(
             kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::SprayProcess);
     }
     if(m_coatingAnalysisWorkbenchAction != nullptr) {
-        m_coatingAnalysisWorkbenchAction->setEnabled(
-            m_workbenchPackageRegistry.hasMode(robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis));
+        m_coatingAnalysisWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis));
         m_coatingAnalysisWorkbenchAction->setChecked(
             kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis);
     }
     if(m_digitalTwinWorkbenchAction != nullptr) {
-        m_digitalTwinWorkbenchAction->setEnabled(
-            m_workbenchPackageRegistry.hasMode(robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin));
+        m_digitalTwinWorkbenchAction->setEnabled(modeAvailable(
+            robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin));
         m_digitalTwinWorkbenchAction->setChecked(
             kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin);
     }
@@ -1368,31 +1666,75 @@ void MainWindow::newProject()
     if(!confirmProjectReplacement(
         this,
         QStringLiteral("New project"),
-        [this](bool restoreEditorTarget) {
-            return resolveToolSetupPendingChanges(restoreEditorTarget);
+        [this](bool) {
+            if(m_workbenchTransitionCoordinator == nullptr) {
+                return true;
+            }
+            const auto result = m_workbenchTransitionCoordinator->prepareActiveDeactivation(
+                robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectReplacing,
+                QStringLiteral("newProject"),
+                this);
+            showWorkbenchTransitionResult(result);
+            return result.succeeded();
         },
         [this]() {
             saveProject();
         },
         [this]() {
-            return m_projectDirty;
+            return m_projectSession.isDirty();
         })) {
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+        }
         statusBar()->showMessage(QStringLiteral("Project replacement canceled."), 3000);
         return;
     }
 
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        const auto deactivate = m_workbenchTransitionCoordinator->deactivateActive(
+            robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectReplacing,
+            QStringLiteral("newProject"),
+            this,
+            true);
+        if(!deactivate.succeeded()) {
+            showWorkbenchTransitionResult(deactivate);
+            return;
+        }
+    }
+
     const robot_qt_viewer::ProjectSessionWorkflowResult result =
         m_appController.resetProject(QStringLiteral("newProject"));
+    if(!result.success) {
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            showWorkbenchTransitionResult(
+                m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+                    robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::Rollback,
+                    robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::Rollback,
+                    QStringLiteral("newProjectRollback")));
+        }
+        statusBar()->showMessage(result.message, 5000);
+        return;
+    }
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        m_workbenchTransitionCoordinator->releaseProject(QStringLiteral("newProject"));
+    }
     if(result.shouldReloadViewport) {
         reloadViewportProject();
     }
-    refreshCollisionPairList();
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        showWorkbenchTransitionResult(
+            m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+                robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::FreshProject,
+                robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectLoaded,
+                QStringLiteral("newProject")));
+    }
     statusBar()->showMessage(result.message, 3000);
 }
 
 void MainWindow::openProject()
 {
-    const QString fileName = QFileDialog::getOpenFileName(
+    const QString fileName = robot_qt_viewer::getOpenFileName(
+        QStringLiteral("shell.project.open"),
         this,
         "Open project",
         defaultProjectDialogPath(m_projectPath),
@@ -1405,38 +1747,73 @@ void MainWindow::openProject()
     if(!confirmProjectReplacement(
         this,
         QStringLiteral("Open project"),
-        [this](bool restoreEditorTarget) {
-            return resolveToolSetupPendingChanges(restoreEditorTarget);
+        [this](bool) {
+            if(m_workbenchTransitionCoordinator == nullptr) {
+                return true;
+            }
+            const auto result = m_workbenchTransitionCoordinator->prepareActiveDeactivation(
+                robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectReplacing,
+                QStringLiteral("openProject"),
+                this);
+            showWorkbenchTransitionResult(result);
+            return result.succeeded();
         },
         [this]() {
             saveProject();
         },
         [this]() {
-            return m_projectDirty;
+            return m_projectSession.isDirty();
         })) {
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+        }
         statusBar()->showMessage(QStringLiteral("Open project canceled."), 3000);
         return;
     }
 
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        const auto deactivate = m_workbenchTransitionCoordinator->deactivateActive(
+            robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectReplacing,
+            QStringLiteral("openProject"),
+            this,
+            true);
+        if(!deactivate.succeeded()) {
+            showWorkbenchTransitionResult(deactivate);
+            return;
+        }
+    }
+
     const std::filesystem::path path = fileName.toStdWString();
+    const QString operationId = beginProjectOpenOperation(path, QStringLiteral("openProject"));
     const robot_qt_viewer::ProjectSessionWorkflowResult result =
-        m_appController.loadProject(path, QStringLiteral("openProject"));
+        m_appController.loadProject(path, QStringLiteral("openProject"), operationId);
     if(!result.success) {
-        statusBar()->showMessage(result.message, 5000);
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            showWorkbenchTransitionResult(
+                m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+                    robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::Rollback,
+                    robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::Rollback,
+                    QStringLiteral("openProjectRollback")));
+        }
+        refreshOperationStatusPresentation(operationId);
         return;
     }
 
-    if(m_collisionWorkbenchController != nullptr) {
-        syncLegacyRobotObjectPairsPreservingDirty(
-            m_collisionWorkbenchController,
-            m_projectSession,
-            m_documentController,
-            QStringLiteral("openProjectSyncLegacyPairs"));
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        m_workbenchTransitionCoordinator->releaseProject(QStringLiteral("openProject"));
     }
+
     if(result.shouldReloadViewport) {
-        reloadViewportProject();
+        reloadViewportProject(operationId);
     }
-    statusBar()->showMessage(result.message, 5000);
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        showWorkbenchTransitionResult(
+            m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+                robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::FreshProject,
+                robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectLoaded,
+                QStringLiteral("openProject")));
+    }
+    refreshOperationStatusPresentation(operationId);
 }
 
 bool MainWindow::openProjectPathForProfiling(
@@ -1444,7 +1821,9 @@ bool MainWindow::openProjectPathForProfiling(
     int exitDelayMs,
     int repeatCount,
     bool enableCollisionAfterLoad,
-    const QString& profileGenerateObjectCoacdId)
+    const QString& profileGenerateObjectCoacdId,
+    bool setGeneratedCollisionCurrent,
+    const std::filesystem::path& profileSavePath)
 {
     const int remainingRepeats = repeatCount > 1 ? repeatCount : 1;
     std::cout << "\n"
@@ -1455,25 +1834,52 @@ bool MainWindow::openProjectPathForProfiling(
         << "| repeatRemaining: " << remainingRepeats << "\n"
         << "+------------------------------------------------------------------------------+\n";
 
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        const auto deactivate = m_workbenchTransitionCoordinator->deactivateActive(
+            robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectReplacing,
+            QStringLiteral("profileProject"),
+            this);
+        if(!deactivate.succeeded()) {
+            showWorkbenchTransitionResult(deactivate);
+            return false;
+        }
+    }
+
+    const QString operationId = beginProjectOpenOperation(path, QStringLiteral("profileProject"));
     const robot_qt_viewer::ProjectSessionWorkflowResult result =
-        m_appController.loadProject(path, QStringLiteral("profileProject"));
+        m_appController.loadProject(path, QStringLiteral("profileProject"), operationId);
     if(!result.success) {
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            showWorkbenchTransitionResult(
+                m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+                    robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::Rollback,
+                    robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::Rollback,
+                    QStringLiteral("profileProjectRollback")));
+        }
         std::cout << "| result : FAILED - " << result.message.toStdString() << "\n"
             << "+------------------------------------------------------------------------------+\n";
-        statusBar()->showMessage(result.message, 5000);
+        refreshOperationStatusPresentation(operationId);
         return false;
     }
 
-    if(m_collisionWorkbenchController != nullptr) {
-        syncLegacyRobotObjectPairsPreservingDirty(
-            m_collisionWorkbenchController,
-            m_projectSession,
-            m_documentController,
-            QStringLiteral("profileProjectSyncLegacyPairs"));
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        m_workbenchTransitionCoordinator->releaseProject(QStringLiteral("profileProject"));
     }
+
     if(result.shouldReloadViewport) {
-        reloadViewportProject();
+        reloadViewportProject(operationId);
     }
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        const auto activate = m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+            robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::FreshProject,
+            robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ProjectLoaded,
+            QStringLiteral("profileProject"));
+        if(!activate.succeeded()) {
+            showWorkbenchTransitionResult(activate);
+            return false;
+        }
+    }
+    refreshOperationStatusPresentation(operationId);
     if(!profileGenerateObjectCoacdId.isEmpty()) {
         const auto coacdStart = std::chrono::steady_clock::now();
         const QString guiAttachmentPrefix = QStringLiteral("gui-attachment:");
@@ -1508,6 +1914,14 @@ bool MainWindow::openProjectPathForProfiling(
             }
             std::cout << "| Profile GUI COACD status     | "
                 << statusMessage.toStdString() << "\n";
+            if(generated && setGeneratedCollisionCurrent &&
+                m_collisionWorkbenchController != nullptr) {
+                m_collisionWorkbenchController->setSelectedCollisionVariantCurrent();
+                std::cout << "| Profile GUI Set Current      | "
+                    << statusBar()->currentMessage().toStdString()
+                    << " dirty=" << (m_projectSession.isDirty() ? "true" : "false")
+                    << "\n";
+            }
         } else {
             std::vector<simulation_project::ObjectCollisionElementOverrideDesc> elements;
             generated =
@@ -1524,6 +1938,19 @@ bool MainWindow::openProjectPathForProfiling(
             << " ms | object=" << profileTarget.toStdString()
             << " ok=" << (generated ? "true" : "false")
             << " parts=" << generatedPartCount
+            << "\n";
+    }
+    if(!profileSavePath.empty()) {
+        const robot_qt_viewer::ProjectSessionWorkflowResult saveResult =
+            m_appController.saveProject(
+                profileSavePath,
+                false,
+                QStringLiteral("profileSaveProject"));
+        std::cout << "| Profile project save         | ok="
+            << (saveResult.success ? "true" : "false")
+            << " dirty=" << (m_projectSession.isDirty() ? "true" : "false")
+            << " path=" << profileSavePath.generic_u8string()
+            << " detail=" << saveResult.message.toStdString()
             << "\n";
     }
     if(enableCollisionAfterLoad) {
@@ -1545,13 +1972,16 @@ bool MainWindow::openProjectPathForProfiling(
         QTimer::singleShot(
             0,
             this,
-            [this, path, exitDelayMs, remainingRepeats, enableCollisionAfterLoad, profileGenerateObjectCoacdId]() {
+            [this, path, exitDelayMs, remainingRepeats, enableCollisionAfterLoad,
+             profileGenerateObjectCoacdId, setGeneratedCollisionCurrent, profileSavePath]() {
             openProjectPathForProfiling(
                 path,
                 exitDelayMs,
                 remainingRepeats - 1,
                 enableCollisionAfterLoad,
-                profileGenerateObjectCoacdId);
+                profileGenerateObjectCoacdId,
+                setGeneratedCollisionCurrent,
+                profileSavePath);
         });
     } else if(exitDelayMs >= 0) {
         QTimer::singleShot(exitDelayMs, qApp, &QCoreApplication::quit);
@@ -1561,7 +1991,7 @@ bool MainWindow::openProjectPathForProfiling(
 
 void MainWindow::saveProject()
 {
-    if(m_projectRequiresSaveAs || m_projectPath.empty()) {
+    if(m_projectSession.requiresSaveAs() || m_projectPath.empty()) {
         saveProjectAs();
         return;
     }
@@ -1570,7 +2000,8 @@ void MainWindow::saveProject()
 
 void MainWindow::saveProjectAs()
 {
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = robot_qt_viewer::getSaveFileName(
+        QStringLiteral("shell.project.save"),
         this,
         "Save project",
         m_projectPath.empty() ? defaultProjectDialogPath(m_projectPath) : QString::fromStdWString(m_projectPath.wstring()),
@@ -1585,7 +2016,8 @@ void MainWindow::saveProjectAs()
 
 void MainWindow::saveProjectAsV3()
 {
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = robot_qt_viewer::getSaveFileName(
+        QStringLiteral("shell.project.saveSystem"),
         this,
         "Save project as system",
         m_projectPath.empty() ? defaultProjectDialogPath(m_projectPath) : QString::fromStdWString(m_projectPath.wstring()),
@@ -1618,7 +2050,11 @@ void MainWindow::importRobotPackage()
         QStringLiteral("importRobotPackage"),
         robot_qt_viewer::ProjectDirtyPolicy::UserEdit,
         [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& errorMessage) {
-            if(!simulation_project::importRobotPackageDocument(packagePath, service.document(), &errorMessage)) {
+            if(!simulation_project::importRobotPackageDocument(
+                   packagePath,
+                   m_projectPath,
+                   service.document(),
+                   &errorMessage)) {
                 return false;
             }
             changed = true;
@@ -1668,6 +2104,7 @@ void MainWindow::exportSelectedRobotPackage()
     std::string errorMessage;
     if(!simulation_project::saveRobotPackageDocument(
            std::filesystem::path(fileName.toStdWString()),
+           m_projectPath,
            m_appController.document(),
            robotId.toStdString(),
            &errorMessage)) {
@@ -1705,9 +2142,6 @@ void MainWindow::importRobot()
         statusBar()->showMessage(importResult.message, 8000);
         return;
     }
-    if(m_collisionWorkbenchController != nullptr) {
-        m_collisionWorkbenchController->syncLegacyRobotObjectPairs();
-    }
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(QString("Importing %1...").arg(fileName));
     QApplication::processEvents();
@@ -1730,9 +2164,6 @@ void MainWindow::importRobot()
             importError = m_viewport->lastError();
         }
         m_appController.sceneEntityWorkflow().restoreImportState(importResult);
-        if(m_collisionWorkbenchController != nullptr) {
-            m_collisionWorkbenchController->syncLegacyRobotObjectPairs();
-        }
         reloadViewportProject();
         const QString error = !importError.isEmpty()
             ? importError
@@ -1759,9 +2190,6 @@ void MainWindow::importObject()
         statusBar()->showMessage(importResult.message, 8000);
         return;
     }
-    if(m_collisionWorkbenchController != nullptr) {
-        m_collisionWorkbenchController->syncLegacyRobotObjectPairs();
-    }
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(QString("Importing object %1...").arg(fileName));
     QApplication::processEvents();
@@ -1784,9 +2212,6 @@ void MainWindow::importObject()
             importError = m_viewport->lastError();
         }
         m_appController.sceneEntityWorkflow().restoreImportState(importResult);
-        if(m_collisionWorkbenchController != nullptr) {
-            m_collisionWorkbenchController->syncLegacyRobotObjectPairs();
-        }
         reloadViewportProject();
         const QString error = !importError.isEmpty()
             ? importError
@@ -1815,9 +2240,6 @@ void MainWindow::importPointCloud()
         statusBar()->showMessage(importResult.message, 8000);
         return;
     }
-    if(m_collisionWorkbenchController != nullptr) {
-        m_collisionWorkbenchController->syncLegacyRobotObjectPairs();
-    }
     QApplication::setOverrideCursor(Qt::WaitCursor);
     statusBar()->showMessage(QString("Importing point cloud %1...").arg(fileName));
     QApplication::processEvents();
@@ -1840,9 +2262,6 @@ void MainWindow::importPointCloud()
             importError = m_viewport->lastError();
         }
         m_appController.sceneEntityWorkflow().restoreImportState(importResult);
-        if(m_collisionWorkbenchController != nullptr) {
-            m_collisionWorkbenchController->syncLegacyRobotObjectPairs();
-        }
         reloadViewportProject();
         const QString error = !importError.isEmpty()
             ? importError
@@ -2118,12 +2537,15 @@ void MainWindow::createPanels()
         m_sceneExplorerController->setTaskWidget(m_sceneExplorerTaskWidget);
     }
 
-    auto* motionTaskPanel = new QScrollArea(m_taskPanelStack);
-    m_motionTaskPanel = motionTaskPanel;
-    makeHorizontallyCompressible(motionTaskPanel);
-    motionTaskPanel->setWidgetResizable(true);
-    motionTaskPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    motionTaskPanel->setFrameShape(QFrame::NoFrame);
+    QScrollArea* motionTaskPanel = nullptr;
+    if(m_workbenchPackageRegistry.hasMode(
+           robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion)) {
+        motionTaskPanel = new QScrollArea(m_taskPanelStack);
+        m_motionTaskPanel = motionTaskPanel;
+        makeHorizontallyCompressible(motionTaskPanel);
+        motionTaskPanel->setWidgetResizable(true);
+        motionTaskPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        motionTaskPanel->setFrameShape(QFrame::NoFrame);
 
     m_motionControlWidget = new MotionControlWidget(motionTaskPanel);
     m_motionControlController = new robot_qt_viewer::MotionControlModuleController(
@@ -2230,14 +2652,18 @@ void MainWindow::createPanels()
         [this](const robot_qt_viewer::RobotQtViewerEvent& event) {
             m_motionControlController->handleEvent(event);
         });
-    motionTaskPanel->setWidget(m_motionControlWidget);
+        motionTaskPanel->setWidget(m_motionControlWidget);
+    }
 
-    auto* motionPlanningTaskPanel = new QScrollArea(m_taskPanelStack);
-    m_motionPlanningTaskPanel = motionPlanningTaskPanel;
-    makeHorizontallyCompressible(motionPlanningTaskPanel);
-    motionPlanningTaskPanel->setWidgetResizable(true);
-    motionPlanningTaskPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    motionPlanningTaskPanel->setFrameShape(QFrame::NoFrame);
+    QScrollArea* motionPlanningTaskPanel = nullptr;
+    if(m_workbenchPackageRegistry.hasMode(
+           robot_qt_viewer::RobotQtViewerWorkbenchKind::TrajectoryPlanning)) {
+        motionPlanningTaskPanel = new QScrollArea(m_taskPanelStack);
+        m_motionPlanningTaskPanel = motionPlanningTaskPanel;
+        makeHorizontallyCompressible(motionPlanningTaskPanel);
+        motionPlanningTaskPanel->setWidgetResizable(true);
+        motionPlanningTaskPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        motionPlanningTaskPanel->setFrameShape(QFrame::NoFrame);
     m_motionPlanningWidget = new MotionPlanningEditorWidget(motionPlanningTaskPanel);
     m_motionPlanningController = new robot_qt_viewer::MotionPlanningModuleController(
         *m_motionPlanningWidget,
@@ -2255,19 +2681,28 @@ void MainWindow::createPanels()
         [this](const robot_qt_viewer::RobotQtViewerEvent& event) {
             m_motionPlanningController->handleEvent(event);
         });
-    motionPlanningTaskPanel->setWidget(m_motionPlanningWidget);
+        motionPlanningTaskPanel->setWidget(m_motionPlanningWidget);
+    }
 
-    QWidget* collisionTaskPanel = new QWidget(m_taskPanelStack);
-    QVBoxLayout* collisionLayout = new QVBoxLayout(collisionTaskPanel);
-    collisionLayout->setContentsMargins(10, 10, 10, 10);
-    collisionLayout->setSpacing(8);
+    QWidget* collisionTaskPanel = nullptr;
+    QVBoxLayout* collisionLayout = nullptr;
+    if(m_workbenchPackageRegistry.hasMode(
+           robot_qt_viewer::RobotQtViewerWorkbenchKind::Collision)) {
+        collisionTaskPanel = new QWidget(m_taskPanelStack);
+        collisionLayout = new QVBoxLayout(collisionTaskPanel);
+        collisionLayout->setContentsMargins(10, 10, 10, 10);
+        collisionLayout->setSpacing(8);
+    }
 
-    auto* toolTaskPanel = new QScrollArea(m_taskPanelStack);
-    m_toolSetupTaskPanel = toolTaskPanel;
-    makeHorizontallyCompressible(toolTaskPanel);
-    toolTaskPanel->setWidgetResizable(true);
-    toolTaskPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    toolTaskPanel->setFrameShape(QFrame::NoFrame);
+    QScrollArea* toolTaskPanel = nullptr;
+    if(m_workbenchPackageRegistry.hasMode(
+           robot_qt_viewer::RobotQtViewerWorkbenchKind::ToolSetup)) {
+        toolTaskPanel = new QScrollArea(m_taskPanelStack);
+        m_toolSetupTaskPanel = toolTaskPanel;
+        makeHorizontallyCompressible(toolTaskPanel);
+        toolTaskPanel->setWidgetResizable(true);
+        toolTaskPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        toolTaskPanel->setFrameShape(QFrame::NoFrame);
 
     m_toolSetupWidget = new ToolSetupWidget(toolTaskPanel);
     m_toolSetupController = new robot_qt_viewer::ToolSetupModuleController(
@@ -2336,14 +2771,16 @@ void MainWindow::createPanels()
         m_sceneExplorerActionRouter->setToolSetupController(m_toolSetupController);
     }
 
-    toolTaskPanel->setWidget(m_toolSetupWidget);
+        toolTaskPanel->setWidget(m_toolSetupWidget);
+    }
 
-    m_collisionWorkbenchPanel = new CollisionWorkbenchPanel(collisionTaskPanel);
-    m_collisionWorkbenchController = new robot_qt_viewer::CollisionWorkbenchModuleController(
-        *m_collisionWorkbenchPanel,
-        m_documentContext,
-        *m_collisionWorkbenchServices,
-        this);
+    if(collisionTaskPanel != nullptr && collisionLayout != nullptr) {
+        m_collisionWorkbenchPanel = new CollisionWorkbenchPanel(collisionTaskPanel);
+        m_collisionWorkbenchController = new robot_qt_viewer::CollisionWorkbenchModuleController(
+            *m_collisionWorkbenchPanel,
+            m_documentContext,
+            *m_collisionWorkbenchServices,
+            this);
     connect(m_collisionWorkbenchController, &robot_qt_viewer::CollisionWorkbenchModuleController::statusMessageRequested,
         this, [this](const QString& message, int timeoutMs) {
             statusBar()->showMessage(message, timeoutMs);
@@ -2356,27 +2793,29 @@ void MainWindow::createPanels()
     if(m_sceneExplorerActionRouter != nullptr) {
         m_sceneExplorerActionRouter->setCollisionWorkbenchController(m_collisionWorkbenchController);
     }
-    collisionLayout->addWidget(m_collisionWorkbenchPanel, 1);
+        collisionLayout->addWidget(m_collisionWorkbenchPanel, 1);
+    }
 
     m_statusPanelWidget = new StatusPanelWidget(m_taskPanelStack);
     m_documentViewRegistry.registerModule(QStringLiteral("status"), m_statusPanelWidget,
         [this](const robot_qt_viewer::RobotQtViewerEvent& event) {
-            if(event.kind == robot_qt_viewer::RobotQtViewerEventKind::StatusMessageRequested) {
+            if(event.kind == robot_qt_viewer::RobotQtViewerEventKind::OperationStatusChanged) {
+                refreshOperationStatusPresentation(event.operationStatus.operationId);
+            } else if(event.kind == robot_qt_viewer::RobotQtViewerEventKind::StatusMessageRequested) {
                 statusBar()->showMessage(event.message, event.timeoutMs > 0 ? event.timeoutMs : 2500);
-                m_statusPanelWidget->setStatusItems({ event.message });
-            } else if(event.kind == robot_qt_viewer::RobotQtViewerEventKind::ProjectOpened) {
-                m_statusPanelWidget->setStatusItems({ QStringLiteral("Project opened") });
-            } else if(event.kind == robot_qt_viewer::RobotQtViewerEventKind::ProjectSaved) {
-                m_statusPanelWidget->setStatusItems({ QStringLiteral("Project saved") });
             }
         });
+    refreshOperationStatusPresentation();
 
-    auto* coatingAnalysisScrollArea = new QScrollArea(m_taskPanelStack);
-    m_coatingAnalysisTaskPanel = coatingAnalysisScrollArea;
-    makeHorizontallyCompressible(coatingAnalysisScrollArea);
-    coatingAnalysisScrollArea->setWidgetResizable(true);
-    coatingAnalysisScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    coatingAnalysisScrollArea->setFrameShape(QFrame::NoFrame);
+    QScrollArea* coatingAnalysisScrollArea = nullptr;
+    if(m_workbenchPackageRegistry.hasMode(
+           robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis)) {
+        coatingAnalysisScrollArea = new QScrollArea(m_taskPanelStack);
+        m_coatingAnalysisTaskPanel = coatingAnalysisScrollArea;
+        makeHorizontallyCompressible(coatingAnalysisScrollArea);
+        coatingAnalysisScrollArea->setWidgetResizable(true);
+        coatingAnalysisScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        coatingAnalysisScrollArea->setFrameShape(QFrame::NoFrame);
     m_coatingAnalysisPanel = new robot_qt_viewer::CoatingAnalysisPanel(coatingAnalysisScrollArea);
     m_coatingAnalysisController = new robot_qt_viewer::CoatingAnalysisModuleController(
         *m_coatingAnalysisPanel,
@@ -2423,24 +2862,35 @@ void MainWindow::createPanels()
         [this](const robot_qt_viewer::RobotQtViewerEvent& event) {
             m_coatingAnalysisController->handleEvent(event);
         });
+    }
 
-    collisionTaskPanel->setLayout(collisionLayout);
+    if(collisionTaskPanel != nullptr && collisionLayout != nullptr) {
+        collisionTaskPanel->setLayout(collisionLayout);
+    }
 
-    auto* collisionTaskScrollArea = new QScrollArea(m_taskPanelStack);
-    m_collisionTaskPanel = collisionTaskScrollArea;
-    makeHorizontallyCompressible(collisionTaskScrollArea);
-    collisionTaskScrollArea->setWidgetResizable(true);
-    collisionTaskScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    collisionTaskScrollArea->setFrameShape(QFrame::NoFrame);
-    collisionTaskScrollArea->setWidget(collisionTaskPanel);
+    QScrollArea* collisionTaskScrollArea = nullptr;
+    if(collisionTaskPanel != nullptr) {
+        collisionTaskScrollArea = new QScrollArea(m_taskPanelStack);
+        m_collisionTaskPanel = collisionTaskScrollArea;
+        makeHorizontallyCompressible(collisionTaskScrollArea);
+        collisionTaskScrollArea->setWidgetResizable(true);
+        collisionTaskScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        collisionTaskScrollArea->setFrameShape(QFrame::NoFrame);
+        collisionTaskScrollArea->setWidget(collisionTaskPanel);
+    }
 
     m_taskPanelStack->addWidget(m_statusPanelWidget);
     m_taskPanelStack->addWidget(sceneExplorerTaskPanel);
-    m_taskPanelStack->addWidget(motionTaskPanel);
-    m_taskPanelStack->addWidget(motionPlanningTaskPanel);
-    m_taskPanelStack->addWidget(toolTaskPanel);
-    m_taskPanelStack->addWidget(collisionTaskScrollArea);
-    m_taskPanelStack->addWidget(coatingAnalysisScrollArea);
+    for(QWidget* optionalPanel : {
+            static_cast<QWidget*>(motionTaskPanel),
+            static_cast<QWidget*>(motionPlanningTaskPanel),
+            static_cast<QWidget*>(toolTaskPanel),
+            static_cast<QWidget*>(collisionTaskScrollArea),
+            static_cast<QWidget*>(coatingAnalysisScrollArea) }) {
+        if(optionalPanel != nullptr) {
+            m_taskPanelStack->addWidget(optionalPanel);
+        }
+    }
 
     for(QPushButton* button : resultPanel->findChildren<QPushButton*>()) {
         configureInspectorButton(button);
@@ -2456,7 +2906,10 @@ void MainWindow::createPanels()
     addDockWidget(Qt::RightDockWidgetArea, resultDock);
     m_windowMenu->addAction(m_sceneExplorerDock->toggleViewAction());
     m_windowMenu->addAction(m_taskPanelDock->toggleViewAction());
-    m_windowMenu->addAction(m_robotRunDetailsAction);
+    if(m_workbenchPackageRegistry.hasMode(
+           robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion)) {
+        m_windowMenu->addAction(m_robotRunDetailsAction);
+    }
     applyInitialPanelLayout();
     QTimer::singleShot(0, this, [this]() {
         applyInitialPanelLayout();
@@ -2465,6 +2918,152 @@ void MainWindow::createPanels()
     updateWorkbenchActions();
     updateTaskPanel();
     updateRobotRunDetailsDockVisibility();
+}
+
+void MainWindow::initializeWorkbenchLifecycles()
+{
+    using Kind = robot_qt_viewer::RobotQtViewerWorkbenchKind;
+    using Execution = robot_qt_viewer::RobotQtViewerWorkbenchExecutionPolicy;
+    using Reactivation = robot_qt_viewer::RobotQtViewerWorkbenchReactivationPolicy;
+    using Policy = robot_qt_viewer::RobotQtViewerWorkbenchLifecyclePolicy;
+
+    QString registrationError;
+    auto bind = [this, &registrationError](
+                    Kind kind,
+                    std::unique_ptr<robot_qt_viewer::IRobotQtViewerWorkbenchLifecycle> lifecycle,
+                    const Policy& policy) {
+        if(lifecycle == nullptr ||
+            !m_workbenchPackageRegistry.bindModeLifecycle(kind, *lifecycle, policy)) {
+            registrationError = QStringLiteral("Failed to bind lifecycle for %1.")
+                .arg(robot_qt_viewer::robotQtViewerWorkbenchName(kind));
+            return;
+        }
+        m_workbenchLifecycles.push_back(std::move(lifecycle));
+    };
+    auto bindLanguage = [this, &registrationError](
+                            Kind kind,
+                            std::unique_ptr<robot_qt_viewer::IRobotQtViewerLanguageParticipant>
+                                participant) {
+        if(participant == nullptr ||
+            !m_workbenchPackageRegistry.bindModeLanguageParticipant(kind, *participant)) {
+            registrationError = QStringLiteral("Failed to bind language participant for %1.")
+                .arg(robot_qt_viewer::robotQtViewerWorkbenchName(kind));
+            return;
+        }
+        m_workbenchLanguageParticipants.push_back(std::move(participant));
+    };
+    auto widgetParticipant = [](std::initializer_list<QObject*> roots) {
+        auto participant =
+            std::make_unique<robot_qt_viewer::RobotQtViewerWidgetLanguageParticipant>();
+        for(QObject* root : roots) {
+            if(root != nullptr) {
+                participant->addRoot(*root);
+            }
+        }
+        return participant;
+    };
+
+    if(m_workbenchPackageRegistry.hasMode(Kind::Browse)) {
+        bind(
+            Kind::Browse,
+            std::make_unique<robot_qt_viewer::RobotQtViewerNoOpWorkbenchLifecycle>(),
+            Policy{ Execution::NoOwnedExecution, Reactivation::RestoreUiOnly });
+        bindLanguage(
+            Kind::Browse,
+            widgetParticipant({ m_sceneExplorerWidget, m_sceneExplorerTaskWidget }));
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::Motion)) {
+        bind(
+            Kind::Motion,
+            std::make_unique<robot_qt_viewer::RobotRunWorkbenchLifecycle>(
+                *m_motionControlController,
+                *m_viewportServices),
+            Policy{ Execution::MustQuiesce, Reactivation::ManualResume });
+        bindLanguage(
+            Kind::Motion,
+            widgetParticipant({ m_motionControlWidget, m_robotRunCollisionDetailsWidget }));
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::ToolSetup)) {
+        bind(
+            Kind::ToolSetup,
+            std::make_unique<robot_qt_viewer::ToolSetupWorkbenchLifecycle>(
+                *m_toolSetupController),
+            Policy{ Execution::NoOwnedExecution, Reactivation::RestoreUiOnly });
+        bindLanguage(Kind::ToolSetup, widgetParticipant({ m_toolSetupWidget }));
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::Collision)) {
+        bind(
+            Kind::Collision,
+            std::make_unique<robot_qt_viewer::CollisionConfigWorkbenchLifecycle>(
+                *m_collisionWorkbenchController),
+            Policy{ Execution::NoOwnedExecution, Reactivation::RestoreUiOnly });
+        bindLanguage(Kind::Collision, widgetParticipant({ m_collisionWorkbenchPanel }));
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::TrajectoryPlanning)) {
+        bind(
+            Kind::TrajectoryPlanning,
+            std::make_unique<robot_qt_viewer::MotionPlanningWorkbenchLifecycle>(
+                *m_motionPlanningController),
+            Policy{ Execution::NoOwnedExecution, Reactivation::RestoreUiOnly });
+        bindLanguage(
+            Kind::TrajectoryPlanning,
+            widgetParticipant({ m_motionPlanningWidget }));
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::SprayProcess)) {
+        bind(
+            Kind::SprayProcess,
+            std::make_unique<robot_qt_viewer::RobotQtViewerNoOpWorkbenchLifecycle>(),
+            Policy{ Execution::NoOwnedExecution, Reactivation::PackageDefined });
+        bindLanguage(
+            Kind::SprayProcess,
+            std::make_unique<robot_qt_viewer::RobotQtViewerNoOpLanguageParticipant>());
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::CoatingAnalysis)) {
+        bind(
+            Kind::CoatingAnalysis,
+            std::make_unique<robot_qt_viewer::CoatingAnalysisWorkbenchLifecycle>(
+                *m_coatingAnalysisController),
+            Policy{ Execution::NoOwnedExecution, Reactivation::RestoreUiOnly });
+        bindLanguage(
+            Kind::CoatingAnalysis,
+            widgetParticipant({ m_coatingAnalysisPanel, m_thicknessLegendOverlay }));
+    }
+    if(m_workbenchPackageRegistry.hasMode(Kind::DigitalTwin)) {
+        bind(
+            Kind::DigitalTwin,
+            std::make_unique<robot_qt_viewer::RobotQtViewerNoOpWorkbenchLifecycle>(),
+            Policy{ Execution::NoOwnedExecution, Reactivation::ManualResume });
+        bindLanguage(
+            Kind::DigitalTwin,
+            std::make_unique<robot_qt_viewer::RobotQtViewerNoOpLanguageParticipant>());
+    }
+
+    QString validationError;
+    if(!registrationError.isEmpty() ||
+        !m_workbenchPackageRegistry.validateEnabledModes(&validationError)) {
+        const QString message = !registrationError.isEmpty()
+            ? registrationError
+            : validationError;
+        statusBar()->showMessage(message, 8000);
+        updateWorkbenchActions();
+        return;
+    }
+
+    m_workbenchTransitionCoordinator =
+        std::make_unique<robot_qt_viewer::RobotQtViewerWorkbenchTransitionCoordinator>(
+            m_workbenchPackageRegistry,
+            m_workbenchManager,
+            m_eventHub);
+    m_languageCoordinator =
+        std::make_unique<robot_qt_viewer::RobotQtViewerLanguageCoordinator>(
+            *m_localization,
+            m_workbenchPackageRegistry);
+    m_languageCoordinator->registerShellParticipant(*this);
+    QString languageError;
+    if(!m_languageCoordinator->retranslateCurrentLanguage(&languageError)) {
+        statusBar()->showMessage(languageError, 8000);
+    }
+    updateWorkbenchActions();
 }
 
 void MainWindow::applyInitialPanelLayout()
@@ -2911,7 +3510,10 @@ void MainWindow::connectCollisionWorkbenchPanel()
         });
     connect(m_collisionWorkbenchController, &robot_qt_viewer::CollisionWorkbenchModuleController::saveCollisionOverridesSidecarRequested, this, &MainWindow::saveCollisionOverridesAsSidecar);
     connect(m_collisionWorkbenchController, &robot_qt_viewer::CollisionWorkbenchModuleController::exportCollisionUrdfRequested, this, &MainWindow::exportRobotUrdfWithCollision);
-    connect(m_collisionWorkbenchController, &robot_qt_viewer::CollisionWorkbenchModuleController::viewportReloadRequested, this, &MainWindow::reloadViewportProject);
+    connect(m_collisionWorkbenchController,
+        &robot_qt_viewer::CollisionWorkbenchModuleController::viewportReloadRequested,
+        this,
+        [this]() { reloadViewportProject(); });
     if(m_collisionWorkbenchPanel != nullptr) {
         connect(m_collisionWorkbenchPanel, &CollisionWorkbenchPanel::rightPanelTitleChanged,
             this, [this](const QString& title) {
@@ -2942,13 +3544,6 @@ void MainWindow::publishCollisionChanged(
 bool MainWindow::collisionUiUpdating() const
 {
     return m_collisionWorkbenchController != nullptr && m_collisionWorkbenchController->isUpdating();
-}
-
-void MainWindow::refreshCollisionPairList()
-{
-    if(m_collisionWorkbenchController != nullptr) {
-        m_collisionWorkbenchController->refreshCollisionPairList();
-    }
 }
 
 void MainWindow::refreshCollisionDetectorList()
@@ -3017,7 +3612,7 @@ void MainWindow::refreshCollisionModelSummary()
 
 void MainWindow::saveCollisionOverridesToProject()
 {
-    if(m_projectRequiresSaveAs || m_projectPath.empty()) {
+    if(m_projectSession.requiresSaveAs() || m_projectPath.empty()) {
         saveProjectAs();
         return;
     }
@@ -3178,7 +3773,8 @@ void MainWindow::updateRobotPanel(const smrobotgen2::sdk::IRobotModel& model)
 void MainWindow::saveViewportImage()
 {
     QString selectedFilter;
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = robot_qt_viewer::getSaveFileName(
+        QStringLiteral("shell.viewportImage.save"),
         this,
         "Save viewport image",
         QString(),
@@ -3204,7 +3800,7 @@ void MainWindow::saveViewportImage()
     }
 }
 
-bool MainWindow::reloadViewportProject()
+bool MainWindow::reloadViewportProject(const QString& operationId)
 {
     const QString previousRobotId = m_appController.selectedRobotId();
     const QString previousLinkName = m_appController.selectedLinkName();
@@ -3225,9 +3821,15 @@ bool MainWindow::reloadViewportProject()
     }
 
     const robot_qt_viewer::ViewportReloadWorkflowResult reloadResult =
-        m_appController.reloadViewport(QStringLiteral("reloadViewportProject"));
+        m_appController.reloadViewport(
+            QStringLiteral("reloadViewportProject"),
+            operationId);
     if(!reloadResult.success) {
-        statusBar()->showMessage(reloadResult.errorMessage, 8000);
+        if(operationId.isEmpty()) {
+            statusBar()->showMessage(reloadResult.errorMessage, 8000);
+        } else {
+            refreshOperationStatusPresentation(operationId);
+        }
         return false;
     }
     if(!previousCollisionDetectorId.isEmpty()) {

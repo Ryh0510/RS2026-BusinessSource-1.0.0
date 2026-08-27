@@ -367,8 +367,12 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     mountButtonRow->setContentsMargins(0, 0, 0, 0);
     m_addRobotMountButton = new QPushButton("Add Link Mount", this);
     m_deleteRobotMountButton = new QPushButton("Delete Selected Mount", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_addRobotMountButton);
-    robot_qt_viewer::makeHorizontallyCompressible(m_deleteRobotMountButton);
+    robot_qt_viewer::configureActionButton(
+        m_addRobotMountButton,
+        robot_qt_viewer::UiActionRole::Accent);
+    robot_qt_viewer::configureActionButton(
+        m_deleteRobotMountButton,
+        robot_qt_viewer::UiActionRole::Destructive);
     connect(m_addRobotMountButton, &QPushButton::clicked, this, &ToolSetupWidget::addRobotMountRequested);
     connect(m_deleteRobotMountButton, &QPushButton::clicked, this, &ToolSetupWidget::deleteRobotMountRequested);
     mountButtonRow->addWidget(m_addRobotMountButton);
@@ -403,7 +407,9 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     toolLayout->addWidget(m_toolDetailsLabel);
 
     m_configureToolAttachmentButton = new QPushButton("Edit Attachment", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_configureToolAttachmentButton);
+    robot_qt_viewer::configureActionButton(
+        m_configureToolAttachmentButton,
+        robot_qt_viewer::UiActionRole::Accent);
     connect(m_configureToolAttachmentButton, &QPushButton::clicked, this, &ToolSetupWidget::configureAttachmentRequested);
     toolLayout->addWidget(m_configureToolAttachmentButton);
 
@@ -427,6 +433,7 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     toolLayout->addWidget(m_attachmentAssetCombo);
 
     m_attachmentEnabledCheck = new QCheckBox("Attachment enabled", this);
+    robot_qt_viewer::configureInspectorToggle(m_attachmentEnabledCheck);
     connect(m_attachmentEnabledCheck, &QCheckBox::toggled, this, [this](bool) {
         markTaskDirty();
     });
@@ -449,7 +456,9 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     toolLayout->addWidget(m_attachmentOffsetEditor);
 
     m_applyAttachmentOffsetButton = new QPushButton("Apply Attachment Offset", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_applyAttachmentOffsetButton);
+    robot_qt_viewer::configureActionButton(
+        m_applyAttachmentOffsetButton,
+        robot_qt_viewer::UiActionRole::Primary);
     m_applyAttachmentOffsetButton->setVisible(false);
     connect(m_applyAttachmentOffsetButton, &QPushButton::clicked, this, [this]() {
         if(m_attachmentOffsetEditor == nullptr) {
@@ -505,17 +514,23 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     toolLayout->addWidget(m_toolAssetEditor);
 
     m_importToolAssetButton = new QPushButton("Import Tool Model...", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_importToolAssetButton);
+    robot_qt_viewer::configureActionButton(
+        m_importToolAssetButton,
+        robot_qt_viewer::UiActionRole::Accent);
     connect(m_importToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::importToolAssetRequested);
     toolLayout->addWidget(m_importToolAssetButton);
 
     m_attachToolAssetButton = new QPushButton("Attach Existing Asset...", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_attachToolAssetButton);
+    robot_qt_viewer::configureActionButton(
+        m_attachToolAssetButton,
+        robot_qt_viewer::UiActionRole::Accent);
     connect(m_attachToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::attachToolAssetRequested);
     toolLayout->addWidget(m_attachToolAssetButton);
 
     m_editToolAssetButton = new QPushButton("Edit Asset", this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_editToolAssetButton);
+    robot_qt_viewer::configureActionButton(
+        m_editToolAssetButton,
+        robot_qt_viewer::UiActionRole::Standard);
     connect(m_editToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::editToolAssetRequested);
     toolLayout->addWidget(m_editToolAssetButton);
 
@@ -537,6 +552,7 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
         m_showSensorPreviewCheck
     };
     for(QCheckBox* check : frameChecks) {
+        robot_qt_viewer::configureInspectorToggle(check);
         check->setChecked(true);
         connect(check, &QCheckBox::toggled, this, &ToolSetupWidget::frameVisibilityChanged);
         toolLayout->addWidget(check);
@@ -554,12 +570,7 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     m_bindingSummaryFrame = new QFrame(this);
     m_bindingSummaryFrame->setObjectName(QStringLiteral("ToolSetupBindingSummaryFrame"));
     m_bindingSummaryFrame->setFrameShape(QFrame::StyledPanel);
-    m_bindingSummaryFrame->setStyleSheet(QStringLiteral(
-        "QFrame#ToolSetupBindingSummaryFrame {"
-        " border: 1px solid #344252;"
-        " border-radius: 6px;"
-        " background-color: #0f151c;"
-        "}"));
+    m_bindingSummaryFrame->setProperty("inspectorSection", true);
     auto* bindingSummaryLayout = new QVBoxLayout(m_bindingSummaryFrame);
     bindingSummaryLayout->setContentsMargins(10, 10, 10, 10);
     bindingSummaryLayout->setSpacing(8);
@@ -576,13 +587,7 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     bindingValueFont.setBold(true);
     m_bindingNameValueLabel->setFont(bindingValueFont);
     m_bindingNameValueLabel->setMinimumHeight(qMax(38, QFontMetrics(bindingValueFont).height() + 16));
-    m_bindingNameValueLabel->setStyleSheet(QStringLiteral(
-        "QLabel {"
-        " padding: 8px;"
-        " border: 1px solid #253342;"
-        " border-radius: 4px;"
-        " background-color: #0b1118;"
-        "}"));
+    m_bindingNameValueLabel->setProperty("inspectorInset", true);
     robot_qt_viewer::makeHorizontallyCompressible(m_bindingNameValueLabel);
     bindingSummaryLayout->addWidget(m_bindingNameValueLabel);
 
@@ -673,6 +678,15 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     m_applyTaskButton = new QPushButton("Apply", this);
     m_cancelTaskButton = new QPushButton("Cancel", this);
     m_exitTaskButton = new QPushButton("Exit Frame Editor", this);
+    robot_qt_viewer::configureActionButton(
+        m_applyTaskButton,
+        robot_qt_viewer::UiActionRole::Primary);
+    robot_qt_viewer::configureActionButton(
+        m_cancelTaskButton,
+        robot_qt_viewer::UiActionRole::Standard);
+    robot_qt_viewer::configureActionButton(
+        m_exitTaskButton,
+        robot_qt_viewer::UiActionRole::Standard);
     m_applyTaskButton->setEnabled(false);
     m_cancelTaskButton->setEnabled(true);
     m_exitTaskButton->setVisible(false);

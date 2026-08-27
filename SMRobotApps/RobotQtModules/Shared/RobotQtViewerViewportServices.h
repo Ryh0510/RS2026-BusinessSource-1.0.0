@@ -93,6 +93,10 @@ namespace robot_qt_viewer
         virtual RobotQtViewerViewportLoadResult loadProjectDocument(
             const simulation_project::ProjectDocument& document,
             const std::filesystem::path& basePath) = 0;
+        virtual std::filesystem::path projectBasePath() const
+        {
+            return {};
+        }
         virtual bool refreshCollisionConfiguration(
             const simulation_project::ProjectDocument& document,
             const std::filesystem::path& basePath) = 0;
@@ -115,9 +119,7 @@ namespace robot_qt_viewer
             const QString& robotId,
             const QString& linkName) const = 0;
         virtual CollisionRuntimeRobotSummary robotCollisionSummary(
-            const QString& robotId,
-            const QString& activeDetectorRole = QString(),
-            const QString& activeDetectorSource = QString()) const = 0;
+            const QString& robotId) const = 0;
         virtual std::vector<CollisionRuntimeDetectorInfo> collisionRuntimeDetectors() const = 0;
         virtual bool generateRobotCollisionProxies(
             const QString& robotId,
@@ -189,11 +191,6 @@ namespace robot_qt_viewer
             (void)objectId;
             return false;
         }
-        virtual void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
-        {
-            (void)enabled;
-            (void)objectId;
-        }
         virtual void setTrajectoryControlPointOverlay(
             const QString& trajectoryId,
             const std::vector<simulation_project::TransformDesc>& controlPoints)
@@ -204,6 +201,11 @@ namespace robot_qt_viewer
         virtual void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString())
         {
             (void)trajectoryId;
+        }
+        virtual void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
+        {
+            (void)enabled;
+            (void)objectId;
         }
     };
 }

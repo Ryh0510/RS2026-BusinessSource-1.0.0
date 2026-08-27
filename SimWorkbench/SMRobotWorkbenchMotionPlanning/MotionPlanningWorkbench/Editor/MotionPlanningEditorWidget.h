@@ -61,6 +61,7 @@ public:
         double distanceThreshold = 0.30;
         double trustRegion = 0.03;
         double seedTrackingWeight = 0.25;
+        int segmentIntermediateSamples = 1;
         int maxIterations = 80;
         bool keepEndpoints = true;
     };
@@ -138,6 +139,7 @@ private:
     QDoubleSpinBox* m_cdfDistanceThreshold = nullptr;
     QDoubleSpinBox* m_cdfTrustRegion = nullptr;
     QDoubleSpinBox* m_cdfSeedTrackingWeight = nullptr;
+    QSpinBox* m_cdfSegmentIntermediateSamples = nullptr;
     QSpinBox* m_cdfMaxIterations = nullptr;
     QCheckBox* m_cdfKeepEndpoints = nullptr;
     QPushButton* m_repairCdfTrajectoryButton = nullptr;

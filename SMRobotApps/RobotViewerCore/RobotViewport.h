@@ -40,6 +40,7 @@ public:
     bool loadProjectDocument(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
+    std::filesystem::path projectBasePath() const;
     void setDefaultBackgroundColor(const simulation_project::ColorDesc& color);
     bool refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
@@ -195,9 +196,7 @@ public:
         const RobotCollisionProxyRequest& request,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements) const;
     RobotCollisionRobotSummary robotCollisionSummary(
-        const QString& robotId,
-        const QString& activeDetectorRole = QString(),
-        const QString& activeDetectorSource = QString()) const;
+        const QString& robotId) const;
     std::vector<ProjectScene::MountedAttachmentInfo> mountedAttachments() const;
     std::vector<ProjectScene::ToolAttachmentInfo> toolAttachments() const;
     bool setActiveMountedAttachment(const QString& id);
@@ -216,11 +215,11 @@ public:
         QString* errorMessage = nullptr);
     bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const QString& objectId);
-    void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId = QString());
     void setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints);
     void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
+    void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId = QString());
 
 signals:
     void robotLinksAvailable(
@@ -234,6 +233,7 @@ signals:
         const QString& objectId,
         const QString& objectName);
     void robotStateUpdated();
+    void backgroundDoubleClicked();
     void scenePicked(
         const QString& kind,
         const QString& robotId,
@@ -253,6 +253,7 @@ protected:
     void paintGL() override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -261,6 +262,7 @@ protected:
 private:
     using Clock = std::chrono::steady_clock;
 
+    void releaseScene() noexcept;
     bool initializeSceneWithCurrentContext(bool releaseContext);
     void publishRobotLinks();
 
@@ -281,6 +283,8 @@ private:
     bool m_treePublished = false;
     bool m_hasPendingProjectDocument = false;
     bool m_surfaceScalarProbeEnabled = false;
+    bool m_firstPaintPending = true;
+    bool m_cameraDragFramePending = false;
     QString m_surfaceScalarProbeObjectId;
     Clock::time_point m_lastSurfaceScalarProbeTime;
 };

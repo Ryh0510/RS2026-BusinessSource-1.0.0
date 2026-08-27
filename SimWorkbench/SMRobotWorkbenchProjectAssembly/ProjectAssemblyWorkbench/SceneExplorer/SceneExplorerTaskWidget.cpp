@@ -521,6 +521,7 @@ SceneExplorerTaskWidget::SceneExplorerTaskWidget(QWidget* parent)
     layout->addWidget(m_transformEditor);
 
     m_objectFrameVisibleCheck = new QCheckBox(QStringLiteral("Show Object Frame"), this);
+    robot_qt_viewer::configureInspectorToggle(m_objectFrameVisibleCheck);
     connect(m_objectFrameVisibleCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if(!m_objectFrameVisibilityControlVisible) {
             return;
@@ -533,8 +534,12 @@ SceneExplorerTaskWidget::SceneExplorerTaskWidget(QWidget* parent)
     buttonRow->setContentsMargins(0, 0, 0, 0);
     m_applyTransformButton = new QPushButton(QStringLiteral("Apply Transform"), this);
     m_cancelTransformButton = new QPushButton(QStringLiteral("Cancel Transform"), this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_applyTransformButton);
-    robot_qt_viewer::makeHorizontallyCompressible(m_cancelTransformButton);
+    robot_qt_viewer::configureActionButton(
+        m_applyTransformButton,
+        robot_qt_viewer::UiActionRole::Primary);
+    robot_qt_viewer::configureActionButton(
+        m_cancelTransformButton,
+        robot_qt_viewer::UiActionRole::Standard);
     connect(m_applyTransformButton, &QPushButton::clicked, this, [this]() {
         if(m_transformEditor == nullptr) {
             return;

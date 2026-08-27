@@ -24,6 +24,7 @@ namespace robot_qt_viewer
 
         void activate();
         void deactivate();
+        void releaseProjectSession();
         void handleEvent(const RobotQtViewerEvent& event);
         void handleSurfaceScalarHover(
             const QString& objectId,

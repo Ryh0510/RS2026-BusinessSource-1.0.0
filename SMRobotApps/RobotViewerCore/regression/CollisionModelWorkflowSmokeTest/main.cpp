@@ -1,6 +1,6 @@
 #include <ProjectRuntimeTypes.h>
 #include <ProjectRuntimeBuilder.h>
-#include <ProjectCollisionDetectorRuntime.h>
+#include <ProjectCollisionRuntimeProjection.h>
 #include <RobotCollisionModelInspector.h>
 #include <RobotCollisionOverrideApplier.h>
 #include <RobotCollisionProxyGenerator.h>
@@ -9,6 +9,8 @@
 #include <Collision/CollisionScene.h>
 #include <Collision/RobotCollisionInstance.h>
 #include <Collision/RobotCollisionModel.h>
+#include <Kinematics/StewartPlatformKinematics.h>
+#include <RobotIO/IRobotLoader.h>
 #include <RobotIO/RobotCollisionOverrideIo.h>
 #include <RobotIO/RobotUrdfCollisionExporter.h>
 #include <SimulationProject/CollisionModelSelectionIds.h>
@@ -432,8 +434,6 @@ namespace
                       << " enabled=" << (variant.enabled ? "true" : "false")
                       << " visibleInViewport="
                       << (variant.visibleInViewport ? "true" : "false")
-                      << " activeDetectorRoleMatch="
-                      << (variant.usedByActiveDetector ? "true" : "false")
                       << " defaultDebugVisible="
                       << (roleVisibleByDefaultDebugOptions(variant.role) ? "true" : "false")
                       << "\n";
@@ -1180,7 +1180,7 @@ namespace
         }
 
         const RobotCollisionLinkSummary baseSummary =
-            RobotCollisionModelInspector::summarizeLink(runtime, "base", "SphereCover");
+            RobotCollisionModelInspector::summarizeLink(runtime, "base");
         printVariantBaseline("base with original and generated sphere cover", baseSummary);
 
         const RobotCollisionModelVariantSummary* originalVariant =
@@ -1193,9 +1193,6 @@ namespace
         checks.require(
             sphereCoverVariant != nullptr && sphereCoverVariant->elementCount == sphereCoverElements.size(),
             "variant summary reports sphere cover element count");
-        checks.require(
-            sphereCoverVariant != nullptr && sphereCoverVariant->usedByActiveDetector,
-            "variant summary marks active detector role match");
         checks.require(
             sphereCoverVariant != nullptr &&
                 sphereCoverVariant->variantId.find(runtime.documentId + "|base|collisionProxy|SphereCover|") == 0,
@@ -1259,8 +1256,6 @@ namespace
             RobotCollisionModelInspector::summarizeLink(
                 runtime,
                 "base",
-                "SphereCover",
-                std::string(),
                 sphereCoverVariant != nullptr ? sphereCoverVariant->variantId : std::string());
         printVariantBaseline("base with sphere cover selected for viewport", visibleSphereSummary);
         const RobotCollisionModelVariantSummary* visibleOriginalVariant =
@@ -1300,15 +1295,12 @@ namespace
             "oversized sphere cover quality reports warning");
 
         const RobotCollisionLinkSummary visualSummary =
-            RobotCollisionModelInspector::summarizeLink(runtime, "visual_only", "PlanningProxy");
+            RobotCollisionModelInspector::summarizeLink(runtime, "visual_only");
         printVariantBaseline("visual-only link with visual proxy", visualSummary);
 
         const RobotCollisionModelVariantSummary* visualProxyVariant =
             findVariant(visualSummary, "visualProxy", "PlanningProxy");
         checks.require(visualProxyVariant != nullptr, "variant summary lists visual proxy model");
-        checks.require(
-            visualProxyVariant != nullptr && visualProxyVariant->usedByActiveDetector,
-            "variant summary marks visual proxy active role match");
     }
 
     void verifyCollisionResultOverlayBaseline(CheckContext& checks)
@@ -1443,8 +1435,8 @@ namespace
         std::vector<RuntimeSceneObject> objects = { fixture };
 
         simulation_project::ProjectDocument exactDocument = makeDetectorRebuildDocument("Exact");
-        std::vector<ProjectCollisionDetectorRuntime> exactDetectors =
-            ProjectCollisionDetectorBuilder::build(exactDocument, exactRobots, objects);
+        std::vector<ProjectCollisionDetectorViewRuntime> exactDetectors =
+            buildProjectCollisionDetectorViewRuntimes(exactDocument, exactRobots, objects);
         checks.require(exactDetectors.size() == 1, "detector rebuild baseline builds initial detector");
         checks.require(
             !exactDetectors.empty() &&
@@ -1482,17 +1474,17 @@ namespace
             6200);
         std::vector<RuntimeRobot> sphereRobots = { sphereRobot };
         simulation_project::ProjectDocument sphereDocument = makeDetectorRebuildDocument("SphereCover");
-        std::vector<ProjectCollisionDetectorRuntime> sphereDetectors =
-            ProjectCollisionDetectorBuilder::build(sphereDocument, sphereRobots, objects);
+        std::vector<ProjectCollisionDetectorViewRuntime> sphereDetectors =
+            buildProjectCollisionDetectorViewRuntimes(sphereDocument, sphereRobots, objects);
         checks.require(sphereDetectors.size() == 1, "detector rebuild baseline rebuilds detector");
         checks.require(
             !sphereDetectors.empty() &&
-                sphereDetectors.front().options.geometryRole == collision::CollisionGeometryRole::SphereCover,
-            "rebuilt detector uses SphereCover role");
+                !sphereDetectors.front().options.filterByGeometryRole,
+            "rebuilt project detector selects concrete endpoint models without a global role filter");
         checks.require(
             !sphereDetectors.empty() &&
-                !sphereDetectors.front().options.filterEnvironmentByGeometryRole,
-            "rebuilt detector leaves environment objects on their own collision role");
+                !sphereDetectors.front().options.filterByGeometryRole,
+            "rebuilt detector allows endpoints to use different model roles");
         checks.require(
             !sphereDetectors.empty() && !sphereDetectors.front().options.includePairs.empty(),
             "rebuilt detector has include pairs");
@@ -1640,6 +1632,261 @@ namespace
             RobotCollisionModelInspector::summarizeRobot(simscape);
         checks.require(simscapeSummary.linkCount > 0, "Simscape robot loads links");
         checks.require(simscapeSummary.visualOnlyLinkCount > 0, "Simscape robot exposes visual-only links");
+
+        const std::filesystem::path multiRobotSimscapePath =
+            root / "data" / "Simscape" / "welding" / "welding.xml";
+        const std::vector<robot::RobotModel> multiRobotModels =
+            IRobotLoader::get_robots(RobotType::SimscapeRobot, multiRobotSimscapePath.generic_u8string());
+        checks.require(
+            multiRobotModels.size() > 1,
+            "multi-body Simscape fixture exposes multiple robot models");
+        if(multiRobotModels.size() > 1) {
+            const robot::RobotModel indexedModel =
+                ProjectRuntimeBuilder::loadSingleRobot(multiRobotSimscapePath, "simscape", 1);
+            checks.require(
+                indexedModel.root == multiRobotModels[1].root &&
+                    indexedModel.name == multiRobotModels[1].name,
+                "ProjectRuntimeBuilder loads Simscape sourceModelIndex");
+        }
+
+        const std::filesystem::path stewartSimscapePath =
+            root / "data" / "Simscape" / "stewart" / "3.0.xml";
+        const std::vector<robot::RobotModel> stewartModels =
+            IRobotLoader::get_robots(RobotType::SimscapeRobot, stewartSimscapePath.generic_u8string());
+        checks.require(!stewartModels.empty(), "Stewart Simscape fixture loads");
+        if(!stewartModels.empty()) {
+            bool allFragmentsHaveLinks = true;
+            int lowerPlatformVisualCopies = 0;
+            int fixedSleeveRobots = 0;
+            int stewartParallelModels = 0;
+            bool stewartRootIsLowerPlatform = false;
+            std::array<bool, 6> actuatorUpperLinksFound{};
+            std::array<int, 6> activeHookeRevoluteDofs{};
+            std::array<int, 6> activeActuatorPrismaticDofs{};
+            std::array<std::string, 6> lowerActuatorLinks{};
+            const std::string lowerPlatformMarker =
+                "\xE4\xB8\x8B\xE5\xAE\x9A\xE5\xB9\xB3\xE5\x8F\xB0";
+            const std::string upperActuatorMarker =
+                "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8A\xE6\xAE\xB5";
+            const std::string lowerActuatorMarker =
+                "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8B\xE6\xAE\xB5";
+            const std::string hookeMarker =
+                "\xE8\x99\x8E\xE5\x85\x8B\xE9\x93\xB0";
+            const auto legIndexAfterMarker =
+                [](const std::string& linkName, const std::string& marker) -> int {
+                const std::size_t markerPos = linkName.find(marker);
+                if(markerPos == std::string::npos) {
+                    return -1;
+                }
+                for(std::size_t index = markerPos + marker.size(); index < linkName.size(); ++index) {
+                    const char ch = linkName[index];
+                    if(ch >= '1' && ch <= '6') {
+                        return ch - '1';
+                    }
+                }
+                return -1;
+            };
+            const auto jointTouchesLegMarker =
+                [&](const robot::RobotJoint& joint, const std::string& marker, int legIndex) {
+                return legIndexAfterMarker(joint.parent, marker) == legIndex ||
+                    legIndexAfterMarker(joint.child, marker) == legIndex;
+            };
+            const auto countActiveRevoluteAncestors =
+                [](const robot::RobotModel& model, const std::string& startLink) {
+                std::unordered_map<std::string, const robot::RobotJoint*> parentJointByChild;
+                for(const robot::RobotJoint& joint : model.joints) {
+                    if(!joint.isLoop) {
+                        parentJointByChild.emplace(joint.child, &joint);
+                    }
+                }
+
+                int count = 0;
+                std::unordered_set<std::string> visited;
+                std::string link = startLink;
+                while(!link.empty() && link != model.root && visited.insert(link).second) {
+                    const auto parentIt = parentJointByChild.find(link);
+                    if(parentIt == parentJointByChild.end()) {
+                        break;
+                    }
+                    const robot::RobotJoint* joint = parentIt->second;
+                    if(joint->type == robot::JointType::Revolute && joint->dofIndex >= 0) {
+                        ++count;
+                    }
+                    link = joint->parent;
+                }
+                return count;
+            };
+            for(const robot::RobotModel& stewartModel : stewartModels) {
+                allFragmentsHaveLinks = allFragmentsHaveLinks && !stewartModel.linkNames.empty();
+                const auto lowerPlatformIt = stewartModel.links.find(
+                    "\xE4\xB8\x8B\xE5\xAE\x9A\xE5\xB9\xB3\xE5\x8F\xB0\x2D\x32");
+                if(lowerPlatformIt != stewartModel.links.end() &&
+                    !lowerPlatformIt->second.visuals.empty()) {
+                    ++lowerPlatformVisualCopies;
+                }
+                bool modelHasLowerPlatform = lowerPlatformIt != stewartModel.links.end();
+                std::array<bool, 6> modelUpperLinksFound{};
+                for(const std::string& linkName : stewartModel.linkNames) {
+                    const int lowerLegIndex = legIndexAfterMarker(linkName, lowerActuatorMarker);
+                    if(lowerLegIndex >= 0 && lowerLegIndex < 6) {
+                        lowerActuatorLinks[static_cast<std::size_t>(lowerLegIndex)] = linkName;
+                    }
+
+                    const std::size_t markerPos = linkName.find(upperActuatorMarker);
+                    if(markerPos == std::string::npos) {
+                        continue;
+                    }
+                    const std::size_t digitPos = markerPos + upperActuatorMarker.size();
+                    if(digitPos < linkName.size() && linkName[digitPos] >= '1' && linkName[digitPos] <= '6') {
+                        const std::size_t legIndex = static_cast<std::size_t>(linkName[digitPos] - '1');
+                        actuatorUpperLinksFound[legIndex] = true;
+                        modelUpperLinksFound[legIndex] = true;
+                    }
+                }
+                if(modelHasLowerPlatform &&
+                    std::all_of(
+                        modelUpperLinksFound.begin(),
+                        modelUpperLinksFound.end(),
+                        [](bool found) { return found; })) {
+                    ++stewartParallelModels;
+                    stewartRootIsLowerPlatform =
+                        stewartModel.root.find(lowerPlatformMarker) != std::string::npos;
+                    for(std::size_t legIndex = 0; legIndex < lowerActuatorLinks.size(); ++legIndex) {
+                        if(!lowerActuatorLinks[legIndex].empty()) {
+                            activeHookeRevoluteDofs[legIndex] =
+                                countActiveRevoluteAncestors(stewartModel, lowerActuatorLinks[legIndex]);
+                        }
+                    }
+                    for(const robot::RobotJoint& joint : stewartModel.joints) {
+                        for(int legIndex = 0; legIndex < 6; ++legIndex) {
+                            if(joint.type == robot::JointType::Prismatic &&
+                                joint.dofIndex >= 0 &&
+                                (jointTouchesLegMarker(joint, lowerActuatorMarker, legIndex) ||
+                                    jointTouchesLegMarker(joint, upperActuatorMarker, legIndex))) {
+                                ++activeActuatorPrismaticDofs[static_cast<std::size_t>(legIndex)];
+                            }
+                        }
+                    }
+                }
+                if(stewartModel.links.find(
+                       "\xE5\x9B\xBA\xE5\xAE\x9A\xE5\xA5\x97\xE7\xAD\x92\x2D\x31") !=
+                        stewartModel.links.end() &&
+                    !std::all_of(
+                        modelUpperLinksFound.begin(),
+                        modelUpperLinksFound.end(),
+                        [](bool found) { return found; })) {
+                    ++fixedSleeveRobots;
+                }
+            }
+            checks.require(
+                stewartModels.size() == 2,
+                "Stewart Simscape fixture exposes fixed sleeve robot and Stewart robot");
+            checks.require(allFragmentsHaveLinks, "Stewart Simscape display fragments contain links");
+            checks.require(
+                fixedSleeveRobots == 1,
+                "Stewart Simscape fixture exposes fixed sleeve grounded robot");
+            checks.require(
+                stewartParallelModels == 1,
+                "Stewart Simscape fixture keeps the parallel mechanism as one robot");
+            checks.require(
+                lowerPlatformVisualCopies == 1,
+                "Stewart Simscape split keeps a single visual copy of the fixed lower platform");
+            checks.require(
+                std::all_of(
+                    actuatorUpperLinksFound.begin(),
+                    actuatorUpperLinksFound.end(),
+                    [](bool found) { return found; }),
+                "Stewart Simscape split exposes all six actuator upper links");
+            checks.require(
+                stewartRootIsLowerPlatform,
+                "Stewart Simscape parallel model uses the fixed lower platform as FK root");
+            checks.require(
+                std::all_of(
+                    activeHookeRevoluteDofs.begin(),
+                    activeHookeRevoluteDofs.end(),
+                    [](int count) { return count >= 2; }),
+                "Stewart Simscape parallel model exposes two active base revolute DOFs on each actuator branch");
+            checks.require(
+                std::all_of(
+                    activeActuatorPrismaticDofs.begin(),
+                    activeActuatorPrismaticDofs.end(),
+                    [](int count) { return count >= 1; }),
+                "Stewart Simscape parallel model exposes one active actuator prismatic DOF per leg");
+        }
+
+        RuntimeRobot stewartRuntime;
+        stewartRuntime.parallelControlEnabled = true;
+        stewartRuntime.parallelHomeBaseTransform = collision::Transform3::Identity();
+        stewartRuntime.baseTransform = collision::Transform3::Identity();
+        stewartRuntime.parallelGeometry = kine::StewartPlatformKinematics::makeDefaultGeometry();
+        checks.require(
+            kine::StewartPlatformKinematics::computeActuatorLengths(
+                stewartRuntime.parallelGeometry,
+                stewartRuntime.parallelPose,
+                stewartRuntime.parallelActuatorLengths),
+            "Stewart task-space runtime initializes actuator lengths");
+        const double initialLeg1 = stewartRuntime.parallelActuatorLengths[0];
+        checks.require(
+            ProjectRuntimeBuilder::setJointValue(stewartRuntime, "parallel.pose.z", 0.05),
+            "Stewart task-space z variable is accepted by runtime builder");
+        double zValue = 0.0;
+        checks.require(
+            ProjectRuntimeBuilder::getJointValue(stewartRuntime, "parallel.pose.z", zValue) &&
+                std::abs(zValue - 0.05) < 1.0e-9,
+            "Stewart task-space z variable round trips through runtime builder");
+        double leg1Value = 0.0;
+        checks.require(
+            ProjectRuntimeBuilder::getJointValue(stewartRuntime, "parallel.actuator.1", leg1Value) &&
+                std::isfinite(leg1Value) &&
+                std::abs(leg1Value - initialLeg1) > 1.0e-6,
+            "Stewart task-space pose updates actuator-space length");
+        checks.require(
+            stewartRuntime.baseTransform.matrix().isApprox(
+                collision::Transform3::Identity().matrix(),
+                1.0e-9),
+            "Stewart task-space pose keeps the static base transform");
+        const collision::Transform3 movedStaticBase =
+            Eigen::Translation3d(0.10, -0.20, 0.30) *
+            Eigen::AngleAxisd(0.25, Eigen::Vector3d::UnitZ());
+        stewartRuntime.parallelHomeBaseTransform = movedStaticBase;
+        ProjectRuntimeBuilder::setJointValue(stewartRuntime, "parallel.pose.z", zValue);
+        checks.require(
+            stewartRuntime.baseTransform.matrix().isApprox(
+                movedStaticBase.matrix(),
+                1.0e-9),
+            "Stewart MoveBase updates the static base without consuming task-space pose");
+        checks.require(
+            ProjectRuntimeBuilder::setJointValue(stewartRuntime, "parallel.actuator.1", leg1Value),
+            "Stewart actuator-space variable is accepted by runtime builder");
+
+        kine::StewartPlatformPose targetPose;
+        targetPose.x = 0.02;
+        targetPose.y = -0.01;
+        targetPose.z = 0.07;
+        targetPose.roll = 0.04;
+        targetPose.pitch = -0.03;
+        targetPose.yaw = 0.02;
+        std::array<double, 6> targetLengths{};
+        kine::StewartPlatformPose solvedPose;
+        const bool stewartIkOk =
+            kine::StewartPlatformKinematics::computeActuatorLengths(
+                stewartRuntime.parallelGeometry,
+                targetPose,
+                targetLengths) &&
+            kine::StewartPlatformKinematics::solvePoseFromLengths(
+                stewartRuntime.parallelGeometry,
+                targetLengths,
+                stewartRuntime.parallelPose,
+                solvedPose);
+        checks.require(
+            stewartIkOk &&
+                std::abs(solvedPose.x - targetPose.x) < 1.0e-4 &&
+                std::abs(solvedPose.y - targetPose.y) < 1.0e-4 &&
+                std::abs(solvedPose.z - targetPose.z) < 1.0e-4 &&
+                std::abs(solvedPose.roll - targetPose.roll) < 1.0e-4 &&
+                std::abs(solvedPose.pitch - targetPose.pitch) < 1.0e-4 &&
+                std::abs(solvedPose.yaw - targetPose.yaw) < 1.0e-4,
+            "Stewart actuator-space lengths solve back to task-space pose");
 
         RobotCollisionProxyRequest visualBoxRequest;
         visualBoxRequest.proxyType = "box";
@@ -1861,6 +2108,53 @@ namespace
         checks.require(
             otherLinkMeshes == 0,
             "Convert from Visual detector does not eagerly build unrelated robot links");
+    }
+
+    void verifyStewartSavedProjectCollisionRuntime(CheckContext& checks)
+    {
+        const std::filesystem::path root = std::filesystem::path(PROJECT_SOURCE_PATH);
+        const std::filesystem::path projectPath =
+            root / "config" / "projects" / "stewart.sys.json";
+        if(!std::filesystem::exists(projectPath)) {
+            checks.require(false, "saved Stewart project fixture exists");
+            return;
+        }
+
+        simulation_runtime::ProjectSimulationRuntime simulation;
+        const simulation_runtime::Result loadResult =
+            simulation.loadProjectFile(projectPath);
+        checks.require(loadResult.success, "saved Stewart project loads for collision runtime");
+        if(!loadResult.success) {
+            return;
+        }
+
+        simulation_runtime::ProjectCollisionRuntime collisionRuntime;
+        const simulation_runtime::Result buildResult = collisionRuntime.build(simulation);
+        checks.require(buildResult.success, "saved Stewart collision runtime builds");
+        if(!buildResult.success) {
+            return;
+        }
+
+        const simulation_runtime::ProjectCollisionDetectorRuntime* detector =
+            collisionRuntime.activeDetector();
+        checks.require(detector != nullptr, "saved Stewart collision runtime has active detector");
+        checks.require(
+            detector != nullptr && !detector->options.includePairs.empty(),
+            "saved Stewart collision detector resolves link-link include pairs");
+
+        const collision::CollisionDebugDrawData debugData = collisionRuntime.buildDebugDraw(true);
+        std::size_t visualFallbackMeshes = 0;
+        for(const collision::CollisionDebugDrawDesc& desc : debugData.geometry) {
+            if(desc.robotInstance >= 0 &&
+                desc.shape.source == simulation_project::kConvertFromVisualCollisionSource &&
+                desc.shape.type == collision::CollisionShapeType::TriangleMesh) {
+                ++visualFallbackMeshes;
+            }
+        }
+
+        checks.require(
+            visualFallbackMeshes > 0,
+            "saved Stewart visual-only detector links get runtime visual collision meshes");
     }
 
     void verifyDefault420ExactDetectorRuntime(CheckContext& checks)
@@ -2294,16 +2588,159 @@ namespace
                 &serviceError),
             "420 tool attachment can select Defined in Project again");
     }
+
+    void verifyPerTargetDetectorModelBindings(CheckContext& checks)
+    {
+        auto model = std::make_shared<collision::RobotCollisionModel>();
+
+        collision::CollisionShapeDesc coarseShape =
+            makeCollisionBoxShape(1.0, 1.0, 1.0, collision::CollisionGeometryRole::Simplified);
+        coarseShape.modelId = "coarse_model";
+        coarseShape.currentModel = true;
+        model->addLinkShape("link_a", "shape_a", coarseShape, makeCollisionBoxGeometry(1.0, 1.0, 1.0));
+
+        collision::CollisionShapeDesc fineShape =
+            makeCollisionBoxShape(0.5, 0.5, 0.5, collision::CollisionGeometryRole::Exact);
+        fineShape.modelId = "fine_model";
+        fineShape.currentModel = false;
+        model->addLinkShape("link_a", "shape_a", fineShape, makeCollisionBoxGeometry(0.5, 0.5, 0.5));
+
+        collision::CollisionShapeDesc targetShape =
+            makeCollisionBoxShape(0.4, 0.4, 0.4, collision::CollisionGeometryRole::SafetyMargin);
+        targetShape.modelId = "target_model";
+        targetShape.currentModel = true;
+        model->addLinkShape("link_b", "shape_b", targetShape, makeCollisionBoxGeometry(0.4, 0.4, 0.4));
+
+        simulation_runtime::RuntimeCollisionRobot runtimeRobot;
+        runtimeRobot.documentId = "binding_robot";
+        runtimeRobot.collisionInstance = std::make_shared<collision::RobotCollisionInstance>(901, model);
+
+        simulation_project::ProjectDocument document;
+        document.version = 3;
+        simulation_project::RobotDesc robot;
+        robot.id = "binding_robot";
+        document.robots.push_back(robot);
+
+        auto makeDetector = [](const std::string& id, const std::string& mode, const std::string& modelId) {
+            simulation_project::CollisionDetectorDesc detector;
+            detector.id = id;
+            detector.name = id;
+            detector.type = "SelectedObjects";
+            simulation_project::CollisionPairGeneratorDesc generator;
+            generator.type = "LinkLink";
+            generator.robotA = "binding_robot";
+            generator.linkA = "link_a";
+            generator.robotB = "binding_robot";
+            generator.linkB = "link_b";
+            detector.pairGenerators.push_back(generator);
+
+            simulation_project::CollisionDetectorModelBindingDesc binding;
+            binding.context = "PairGeneratorA";
+            binding.robotId = "binding_robot";
+            binding.linkName = "link_a";
+            binding.mode = mode;
+            binding.modelId = modelId;
+            detector.modelBindings.push_back(binding);
+            return detector;
+        };
+
+        document.collision.detectors.push_back(makeDetector("coarse_detector", "Current", ""));
+        document.collision.detectors.push_back(makeDetector("fine_detector", "ExplicitModel", "fine_model"));
+        document.collision.detectors.push_back(makeDetector("missing_detector", "ExplicitModel", "missing_model"));
+
+        document.collision.detectors[1].enabled = false;
+        const simulation_runtime::CollisionDetectorBuildPlan disabledPlan =
+            simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(document);
+        const std::unordered_set<std::string>* disabledExplicitModels =
+            disabledPlan.explicitRobotLinkModels("binding_robot", "link_a");
+        checks.require(
+            disabledExplicitModels == nullptr || disabledExplicitModels->count("fine_model") == 0,
+            "disabled detector does not retain explicit modelId demand");
+        document.collision.detectors[1].enabled = true;
+
+        const simulation_runtime::CollisionDetectorBuildPlan plan =
+            simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(document);
+        const std::unordered_set<std::string>* explicitModels =
+            plan.explicitRobotLinkModels("binding_robot", "link_a");
+        checks.require(
+            explicitModels != nullptr && explicitModels->count("fine_model") == 1,
+            "build plan collects explicit modelId demand per robot link");
+
+        const std::vector<simulation_runtime::ProjectCollisionDetectorRuntime> detectors =
+            simulation_runtime::ProjectCollisionDetectorBuilder::build(document, { runtimeRobot }, {});
+        checks.require(detectors.size() == 3, "per-target binding builds independent detectors");
+        if(detectors.size() != 3) {
+            return;
+        }
+
+        collision::ObjectID coarseId = 0;
+        collision::ObjectID fineId = 0;
+        collision::ObjectID targetId = 0;
+        for(const auto& item : runtimeRobot.collisionInstance->objects()) {
+            const collision::LinkInfo* info = runtimeRobot.collisionInstance->getLinkInfo(item.second->id());
+            if(info != nullptr && info->modelId == "fine_model") {
+                fineId = item.second->id();
+            }
+            if(info != nullptr && info->modelId == "coarse_model") {
+                coarseId = item.second->id();
+            }
+            if(info != nullptr && info->modelId == "target_model") {
+                targetId = item.second->id();
+            }
+        }
+        checks.require(coarseId != fineId && fineId != 0 && targetId != 0,
+            "same entity exposes distinct runtime ObjectIDs for multiple model variants");
+        checks.require(
+            runtimeRobot.collisionInstance->getObjectID("link_a", "shape_a") == coarseId,
+            "legacy element lookup deterministically prefers the current model variant");
+        checks.require(
+            detectors[0].valid && detectors[0].options.includePairs.size() == 1 &&
+                (detectors[0].options.includePairs.front().first == coarseId ||
+                 detectors[0].options.includePairs.front().second == coarseId),
+            "Current detector expands the current endpoint model");
+        checks.require(
+            detectors[1].valid && detectors[1].options.includePairs.size() == 1 &&
+                (detectors[1].options.includePairs.front().first == fineId ||
+                 detectors[1].options.includePairs.front().second == fineId),
+            "Explicit detector expands its bound endpoint modelId");
+        checks.require(
+            !detectors[0].options.filterByGeometryRole && !detectors[1].options.filterByGeometryRole,
+            "project detectors do not apply detector-wide role/source filtering");
+        checks.require(
+            !detectors[2].valid && !detectors[2].errorMessage.empty() && !detectors[2].hasResult,
+            "missing explicit modelId makes detector invalid instead of reporting no collision");
+
+        simulation_project::ProjectDocument legacyDocument = document;
+        legacyDocument.collision.detectors.clear();
+        simulation_project::CollisionDetectorDesc legacyDetector =
+            makeDetector("legacy_role_detector", "Current", "");
+        legacyDetector.modelBindings.clear();
+        legacyDetector.geometryRole = "SphereCover";
+        legacyDocument.collision.detectors.push_back(std::move(legacyDetector));
+        const std::vector<simulation_runtime::ProjectCollisionDetectorRuntime> legacyDetectors =
+            simulation_runtime::ProjectCollisionDetectorBuilder::build(
+                legacyDocument,
+                { runtimeRobot },
+                {});
+        checks.require(
+            legacyDetectors.size() == 1 && !legacyDetectors.front().valid &&
+                legacyDetectors.front().errorMessage.find("binding review") != std::string::npos,
+            "legacy detector-wide role requires explicit per-target binding review");
+    }
 }
 
 int main()
 {
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
+
     CheckContext checks;
     RuntimeRobot runtime = makeRuntimeRobot();
 
     verifyRealInputWorkflows(checks);
     verifyDefaultUrdfMeshCollisionUsesTriangleMesh(checks);
     verifyConvertFromVisualLazyRuntime(checks);
+    verifyStewartSavedProjectCollisionRuntime(checks);
     verifyDefault420ExactDetectorRuntime(checks);
     verify420Link6ConvertFromVisualOverridesProjectBox(checks);
     verify420ToolAttachmentCollisionModelSelection(checks);
@@ -2313,6 +2750,7 @@ int main()
     verifyLinkVariantSummary(checks);
     verifyCollisionResultOverlayBaseline(checks);
     verifyDetectorRebuildBaseline(checks);
+    verifyPerTargetDetectorModelBindings(checks);
 
     const RobotCollisionRobotSummary initialSummary =
         RobotCollisionModelInspector::summarizeRobot(runtime);

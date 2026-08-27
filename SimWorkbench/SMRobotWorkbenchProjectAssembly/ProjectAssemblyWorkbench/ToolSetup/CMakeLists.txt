@@ -8,6 +8,8 @@ set(SOURCES
     ToolSetupAppServices.h
     ToolSetupModuleController.cpp
     ToolSetupModuleController.h
+    ToolSetupWorkbenchLifecycle.cpp
+    ToolSetupWorkbenchLifecycle.h
     ToolSetupViewModelBuilder.cpp
     ToolSetupViewModelBuilder.h
     ToolSetupWidget.cpp

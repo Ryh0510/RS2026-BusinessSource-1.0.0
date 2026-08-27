@@ -1,25 +1,28 @@
 #include "CollisionLinkModelsWidget.h"
 
 #include "RobotQtWidgetUtils.h"
+#include "RobotQtViewerLocalization.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
+#include <QEvent>
 #include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QListWidget>
-#include <QListWidgetItem>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
 namespace
 {
-    using robot_qt_viewer::configureInspectorList;
     using robot_qt_viewer::makeHorizontallyCompressible;
     using robot_qt_viewer::makePanelTitle;
 
@@ -38,17 +41,39 @@ namespace
         return label;
     }
 
-    QFrame* makeSection(QWidget* parent, const QString& title, QVBoxLayout** contentLayout)
+    QFrame* makeSection(
+        QWidget* parent,
+        const QString& title,
+        QVBoxLayout** contentLayout,
+        QLabel** titleLabel)
     {
         auto* frame = new QFrame(parent);
-        frame->setFrameShape(QFrame::StyledPanel);
-        frame->setFrameShadow(QFrame::Plain);
+        frame->setProperty("inspectorSection", true);
         auto* layout = new QVBoxLayout(frame);
-        layout->setContentsMargins(8, 5, 8, 7);
-        layout->setSpacing(5);
-        layout->addWidget(makePanelTitle(title, frame));
+        layout->setContentsMargins(10, 9, 10, 10);
+        layout->setSpacing(7);
+        auto* sectionTitle = makePanelTitle(title, frame);
+        sectionTitle->setWordWrap(true);
+        layout->addWidget(sectionTitle);
         *contentLayout = layout;
+        if(titleLabel != nullptr) {
+            *titleLabel = sectionTitle;
+        }
         return frame;
+    }
+
+    QString localizedText(const char* key, const char* englishFallback)
+    {
+        if(qApp != nullptr) {
+            const auto* localization =
+                robot_qt_viewer::RobotQtViewerLocalizationService::installedOnApplication(*qApp);
+            if(localization != nullptr) {
+                return localization->text(
+                    QString::fromLatin1(key),
+                    QString::fromLatin1(englishFallback));
+            }
+        }
+        return QString::fromLatin1(englishFallback);
     }
 
     QString plainTextToHtml(const QString& text)
@@ -73,31 +98,50 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(6);
+    layout->setSpacing(10);
 
     QVBoxLayout* targetSectionLayout = nullptr;
-    QFrame* targetSection = makeSection(this, "Current Tree Node", &targetSectionLayout);
+    QFrame* targetSection = makeSection(
+        this, "Current Tree Node", &targetSectionLayout, &m_targetTitleLabel);
     m_targetLabel = makeValueLabel(targetSection);
+    m_targetLabel->setProperty("inspectorValue", true);
     targetSectionLayout->addWidget(m_targetLabel);
-    targetSection->setMaximumHeight(86);
     layout->addWidget(targetSection);
 
     QVBoxLayout* variantsSectionLayout = nullptr;
-    QFrame* variantsSection = makeSection(this, "Variants", &variantsSectionLayout);
-    m_variantList = new QListWidget(this);
-    configureInspectorList(m_variantList);
-    m_variantList->setAlternatingRowColors(true);
-    m_variantList->setMinimumHeight(112);
-    m_variantList->setMaximumHeight(190);
-    connect(m_variantList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem*, QListWidgetItem*) {
+    QFrame* variantsSection = makeSection(
+        this, "Variants", &variantsSectionLayout, &m_variantsTitleLabel);
+    m_variantTree = new QTreeWidget(variantsSection);
+    makeHorizontallyCompressible(m_variantTree);
+    m_variantTree->setColumnCount(3);
+    m_variantTree->setRootIsDecorated(false);
+    m_variantTree->setItemsExpandable(false);
+    m_variantTree->setIndentation(0);
+    m_variantTree->setUniformRowHeights(true);
+    m_variantTree->setAlternatingRowColors(true);
+    m_variantTree->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_variantTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_variantTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_variantTree->setTextElideMode(Qt::ElideRight);
+    m_variantTree->header()->setStretchLastSection(false);
+    m_variantTree->header()->setSectionResizeMode(0, QHeaderView::Fixed);
+    m_variantTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_variantTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
+    m_variantTree->header()->resizeSection(0, 84);
+    m_variantTree->header()->resizeSection(2, 110);
+    m_variantTree->setMinimumHeight(142);
+    m_variantTree->setMaximumHeight(220);
+    connect(m_variantTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem*, QTreeWidgetItem*) {
         updateActionButtonsEnabled();
         updateSelectedVariantSummary();
         emit variantSelectionChanged();
     });
-    variantsSectionLayout->addWidget(m_variantList, 1);
+    variantsSectionLayout->addWidget(m_variantTree, 1);
 
     m_setCurrentVariantButton = new QPushButton("Set Current", this);
-    makeHorizontallyCompressible(m_setCurrentVariantButton);
+    robot_qt_viewer::configureActionButton(
+        m_setCurrentVariantButton,
+        robot_qt_viewer::UiActionRole::Accent);
     m_setCurrentVariantButton->setToolTip("Sets the selected collision model variant as the current project model.");
     m_setCurrentVariantButton->setEnabled(false);
     connect(m_setCurrentVariantButton, &QPushButton::clicked,
@@ -106,14 +150,21 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
 
     m_statusLabel = makeValueLabel(variantsSection);
     m_statusLabel->setTextFormat(Qt::RichText);
+    m_statusLabel->setProperty("inspectorStatus", true);
     variantsSectionLayout->addWidget(m_statusLabel);
     layout->addWidget(variantsSection);
 
     QVBoxLayout* generateSectionLayout = nullptr;
     QFrame* generateSection =
-        makeSection(this, "Generate Simplified Collision Model", &generateSectionLayout);
-    m_generateCoacdButton = new QPushButton("Generate Simplified Model with COACD", this);
-    makeHorizontallyCompressible(m_generateCoacdButton);
+        makeSection(
+            this,
+            "Generate Simplified Collision Model",
+            &generateSectionLayout,
+            &m_generateTitleLabel);
+    m_generateCoacdButton = new QPushButton("Generate with COACD", this);
+    robot_qt_viewer::configureActionButton(
+        m_generateCoacdButton,
+        robot_qt_viewer::UiActionRole::Accent);
     m_generateCoacdButton->setToolTip(
         "Generates a simplified collision model variant from the selected model.");
     m_generateCoacdButton->setEnabled(false);
@@ -122,10 +173,14 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
     generateSectionLayout->addWidget(m_generateCoacdButton);
     layout->addWidget(generateSection);
 
-    m_complexityTitleLabel = makePanelTitle("Collision Model Complexity Analysis", this);
-    layout->addWidget(m_complexityTitleLabel);
+    QVBoxLayout* complexitySectionLayout = nullptr;
+    QFrame* complexitySection = makeSection(
+        this,
+        "Collision Model Complexity Analysis",
+        &complexitySectionLayout,
+        &m_complexityTitleLabel);
 
-    m_complexityTable = new QTableWidget(0, 2, this);
+    m_complexityTable = new QTableWidget(0, 2, complexitySection);
     m_complexityTable->setHorizontalHeaderLabels(QStringList() << "Metric" << "Value");
     m_complexityTable->verticalHeader()->hide();
     m_complexityTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -135,8 +190,8 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
     m_complexityTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_complexityTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_complexityTable->setShowGrid(true);
-    m_complexityTable->setMinimumHeight(218);
-    m_complexityTable->setMaximumHeight(218);
+    m_complexityTable->setMinimumHeight(184);
+    m_complexityTable->setMaximumHeight(184);
     m_complexityTable->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
     m_complexityTable->verticalHeader()->setDefaultSectionSize(28);
     m_complexityTable->verticalHeader()->setMinimumSectionSize(24);
@@ -145,13 +200,17 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
     m_complexityTable->horizontalHeader()->setStretchLastSection(true);
     m_complexityTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_complexityTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
-    layout->addWidget(m_complexityTable);
+    complexitySectionLayout->addWidget(m_complexityTable);
+    layout->addWidget(complexitySection);
 
     auto* exitLayout = new QHBoxLayout();
     exitLayout->setContentsMargins(0, 0, 0, 0);
     exitLayout->setSpacing(8);
     m_applyButton = new QPushButton("Apply", this);
-    makeHorizontallyCompressible(m_applyButton);
+    robot_qt_viewer::configureActionButton(
+        m_applyButton,
+        robot_qt_viewer::UiActionRole::Primary);
+    m_applyButton->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
     m_applyButton->setToolTip("Leaves collision model configuration and returns to detector configuration.");
     m_applyButton->setEnabled(false);
     connect(m_applyButton, &QPushButton::clicked,
@@ -159,7 +218,10 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
     exitLayout->addWidget(m_applyButton);
 
     m_cancelButton = new QPushButton("Cancel", this);
-    makeHorizontallyCompressible(m_cancelButton);
+    robot_qt_viewer::configureActionButton(
+        m_cancelButton,
+        robot_qt_viewer::UiActionRole::Standard);
+    m_cancelButton->setIcon(style()->standardIcon(QStyle::SP_DialogCancelButton));
     m_cancelButton->setToolTip("Cancels the current preview and returns to detector configuration.");
     m_cancelButton->setEnabled(false);
     connect(m_cancelButton, &QPushButton::clicked,
@@ -167,36 +229,44 @@ CollisionLinkModelsWidget::CollisionLinkModelsWidget(QWidget* parent)
     exitLayout->addWidget(m_cancelButton);
     layout->addLayout(exitLayout);
     layout->addStretch(1);
+    retranslateUi();
 }
 
 void CollisionLinkModelsWidget::setViewModel(const CollisionLinkModelsViewModel& viewModel)
 {
     setSummary(viewModel.summary);
 
-    if(m_variantList == nullptr) {
+    if(m_variantTree == nullptr) {
         return;
     }
 
-    QSignalBlocker variantBlocker(m_variantList);
-    m_variantList->clear();
+    QSignalBlocker variantBlocker(m_variantTree);
+    m_variantTree->clear();
 
-    QListWidgetItem* selectedVariant = nullptr;
-    QListWidgetItem* currentVariant = nullptr;
+    QTreeWidgetItem* selectedVariant = nullptr;
+    QTreeWidgetItem* currentVariant = nullptr;
     for(const CollisionLinkModelVariantItemView& variant : viewModel.variants) {
-        const QString marker = variant.current ? "[x]" : "[ ]";
-        const QString text = QString("%1 %2    %3    %4")
-            .arg(marker)
-            .arg(variant.label)
-            .arg(variant.typeLabel.isEmpty() ? QString("-") : variant.typeLabel)
-            .arg(variant.roleLabel.isEmpty() ? QString("-") : variant.roleLabel);
-
-        auto* item = new QListWidgetItem(text, m_variantList);
-        item->setToolTip(variant.tooltip.isEmpty() ? variant.detail : variant.tooltip);
-        item->setData(kVariantRoleRole, variant.role);
-        item->setData(kVariantSourceRole, variant.source);
-        item->setData(kVariantIdRole, variant.variantId);
-        item->setData(kVariantCurrentRole, variant.current);
-        item->setData(kVariantComplexityRowsRole, metricRowsToStringList(variant.complexityRows));
+        auto* item = new QTreeWidgetItem(m_variantTree);
+        item->setText(0, variant.current ? "[x]" : "[ ]");
+        item->setText(1, variant.label);
+        QString geometryAndRole = variant.typeLabel;
+        if(!variant.roleLabel.isEmpty()) {
+            if(!geometryAndRole.isEmpty()) {
+                geometryAndRole += QStringLiteral(" / ");
+            }
+            geometryAndRole += variant.roleLabel;
+        }
+        item->setText(2, geometryAndRole.isEmpty() ? QString("-") : geometryAndRole);
+        item->setTextAlignment(0, Qt::AlignCenter);
+        const QString tooltip = variant.tooltip.isEmpty() ? variant.detail : variant.tooltip;
+        for(int column = 0; column < m_variantTree->columnCount(); ++column) {
+            item->setToolTip(column, tooltip);
+        }
+        item->setData(0, kVariantRoleRole, variant.role);
+        item->setData(0, kVariantSourceRole, variant.source);
+        item->setData(0, kVariantIdRole, variant.variantId);
+        item->setData(0, kVariantCurrentRole, variant.current);
+        item->setData(0, kVariantComplexityRowsRole, metricRowsToStringList(variant.complexityRows));
         if(!variant.enabled) {
             item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
         }
@@ -211,11 +281,11 @@ void CollisionLinkModelsWidget::setViewModel(const CollisionLinkModelsViewModel&
     if(selectedVariant == nullptr) {
         selectedVariant = currentVariant;
     }
-    if(selectedVariant == nullptr && m_variantList->count() > 0) {
-        selectedVariant = m_variantList->item(0);
+    if(selectedVariant == nullptr && m_variantTree->topLevelItemCount() > 0) {
+        selectedVariant = m_variantTree->topLevelItem(0);
     }
     if(selectedVariant != nullptr) {
-        m_variantList->setCurrentItem(selectedVariant);
+        m_variantTree->setCurrentItem(selectedVariant);
     }
     updateActionButtonsEnabled();
     updateSelectedVariantSummary();
@@ -225,7 +295,9 @@ void CollisionLinkModelsWidget::setSummary(const CollisionLinkModelsSummaryView&
 {
     if(m_targetLabel != nullptr) {
         m_targetLabel->setText(summary.target.displayName.isEmpty()
-            ? QString("No tree node selected")
+            ? localizedText(
+                "collisionConfig.model.target.none",
+                "No tree node selected")
             : summary.target.displayName);
     }
     if(m_statusLabel != nullptr) {
@@ -236,32 +308,32 @@ void CollisionLinkModelsWidget::setSummary(const CollisionLinkModelsSummaryView&
 
 QString CollisionLinkModelsWidget::currentVariantId() const
 {
-    const QListWidgetItem* item = m_variantList != nullptr ? m_variantList->currentItem() : nullptr;
-    return item != nullptr ? item->data(kVariantIdRole).toString() : QString();
+    const QTreeWidgetItem* item = m_variantTree != nullptr ? m_variantTree->currentItem() : nullptr;
+    return item != nullptr ? item->data(0, kVariantIdRole).toString() : QString();
 }
 
 QString CollisionLinkModelsWidget::currentVariantRole() const
 {
-    const QListWidgetItem* item = m_variantList != nullptr ? m_variantList->currentItem() : nullptr;
-    return item != nullptr ? item->data(kVariantRoleRole).toString() : QString();
+    const QTreeWidgetItem* item = m_variantTree != nullptr ? m_variantTree->currentItem() : nullptr;
+    return item != nullptr ? item->data(0, kVariantRoleRole).toString() : QString();
 }
 
 QString CollisionLinkModelsWidget::currentVariantSource() const
 {
-    const QListWidgetItem* item = m_variantList != nullptr ? m_variantList->currentItem() : nullptr;
-    return item != nullptr ? item->data(kVariantSourceRole).toString() : QString();
+    const QTreeWidgetItem* item = m_variantTree != nullptr ? m_variantTree->currentItem() : nullptr;
+    return item != nullptr ? item->data(0, kVariantSourceRole).toString() : QString();
 }
 
 QString CollisionLinkModelsWidget::appliedVariantId() const
 {
-    if(m_variantList == nullptr) {
+    if(m_variantTree == nullptr) {
         return QString();
     }
 
-    for(int row = 0; row < m_variantList->count(); ++row) {
-        const QListWidgetItem* item = m_variantList->item(row);
-        if(item != nullptr && item->data(kVariantCurrentRole).toBool()) {
-            return item->data(kVariantIdRole).toString();
+    for(int row = 0; row < m_variantTree->topLevelItemCount(); ++row) {
+        const QTreeWidgetItem* item = m_variantTree->topLevelItem(row);
+        if(item != nullptr && item->data(0, kVariantCurrentRole).toBool()) {
+            return item->data(0, kVariantIdRole).toString();
         }
     }
     return QString();
@@ -269,14 +341,14 @@ QString CollisionLinkModelsWidget::appliedVariantId() const
 
 QString CollisionLinkModelsWidget::appliedVariantSource() const
 {
-    if(m_variantList == nullptr) {
+    if(m_variantTree == nullptr) {
         return QString();
     }
 
-    for(int row = 0; row < m_variantList->count(); ++row) {
-        const QListWidgetItem* item = m_variantList->item(row);
-        if(item != nullptr && item->data(kVariantCurrentRole).toBool()) {
-            return item->data(kVariantSourceRole).toString();
+    for(int row = 0; row < m_variantTree->topLevelItemCount(); ++row) {
+        const QTreeWidgetItem* item = m_variantTree->topLevelItem(row);
+        if(item != nullptr && item->data(0, kVariantCurrentRole).toBool()) {
+            return item->data(0, kVariantSourceRole).toString();
         }
     }
     return QString();
@@ -294,14 +366,14 @@ bool CollisionLinkModelsWidget::hasCurrentVariant() const
 
 bool CollisionLinkModelsWidget::selectAppliedVariant()
 {
-    if(m_variantList == nullptr) {
+    if(m_variantTree == nullptr) {
         return false;
     }
 
-    for(int row = 0; row < m_variantList->count(); ++row) {
-        QListWidgetItem* item = m_variantList->item(row);
-        if(item != nullptr && item->data(kVariantCurrentRole).toBool()) {
-            m_variantList->setCurrentItem(item);
+    for(int row = 0; row < m_variantTree->topLevelItemCount(); ++row) {
+        QTreeWidgetItem* item = m_variantTree->topLevelItem(row);
+        if(item != nullptr && item->data(0, kVariantCurrentRole).toBool()) {
+            m_variantTree->setCurrentItem(item);
             return true;
         }
     }
@@ -310,18 +382,18 @@ bool CollisionLinkModelsWidget::selectAppliedVariant()
 
 bool CollisionLinkModelsWidget::selectVariantBySourceRole(const QString& source, const QString& role)
 {
-    if(m_variantList == nullptr) {
+    if(m_variantTree == nullptr) {
         return false;
     }
 
-    for(int row = 0; row < m_variantList->count(); ++row) {
-        QListWidgetItem* item = m_variantList->item(row);
+    for(int row = 0; row < m_variantTree->topLevelItemCount(); ++row) {
+        QTreeWidgetItem* item = m_variantTree->topLevelItem(row);
         if(item == nullptr) {
             continue;
         }
-        if(item->data(kVariantSourceRole).toString() == source &&
-            item->data(kVariantRoleRole).toString() == role) {
-            m_variantList->setCurrentItem(item);
+        if(item->data(0, kVariantSourceRole).toString() == source &&
+            item->data(0, kVariantRoleRole).toString() == role) {
+            m_variantTree->setCurrentItem(item);
             return true;
         }
     }
@@ -369,8 +441,8 @@ void CollisionLinkModelsWidget::setTaskExitEnabled(bool enabled)
 
 bool CollisionLinkModelsWidget::selectedVariantIsCurrent() const
 {
-    const QListWidgetItem* item = m_variantList != nullptr ? m_variantList->currentItem() : nullptr;
-    return item != nullptr && item->data(kVariantCurrentRole).toBool();
+    const QTreeWidgetItem* item = m_variantTree != nullptr ? m_variantTree->currentItem() : nullptr;
+    return item != nullptr && item->data(0, kVariantCurrentRole).toBool();
 }
 
 void CollisionLinkModelsWidget::updateSelectedVariantSummary()
@@ -386,9 +458,9 @@ void CollisionLinkModelsWidget::updateSelectedVariantSummary()
 
     m_statusLabel->setText(text);
 
-    const QListWidgetItem* item = m_variantList != nullptr ? m_variantList->currentItem() : nullptr;
+    const QTreeWidgetItem* item = m_variantTree != nullptr ? m_variantTree->currentItem() : nullptr;
     updateComplexityTable(item != nullptr
-        ? item->data(kVariantComplexityRowsRole).toStringList()
+        ? item->data(0, kVariantComplexityRowsRole).toStringList()
         : QStringList());
 }
 
@@ -411,10 +483,78 @@ void CollisionLinkModelsWidget::updateComplexityTable(const QStringList& rows)
     }
 
     m_complexityTable->setVisible(rowCount > 0);
-    if(m_complexityTitleLabel != nullptr) {
-        m_complexityTitleLabel->setVisible(rowCount > 0);
+    if(m_complexityTable->parentWidget() != nullptr) {
+        m_complexityTable->parentWidget()->setVisible(rowCount > 0);
     }
     QTimer::singleShot(0, this, &CollisionLinkModelsWidget::resetComplexityTableColumnWidths);
+}
+
+void CollisionLinkModelsWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if(event != nullptr && event->type() == QEvent::LanguageChange) {
+        retranslateUi();
+    }
+}
+
+void CollisionLinkModelsWidget::retranslateUi()
+{
+    if(m_targetTitleLabel != nullptr) {
+        m_targetTitleLabel->setText(localizedText(
+            "collisionConfig.model.target.title", "Current Tree Node"));
+    }
+    if(m_variantsTitleLabel != nullptr) {
+        m_variantsTitleLabel->setText(localizedText(
+            "collisionConfig.model.variants.title", "Variants"));
+    }
+    if(m_generateTitleLabel != nullptr) {
+        m_generateTitleLabel->setText(localizedText(
+            "collisionConfig.model.generate.title", "Generate Simplified Collision Model"));
+    }
+    if(m_complexityTitleLabel != nullptr) {
+        m_complexityTitleLabel->setText(localizedText(
+            "collisionConfig.model.complexity.title", "Collision Model Complexity Analysis"));
+    }
+    if(m_variantTree != nullptr) {
+        m_variantTree->setHeaderLabels(QStringList()
+            << localizedText("collisionConfig.model.variants.current", "Used")
+            << localizedText("collisionConfig.model.variants.variant", "Variant")
+            << localizedText("collisionConfig.model.variants.model", "Model"));
+    }
+    if(m_setCurrentVariantButton != nullptr) {
+        m_setCurrentVariantButton->setText(localizedText(
+            "collisionConfig.model.action.setCurrent", "Set Current"));
+        m_setCurrentVariantButton->setToolTip(localizedText(
+            "collisionConfig.model.action.setCurrent.tooltip",
+            "Sets the selected collision model variant as the current project model."));
+    }
+    if(m_generateCoacdButton != nullptr) {
+        m_generateCoacdButton->setText(localizedText(
+            "collisionConfig.model.action.generateCoacd",
+            "Generate with COACD"));
+        m_generateCoacdButton->setToolTip(localizedText(
+            "collisionConfig.model.action.generateCoacd.tooltip",
+            "Generates a simplified collision model variant from the selected model."));
+    }
+    if(m_complexityTable != nullptr) {
+        m_complexityTable->setHorizontalHeaderLabels(QStringList()
+            << localizedText("collisionConfig.model.complexity.metric", "Metric")
+            << localizedText("collisionConfig.model.complexity.value", "Value"));
+    }
+    if(m_applyButton != nullptr) {
+        m_applyButton->setText(localizedText(
+            "collisionConfig.model.action.apply", "Apply"));
+        m_applyButton->setToolTip(localizedText(
+            "collisionConfig.model.action.apply.tooltip",
+            "Leaves collision model configuration and returns to detector configuration."));
+    }
+    if(m_cancelButton != nullptr) {
+        m_cancelButton->setText(localizedText(
+            "collisionConfig.model.action.cancel", "Cancel"));
+        m_cancelButton->setToolTip(localizedText(
+            "collisionConfig.model.action.cancel.tooltip",
+            "Cancels the current preview and returns to detector configuration."));
+    }
 }
 
 void CollisionLinkModelsWidget::resetComplexityTableColumnWidths()

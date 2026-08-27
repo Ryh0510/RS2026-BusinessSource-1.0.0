@@ -7,6 +7,8 @@ set(SOURCES
     MotionPlanningEditorWidget.h
     MotionPlanningModuleController.cpp
     MotionPlanningModuleController.h
+    MotionPlanningWorkbenchLifecycle.cpp
+    MotionPlanningWorkbenchLifecycle.h
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES})

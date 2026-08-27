@@ -1,6 +1,6 @@
 #include "ProjectScene.h"
 
-#include "ProjectCollisionDetectorRuntime.h"
+#include "ProjectCollisionRuntimeProjection.h"
 #include "ProjectRuntimeBuilder.h"
 #include "ProjectRuntimeTypes.h"
 #include "ProjectScenePickingService.h"
@@ -11,6 +11,7 @@
 #include <glad/glad.h>
 
 #include <AssetCore/AssetManager.h>
+#include <AssetCore/ModelAssetLeaseCache.h>
 #include <Collision/CollisionDebugDrawBuilder.h>
 #include <CameraCore/CameraFactory.h>
 #include <Collision/CollisionGeometryBuilder.h>
@@ -22,6 +23,7 @@
 #include <RenderCore/Material.h>
 #include <RenderCore/Model.h>
 #include <RenderCore/ModelManager.h>
+#include <RenderCore/GeometryResourceCache.h>
 #include <RenderCore/ShaderLibrary.h>
 #include <RobotCore/RobotModel.h>
 #include <RobotInstance/RobotInstance.h>
@@ -51,16 +53,21 @@
 #include <Utility/MathConvert.hpp>
 #include <data_path.h>
 
+#include <Eigen/Geometry>
+
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -75,6 +82,8 @@ using namespace collision;
 
 namespace
 {
+    using ProjectCollisionDetectorRuntime = ProjectCollisionDetectorViewRuntime;
+
     constexpr double kPi = 3.14159265358979323846;
     constexpr float kCollisionPreviewRed = 0.20f;
     constexpr float kCollisionPreviewGreen = 0.70f;
@@ -119,6 +128,17 @@ namespace
     std::string pathToUtf8(const std::filesystem::path& path)
     {
         return path.generic_u8string();
+    }
+
+    ObjectID collisionVariantObjectId(
+        ObjectID entityRuntimeId,
+        const std::string& modelId,
+        std::size_t elementIndex)
+    {
+        const std::string key = std::to_string(entityRuntimeId) + "|" + modelId + "|" +
+            std::to_string(elementIndex);
+        const ObjectID id = static_cast<ObjectID>(std::hash<std::string>()(key));
+        return id == 0 ? 1 : id;
     }
 
     std::string collisionVariantSelectionKey(
@@ -332,6 +352,7 @@ namespace
             {"SMRobot", {true, true}},
             {"RobotIO", {true, true}},
             {"AssetCore", {true, true}},
+            {"collision.geometry", {true, true}},
         };
 
         CustomLog::init(logInfo);
@@ -682,33 +703,22 @@ namespace
         return bounds;
     }
 
-    TriangleMeshGeometryData makeTriangleMeshData(const ObjMesh& mesh)
+    CollisionGeometryPtr buildGeometryForTarget(
+        const CollisionShapeDesc& shape,
+        const std::string& targetKind,
+        const std::string& targetId,
+        const std::string& modelId,
+        const std::string& elementId)
     {
-        TriangleMeshGeometryData data;
-        data.vertices = mesh.vertices;
-        data.indices = mesh.indices;
-        return data;
-    }
-
-    CollisionGeometryPtr buildTriangleMeshGeometry(const ObjMesh& mesh)
-    {
-        return CollisionGeometryBuilder::buildTriangleMesh(makeTriangleMeshData(mesh));
-    }
-
-    CollisionGeometryPtr makeCollisionGeometry(const robot::RobotCollisionGeometry& geometry)
-    {
-        switch(geometry.type) {
-        case robot::RobotGeometryType::Box:
-            return CollisionGeometryBuilder::buildBox(geometry.boxSize);
-        case robot::RobotGeometryType::Sphere:
-            return CollisionGeometryBuilder::buildSphere(geometry.radius);
-        case robot::RobotGeometryType::Cylinder:
-            return CollisionGeometryBuilder::buildCylinder(geometry.radius, geometry.length);
-        case robot::RobotGeometryType::Mesh:
-            return buildTriangleMeshGeometry(loadObjMesh(geometry.meshPath, geometry.meshScale));
-        default:
-            return nullptr;
-        }
+        CollisionGeometryBuildRequest request;
+        request.context.targetKind = targetKind;
+        request.context.targetId = targetId;
+        request.context.modelId = modelId;
+        request.context.elementId = elementId;
+        request.context.label = shape.label;
+        request.context.source = shape.source;
+        request.shape = shape;
+        return CollisionGeometryBuilder::build(request).geometry;
     }
 
     CollisionGeometryRole collisionRoleFromString(const std::string& role)
@@ -973,6 +983,21 @@ namespace
         return {};
     }
 
+    std::string currentRobotLinkCollisionModelId(
+        const simulation_project::ProjectDocument& document,
+        const std::string& robotId,
+        const std::string& linkName,
+        const robot::RobotLink& link)
+    {
+        std::string modelId = activeRobotLinkCollisionModelId(document, robotId, linkName);
+        if(modelId.empty()) {
+            modelId = link.collisions.empty() && !link.visuals.empty()
+                ? std::string(simulation_project::kConvertFromVisualCollisionModelId)
+                : std::string(simulation_project::kDefinedInProjectCollisionModelId);
+        }
+        return modelId;
+    }
+
     robot::RobotCollisionGeometry makeVisualCollisionGeometry(
         const robot::RobotVisual& visual,
         const std::string& linkName,
@@ -992,11 +1017,23 @@ namespace
         return geometry;
     }
 
+    bool shouldUseVisualCollisionFallback(
+        const std::string& activeModelId,
+        const robot::RobotLink& link,
+        bool explicitlySelectedLink)
+    {
+        return explicitlySelectedLink &&
+            activeModelId.empty() &&
+            link.collisions.empty() &&
+            !link.visuals.empty();
+    }
+
     std::string makeRobotCollisionModelCacheKey(
         const simulation_project::ProjectDocument& document,
         const std::string& robotId,
         const robot::RobotModel& robotModel,
-        const RobotCollisionLinkSelection* linkSelection)
+        const RobotCollisionLinkSelection* linkSelection,
+        const simulation_runtime::CollisionDetectorBuildPlan& buildPlan)
     {
         std::ostringstream stream;
         stream << robotId;
@@ -1025,49 +1062,67 @@ namespace
             }
 
             stream << "|link=" << linkName;
-            const std::string activeModelId =
-                activeRobotLinkCollisionModelId(document, robotId, linkName);
-            stream << "|active=" << activeModelId;
-            if(simulation_project::isConvertFromVisualCollisionModelId(activeModelId)) {
-                for(const robot::RobotVisual& visual : linkIt->second.visuals) {
-                    stream << "|v=" << visual.partUid
-                        << "," << visual.meshPath
-                        << "," << visual.meshScale
-                        << "," << meshTimestampKey(visual.meshPath);
-                    const Eigen::Matrix4d matrix = visual.T_part.matrix();
+            const std::string currentModelId = currentRobotLinkCollisionModelId(
+                document,
+                robotId,
+                linkName,
+                linkIt->second);
+            std::unordered_set<std::string> modelIds{ currentModelId };
+            if(const std::unordered_set<std::string>* explicitModels =
+                buildPlan.explicitRobotLinkModels(robotId, linkName)) {
+                modelIds.insert(explicitModels->begin(), explicitModels->end());
+            }
+            std::vector<std::string> sortedModelIds(modelIds.begin(), modelIds.end());
+            std::sort(sortedModelIds.begin(), sortedModelIds.end());
+            for(const std::string& modelId : sortedModelIds) {
+                stream << "|model=" << modelId;
+                const bool useVisualCollision =
+                    simulation_project::isConvertFromVisualCollisionModelId(modelId) ||
+                    shouldUseVisualCollisionFallback(
+                        modelId,
+                        linkIt->second,
+                        linkSelection != nullptr && !linkSelection->allLinks);
+                if(useVisualCollision) {
+                    for(const robot::RobotVisual& visual : linkIt->second.visuals) {
+                        stream << "|v=" << visual.partUid
+                            << "," << visual.meshPath
+                            << "," << visual.meshScale
+                            << "," << meshTimestampKey(visual.meshPath);
+                        const Eigen::Matrix4d matrix = visual.T_part.matrix();
+                        for(int row = 0; row < 4; ++row) {
+                            for(int column = 0; column < 4; ++column) {
+                                stream << "," << matrix(row, column);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                for(const auto& geometry : linkIt->second.collisions) {
+                    if(!simulation_project::robotLinkCollisionElementMatchesModelId(
+                           modelId,
+                           robotId,
+                           linkName,
+                           geometry.source,
+                           geometry.role)) {
+                        continue;
+                    }
+                    stream << "|g=" << geometry.partUid
+                        << "," << static_cast<int>(geometry.type)
+                        << "," << geometry.enabled
+                        << "," << geometry.role
+                        << "," << geometry.boxSize.x() << "," << geometry.boxSize.y() << "," << geometry.boxSize.z()
+                        << "," << geometry.radius
+                        << "," << geometry.length
+                        << "," << geometry.meshPath
+                        << "," << geometry.meshScale.x() << "," << geometry.meshScale.y() << "," << geometry.meshScale.z()
+                        << "," << geometry.inflationMargin
+                        << "," << meshTimestampKey(geometry.meshPath);
+                    const Eigen::Matrix4d matrix = geometry.T_part.matrix();
                     for(int row = 0; row < 4; ++row) {
                         for(int column = 0; column < 4; ++column) {
                             stream << "," << matrix(row, column);
                         }
-                    }
-                }
-                continue;
-            }
-
-            for(const auto& geometry : linkIt->second.collisions) {
-                if(!simulation_project::robotLinkCollisionElementMatchesModelId(
-                       activeModelId,
-                       robotId,
-                       linkName,
-                       geometry.source,
-                       geometry.role)) {
-                    continue;
-                }
-                stream << "|g=" << geometry.partUid
-                    << "," << static_cast<int>(geometry.type)
-                    << "," << geometry.enabled
-                    << "," << geometry.role
-                    << "," << geometry.boxSize.x() << "," << geometry.boxSize.y() << "," << geometry.boxSize.z()
-                    << "," << geometry.radius
-                    << "," << geometry.length
-                    << "," << geometry.meshPath
-                    << "," << geometry.meshScale.x() << "," << geometry.meshScale.y() << "," << geometry.meshScale.z()
-                    << "," << geometry.inflationMargin
-                    << "," << meshTimestampKey(geometry.meshPath);
-                const Eigen::Matrix4d matrix = geometry.T_part.matrix();
-                for(int row = 0; row < 4; ++row) {
-                    for(int column = 0; column < 4; ++column) {
-                        stream << "," << matrix(row, column);
                     }
                 }
             }
@@ -1259,14 +1314,16 @@ namespace
         const robot::RobotModel& robotModel,
         scenecore::SceneGraph& graph,
         bool buildOverlays,
-        const RobotCollisionLinkSelection* linkSelection)
+        const RobotCollisionLinkSelection* linkSelection,
+        const simulation_runtime::CollisionDetectorBuildPlan& buildPlan)
     {
         const auto buildStart = std::chrono::steady_clock::now();
         const std::string cacheKey = makeRobotCollisionModelCacheKey(
             document,
             runtime.documentId,
             robotModel,
-            linkSelection);
+            linkSelection,
+            buildPlan);
         auto& modelCache = robotCollisionModelCache();
         const auto cacheIt = modelCache.find(cacheKey);
         if(cacheIt != modelCache.end() && cacheIt->second.model) {
@@ -1308,38 +1365,52 @@ namespace
                 continue;
             }
 
-            std::vector<robot::RobotCollisionGeometry> visualCollisionGeometries;
-            const std::string activeModelId =
-                activeRobotLinkCollisionModelId(document, runtime.documentId, linkName);
-            const bool convertFromVisual =
-                simulation_project::isConvertFromVisualCollisionModelId(activeModelId);
-            if(convertFromVisual) {
-                visualCollisionGeometries.reserve(linkIt->second.visuals.size());
-                for(std::size_t visualIndex = 0; visualIndex < linkIt->second.visuals.size(); ++visualIndex) {
-                    const robot::RobotVisual& visual = linkIt->second.visuals[visualIndex];
-                    if(!visual.meshPath.empty()) {
-                        visualCollisionGeometries.push_back(
-                            makeVisualCollisionGeometry(visual, linkName, visualIndex));
-                    }
-                }
+            const std::string currentModelId = currentRobotLinkCollisionModelId(
+                document,
+                runtime.documentId,
+                linkName,
+                linkIt->second);
+            std::unordered_set<std::string> modelIds{ currentModelId };
+            if(const std::unordered_set<std::string>* explicitModels =
+                buildPlan.explicitRobotLinkModels(runtime.documentId, linkName)) {
+                modelIds.insert(explicitModels->begin(), explicitModels->end());
             }
 
-            const std::vector<robot::RobotCollisionGeometry>& sourceGeometries =
-                convertFromVisual ? visualCollisionGeometries : linkIt->second.collisions;
+            for(const std::string& modelId : modelIds) {
+                std::vector<robot::RobotCollisionGeometry> visualCollisionGeometries;
+                const bool useVisualCollision =
+                    simulation_project::isConvertFromVisualCollisionModelId(modelId) ||
+                    shouldUseVisualCollisionFallback(
+                        modelId,
+                        linkIt->second,
+                        linkSelection != nullptr && !linkSelection->allLinks);
+                if(useVisualCollision) {
+                    visualCollisionGeometries.reserve(linkIt->second.visuals.size());
+                    for(std::size_t visualIndex = 0; visualIndex < linkIt->second.visuals.size(); ++visualIndex) {
+                        const robot::RobotVisual& visual = linkIt->second.visuals[visualIndex];
+                        if(!visual.meshPath.empty()) {
+                            visualCollisionGeometries.push_back(
+                                makeVisualCollisionGeometry(visual, linkName, visualIndex));
+                        }
+                    }
+                }
 
-            for(const auto& geometry : sourceGeometries) {
-                if(!convertFromVisual &&
-                    !simulation_project::robotLinkCollisionElementMatchesModelId(
-                        activeModelId,
-                        runtime.documentId,
-                        linkName,
-                        geometry.source,
-                        geometry.role)) {
-                    continue;
-                }
-                if(!geometry.enabled) {
-                    continue;
-                }
+                const std::vector<robot::RobotCollisionGeometry>& sourceGeometries =
+                    useVisualCollision ? visualCollisionGeometries : linkIt->second.collisions;
+
+                for(const auto& geometry : sourceGeometries) {
+                    if(!useVisualCollision &&
+                        !simulation_project::robotLinkCollisionElementMatchesModelId(
+                            modelId,
+                            runtime.documentId,
+                            linkName,
+                            geometry.source,
+                            geometry.role)) {
+                        continue;
+                    }
+                    if(!geometry.enabled) {
+                        continue;
+                    }
 
                 ++requestedGeometries;
                 ObjMesh meshData;
@@ -1364,7 +1435,13 @@ namespace
                     if(bounds.valid) {
                         const auto triangleMeshStart = std::chrono::steady_clock::now();
                         shape = makeShapeDesc(geometry, meshPtr);
-                        fclGeometry = buildTriangleMeshGeometry(meshData);
+                        shape.modelId = modelId;
+                        fclGeometry = buildGeometryForTarget(
+                            shape,
+                            "robotLink",
+                            runtime.documentId + '/' + linkName,
+                            modelId,
+                            geometry.partUid);
                         const double triangleMeshMs = elapsedMilliseconds(triangleMeshStart);
                         if(fclGeometry) {
                             LOG_DEBUG("rs2026") << "Robot mesh collision uses triangle mesh: robot=" << runtime.documentId
@@ -1384,8 +1461,14 @@ namespace
                             << ", mesh=" << geometry.meshPath;
                     }
                 } else {
-                    fclGeometry = makeCollisionGeometry(geometry);
                     shape = makeShapeDesc(geometry, nullptr);
+                    shape.modelId = modelId;
+                    fclGeometry = buildGeometryForTarget(
+                        shape,
+                        "robotLink",
+                        runtime.documentId + '/' + linkName,
+                        modelId,
+                        geometry.partUid);
                 }
 
                 if(!fclGeometry) {
@@ -1397,6 +1480,8 @@ namespace
                     continue;
                 }
 
+                shape.modelId = modelId;
+                shape.currentModel = modelId == currentModelId;
                 runtime.collisionModel->addLinkShape(linkName, geometry.partUid, shape, fclGeometry);
                 ++addedGeometries;
                 LOG_DEBUG("rs2026") << "Robot collision geometry added: robot=" << runtime.documentId
@@ -1406,6 +1491,7 @@ namespace
                     << ", queryGeometry=" << collisionShapeTypeName(shape.type)
                     << ", shapeType=" << collisionShapeTypeName(shape.type)
                     << ", elapsedMs=" << elapsedMilliseconds(buildStart);
+                }
             }
         }
 
@@ -1812,6 +1898,911 @@ namespace
         return joints;
     }
 
+    std::vector<ProjectScene::RobotJointInfo> parallelControlJointInfos()
+    {
+        return {
+            { "parallel.pose.x", "prismatic" },
+            { "parallel.pose.y", "prismatic" },
+            { "parallel.pose.z", "prismatic" },
+            { "parallel.pose.roll", "revolute" },
+            { "parallel.pose.pitch", "revolute" },
+            { "parallel.pose.yaw", "revolute" },
+            { "parallel.actuator.1", "prismatic" },
+            { "parallel.actuator.2", "prismatic" },
+            { "parallel.actuator.3", "prismatic" },
+            { "parallel.actuator.4", "prismatic" },
+            { "parallel.actuator.5", "prismatic" },
+            { "parallel.actuator.6", "prismatic" }
+        };
+    }
+
+    std::vector<std::string> parallelControlJointNames()
+    {
+        std::vector<std::string> names;
+        const std::vector<ProjectScene::RobotJointInfo> controls =
+            parallelControlJointInfos();
+        names.reserve(controls.size());
+        for(const ProjectScene::RobotJointInfo& control : controls) {
+            names.push_back(control.jointName);
+        }
+        return names;
+    }
+
+    std::string lowerCopy(std::string value)
+    {
+        std::transform(
+            value.begin(),
+            value.end(),
+            value.begin(),
+            [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+        return value;
+    }
+
+    bool isStewartSimscapeRobotDesc(const simulation_project::RobotDesc& robotDesc)
+    {
+        const std::string sourceType = lowerCopy(robotDesc.sourceType);
+        const std::string sourcePath = lowerCopy(robotDesc.sourcePath);
+        return sourceType.find("simscape") != std::string::npos &&
+            sourcePath.find("stewart") != std::string::npos;
+    }
+
+    const std::string& stewartUpperActuatorMarker()
+    {
+        static const std::string marker =
+            "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8A\xE6\xAE\xB5";
+        return marker;
+    }
+
+    const std::string& stewartLowerActuatorMarker()
+    {
+        static const std::string marker =
+            "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8B\xE6\xAE\xB5";
+        return marker;
+    }
+
+    const std::string& stewartHookeMarker()
+    {
+        static const std::string marker =
+            "\xE8\x99\x8E\xE5\x85\x8B\xE9\x93\xB0";
+        return marker;
+    }
+
+    const std::string& stewartTopPlatformMarker()
+    {
+        static const std::string marker =
+            "\xE4\xB8\x8A\xE5\x8A\xA8\xE5\xB9\xB3\xE5\x8F\xB0";
+        return marker;
+    }
+
+    const std::string& stewartPayloadMarker()
+    {
+        static const std::string marker =
+            "\xE5\xB7\xA5\xE4\xBB\xB6";
+        return marker;
+    }
+
+    int legIndexAfterMarker(const std::string& linkName, const std::string& marker)
+    {
+        const std::size_t markerPos = linkName.find(marker);
+        if(markerPos == std::string::npos) {
+            return -1;
+        }
+
+        for(std::size_t index = markerPos + marker.size(); index < linkName.size(); ++index) {
+            const char ch = linkName[index];
+            if(ch >= '1' && ch <= '6') {
+                return ch - '1';
+            }
+        }
+        return -1;
+    }
+
+    int actuatorLegIndexFromLinkName(const std::string& linkName)
+    {
+        return legIndexAfterMarker(linkName, stewartUpperActuatorMarker());
+    }
+
+    bool robotModelHasLinkContaining(const robot::RobotModel& model, const std::string& marker)
+    {
+        return std::any_of(
+            model.linkNames.begin(),
+            model.linkNames.end(),
+            [&](const std::string& linkName) {
+                return linkName.find(marker) != std::string::npos;
+            });
+    }
+
+    bool isStewartSimscapePlatformModel(
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        if(!isStewartSimscapeRobotDesc(robotDesc)) {
+            return false;
+        }
+
+        std::array<bool, 6> upperLinksFound{};
+        for(const std::string& linkName : model.linkNames) {
+            const int legIndex = actuatorLegIndexFromLinkName(linkName);
+            if(legIndex >= 0 && legIndex < 6) {
+                upperLinksFound[static_cast<std::size_t>(legIndex)] = true;
+            }
+        }
+
+        return robotModelHasLinkContaining(
+                   model,
+                   "\xE4\xB8\x8B\xE5\xAE\x9A\xE5\xB9\xB3\xE5\x8F\xB0") &&
+            std::all_of(
+                upperLinksFound.begin(),
+                upperLinksFound.end(),
+                [](bool found) { return found; });
+    }
+
+    bool isStewartSimscapeFollowerFragment(
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        return isStewartSimscapeRobotDesc(robotDesc) &&
+            !isStewartSimscapePlatformModel(robotDesc, model) &&
+            robotModelHasLinkContaining(model, stewartUpperActuatorMarker());
+    }
+
+    bool sameStewartSource(const RuntimeRobot& a, const RuntimeRobot& b)
+    {
+        return lowerCopy(a.sourceType) == lowerCopy(b.sourceType) &&
+            lowerCopy(a.sourcePath) == lowerCopy(b.sourcePath) &&
+            lowerCopy(a.sourceType).find("simscape") != std::string::npos &&
+            lowerCopy(a.sourcePath).find("stewart") != std::string::npos;
+    }
+
+    int stewartLegIndexFromLinkName(const std::string& linkName)
+    {
+        const int upperIndex = legIndexAfterMarker(linkName, stewartUpperActuatorMarker());
+        if(upperIndex >= 0) {
+            return upperIndex;
+        }
+
+        const int lowerIndex = legIndexAfterMarker(linkName, stewartLowerActuatorMarker());
+        if(lowerIndex >= 0) {
+            return lowerIndex;
+        }
+
+        return legIndexAfterMarker(linkName, stewartHookeMarker());
+    }
+
+    std::string findFirstLinkContaining(const robot::RobotModel& model, const std::string& token)
+    {
+        for(const std::string& linkName : model.linkNames) {
+            if(linkName.find(token) != std::string::npos) {
+                return linkName;
+            }
+        }
+        return std::string();
+    }
+
+    std::string findFirstLinkForLeg(
+        const robot::RobotModel& model,
+        const std::string& marker,
+        int legIndex)
+    {
+        for(const std::string& linkName : model.linkNames) {
+            if(legIndexAfterMarker(linkName, marker) == legIndex) {
+                return linkName;
+            }
+        }
+        return std::string();
+    }
+
+    bool linkExists(const robot::RobotModel& model, const std::string& linkName)
+    {
+        return !linkName.empty() && model.links.find(linkName) != model.links.end();
+    }
+
+    bool isStewartInternalPlatformDrivenLink(const std::string& linkName)
+    {
+        return linkName.find(stewartTopPlatformMarker()) != std::string::npos ||
+            linkName.find(stewartPayloadMarker()) != std::string::npos;
+    }
+
+    bool jointTouchesLegMarker(
+        const robot::RobotJoint& joint,
+        const std::string& marker,
+        int legIndex)
+    {
+        return legIndexAfterMarker(joint.parent, marker) == legIndex ||
+            legIndexAfterMarker(joint.child, marker) == legIndex;
+    }
+
+    bool jointAnchorWorld(
+        const RuntimeRobot& runtime,
+        const robot::RobotJoint& joint,
+        collision::Vec3& anchor)
+    {
+        if(!runtime.instance || !linkExists(runtime.model, joint.parent)) {
+            return false;
+        }
+
+        const collision::Transform3 worldParent =
+            runtime.instance->getLinkTransform(joint.parent);
+        anchor = (worldParent * joint.T_parent_joint).translation();
+        return true;
+    }
+
+    void collectJointAnchorsForLeg(
+        const RuntimeRobot& runtime,
+        const std::string& marker,
+        int legIndex,
+        std::vector<collision::Vec3>& anchors)
+    {
+        for(const robot::RobotJoint& joint : runtime.model.joints) {
+            if(!jointTouchesLegMarker(joint, marker, legIndex)) {
+                continue;
+            }
+
+            collision::Vec3 anchor = collision::Vec3::Zero();
+            if(jointAnchorWorld(runtime, joint, anchor)) {
+                anchors.push_back(anchor);
+            }
+        }
+    }
+
+    void collectLinkOriginAnchorForLeg(
+        const RuntimeRobot& runtime,
+        const std::string& marker,
+        int legIndex,
+        std::vector<collision::Vec3>& anchors)
+    {
+        const std::string link = findFirstLinkForLeg(runtime.model, marker, legIndex);
+        if(!link.empty() && runtime.instance) {
+            anchors.push_back(runtime.instance->getLinkTransform(link).translation());
+        }
+    }
+
+    bool chooseLowestLocalZAnchor(
+        const std::vector<collision::Vec3>& anchors,
+        const collision::Transform3& referenceInverse,
+        collision::Vec3& anchor)
+    {
+        if(anchors.empty()) {
+            return false;
+        }
+
+        auto bestIt = anchors.begin();
+        double bestZ = (referenceInverse * *bestIt).z();
+        for(auto it = std::next(anchors.begin()); it != anchors.end(); ++it) {
+            const double z = (referenceInverse * *it).z();
+            if(z < bestZ) {
+                bestZ = z;
+                bestIt = it;
+            }
+        }
+
+        anchor = *bestIt;
+        return true;
+    }
+
+    bool chooseFarthestAnchor(
+        const std::vector<collision::Vec3>& anchors,
+        const collision::Vec3& reference,
+        collision::Vec3& anchor)
+    {
+        if(anchors.empty()) {
+            return false;
+        }
+
+        auto bestIt = anchors.begin();
+        double bestDistance = (*bestIt - reference).squaredNorm();
+        for(auto it = std::next(anchors.begin()); it != anchors.end(); ++it) {
+            const double distance = (*it - reference).squaredNorm();
+            if(distance > bestDistance) {
+                bestDistance = distance;
+                bestIt = it;
+            }
+        }
+
+        anchor = *bestIt;
+        return true;
+    }
+
+    int findStewartFollowerActuatorDofIndex(const RuntimeRobot& follower, int legIndex)
+    {
+        for(const robot::RobotJoint& joint : follower.model.joints) {
+            if(joint.type != robot::JointType::Prismatic || joint.dofIndex < 0) {
+                continue;
+            }
+
+            if(jointTouchesLegMarker(joint, stewartLowerActuatorMarker(), legIndex) &&
+                jointTouchesLegMarker(joint, stewartUpperActuatorMarker(), legIndex)) {
+                return joint.dofIndex;
+            }
+        }
+
+        for(const robot::RobotJoint& joint : follower.model.joints) {
+            if(joint.type != robot::JointType::Prismatic || joint.dofIndex < 0) {
+                continue;
+            }
+
+            if(stewartLegIndexFromLinkName(joint.parent) == legIndex ||
+                stewartLegIndexFromLinkName(joint.child) == legIndex) {
+                return joint.dofIndex;
+            }
+        }
+        return -1;
+    }
+
+    std::array<int, 2> findStewartBaseRevoluteDofIndices(
+        const RuntimeRobot& platform,
+        int legIndex,
+        const std::string& lowerLink)
+    {
+        std::array<int, 2> result{ { -1, -1 } };
+        std::unordered_map<std::string, const robot::RobotJoint*> parentJointByChild;
+        for(const robot::RobotJoint& joint : platform.model.joints) {
+            if(joint.isLoop) {
+                continue;
+            }
+            parentJointByChild.emplace(joint.child, &joint);
+        }
+
+        std::unordered_set<std::string> visited;
+        std::string link = lowerLink;
+        while(!link.empty() && link != platform.model.root && visited.insert(link).second) {
+            const auto parentIt = parentJointByChild.find(link);
+            if(parentIt == parentJointByChild.end()) {
+                break;
+            }
+
+            const robot::RobotJoint* joint = parentIt->second;
+            if(joint->type == robot::JointType::Revolute && joint->dofIndex >= 0) {
+                if(result[0] < 0) {
+                    result[0] = joint->dofIndex;
+                } else if(result[1] < 0 && result[0] != joint->dofIndex) {
+                    result[1] = joint->dofIndex;
+                    return result;
+                }
+            }
+            link = joint->parent;
+        }
+
+        for(const robot::RobotJoint& joint : platform.model.joints) {
+            if(joint.type != robot::JointType::Revolute || joint.dofIndex < 0) {
+                continue;
+            }
+            if(!jointTouchesLegMarker(joint, stewartHookeMarker(), legIndex) ||
+                jointTouchesLegMarker(joint, stewartUpperActuatorMarker(), legIndex)) {
+                continue;
+            }
+
+            if(result[0] < 0) {
+                result[0] = joint.dofIndex;
+            } else if(result[1] < 0 && result[0] != joint.dofIndex) {
+                result[1] = joint.dofIndex;
+                break;
+            }
+        }
+        return result;
+    }
+
+    void setStewartLegJointValues(
+        robotinstance::RobotInstance& instance,
+        const StewartLegRuntimeControl& leg,
+        double q0,
+        double q1,
+        double travel)
+    {
+        if(leg.baseRevoluteDofIndices[0] >= 0) {
+            instance.setJoint(static_cast<std::size_t>(leg.baseRevoluteDofIndices[0]), q0);
+        }
+        if(leg.baseRevoluteDofIndices[1] >= 0) {
+            instance.setJoint(static_cast<std::size_t>(leg.baseRevoluteDofIndices[1]), q1);
+        }
+        if(leg.actuatorDofIndex >= 0) {
+            instance.setJoint(static_cast<std::size_t>(leg.actuatorDofIndex), travel);
+        }
+    }
+
+    double wrapAngleNear(double value, double reference)
+    {
+        constexpr double kPi = 3.14159265358979323846;
+        constexpr double kTwoPi = 2.0 * kPi;
+        while(value - reference > kPi) {
+            value -= kTwoPi;
+        }
+        while(reference - value > kPi) {
+            value += kTwoPi;
+        }
+        return value;
+    }
+
+    double squaredAngleDistance(double value, double reference)
+    {
+        const double diff = wrapAngleNear(value, reference) - reference;
+        return diff * diff;
+    }
+
+    collision::Vec3 stewartLegPlatformAnchorWorld(
+        const RuntimeRobot& platform,
+        const StewartLegRuntimeControl& leg)
+    {
+        if(!platform.instance || leg.upperLink.empty()) {
+            return collision::Vec3::Zero();
+        }
+
+        return platform.instance->getLinkTransform(leg.upperLink) *
+            leg.platformAnchorLocalInUpperLink;
+    }
+
+    collision::Vec3 stewartTargetPlatformAnchorWorld(
+        const RuntimeRobot& platform,
+        int legIndex)
+    {
+        const collision::Transform3 poseTransform =
+            kine::StewartPlatformKinematics::poseTransform(platform.parallelPose);
+        const collision::Vec3 localAnchor =
+            poseTransform *
+            platform.parallelGeometry.platformAnchors[static_cast<std::size_t>(legIndex)];
+        return platform.parallelHomeBaseTransform * localAnchor;
+    }
+
+    bool solveStewartLegControl(
+        RuntimeRobot& platform,
+        StewartLegRuntimeControl& leg)
+    {
+        if(!platform.instance || !leg.enabled || leg.legIndex < 0 || leg.legIndex >= 6) {
+            return false;
+        }
+
+        const std::size_t legArrayIndex = static_cast<std::size_t>(leg.legIndex);
+        const double targetLength = platform.parallelActuatorLengths[legArrayIndex];
+        const double travel =
+            leg.actuatorSign *
+            (targetLength - leg.homeLength);
+        double q0 = 0.0;
+        double q1 = 0.0;
+        const auto& state = platform.instance->getState();
+        if(leg.baseRevoluteDofIndices[0] >= 0 &&
+            static_cast<std::size_t>(leg.baseRevoluteDofIndices[0]) < state.q.size()) {
+            q0 = state.q[static_cast<std::size_t>(leg.baseRevoluteDofIndices[0])];
+        }
+        if(leg.baseRevoluteDofIndices[1] >= 0 &&
+            static_cast<std::size_t>(leg.baseRevoluteDofIndices[1]) < state.q.size()) {
+            q1 = state.q[static_cast<std::size_t>(leg.baseRevoluteDofIndices[1])];
+        }
+        const double seedQ0 = q0;
+        const double seedQ1 = q1;
+        double bestQ0 = q0;
+        double bestQ1 = q1;
+        double bestScore = std::numeric_limits<double>::max();
+        const collision::Vec3 target = stewartTargetPlatformAnchorWorld(platform, leg.legIndex);
+
+        constexpr double kStep = 1.0e-5;
+        constexpr double kTolerance = 1.0e-5;
+        constexpr double kContinuityWeight = 1.0e-4;
+        constexpr int kMaxIterations = 12;
+
+        for(int iteration = 0; iteration < kMaxIterations; ++iteration) {
+            setStewartLegJointValues(*platform.instance, leg, q0, q1, travel);
+            platform.instance->update();
+            const collision::Vec3 residual =
+                stewartLegPlatformAnchorWorld(platform, leg) - target;
+            const double residualNorm = residual.norm();
+            const double continuityCost =
+                kContinuityWeight *
+                (squaredAngleDistance(q0, seedQ0) +
+                    squaredAngleDistance(q1, seedQ1));
+            const double score = residualNorm + continuityCost;
+            if(score < bestScore) {
+                bestScore = score;
+                bestQ0 = q0;
+                bestQ1 = q1;
+            }
+            if(residualNorm <= kTolerance) {
+                return true;
+            }
+
+            Eigen::Matrix<double, 3, 2> jacobian;
+            for(int column = 0; column < 2; ++column) {
+                double probeQ0 = q0;
+                double probeQ1 = q1;
+                if(column == 0) {
+                    probeQ0 += kStep;
+                } else {
+                    probeQ1 += kStep;
+                }
+
+                setStewartLegJointValues(*platform.instance, leg, probeQ0, probeQ1, travel);
+                platform.instance->update();
+                jacobian.col(column) =
+                    (stewartLegPlatformAnchorWorld(platform, leg) -
+                        (target + residual)) /
+                    kStep;
+            }
+
+            const Eigen::Matrix2d normal =
+                jacobian.transpose() * jacobian +
+                Eigen::Matrix2d::Identity() * (1.0e-8 + kContinuityWeight);
+            const Eigen::Vector2d prior(
+                wrapAngleNear(q0, seedQ0) - seedQ0,
+                wrapAngleNear(q1, seedQ1) - seedQ1);
+            const Eigen::Vector2d delta =
+                normal.ldlt().solve(
+                    jacobian.transpose() * residual +
+                    kContinuityWeight * prior);
+            if(!std::isfinite(delta.x()) || !std::isfinite(delta.y())) {
+                break;
+            }
+
+            q0 = wrapAngleNear(q0 - std::clamp(delta.x(), -0.25, 0.25), seedQ0);
+            q1 = wrapAngleNear(q1 - std::clamp(delta.y(), -0.25, 0.25), seedQ1);
+        }
+
+        setStewartLegJointValues(*platform.instance, leg, bestQ0, bestQ1, travel);
+        platform.instance->update();
+        const double finalError =
+            (stewartLegPlatformAnchorWorld(platform, leg) - target).norm();
+        if(finalError > 5.0e-3) {
+            LOG_WARNING("rs2026") << "Stewart leg IK residual is high: robot="
+                << platform.documentId
+                << ", leg=" << (leg.legIndex + 1)
+                << ", residual=" << finalError << " m";
+        }
+        return true;
+    }
+
+    void solveStewartInternalLegControls(RuntimeRobot& platform)
+    {
+        if(!platform.parallelControlEnabled || !platform.instance) {
+            return;
+        }
+
+        for(StewartLegRuntimeControl& leg : platform.parallelLegControls) {
+            solveStewartLegControl(platform, leg);
+        }
+    }
+
+    double distanceBetweenLinks(
+        const RuntimeRobot& follower,
+        const std::string& a,
+        const std::string& b)
+    {
+        if(!follower.instance || a.empty() || b.empty()) {
+            return 0.0;
+        }
+
+        return (follower.instance->getLinkTransform(a).translation() -
+            follower.instance->getLinkTransform(b).translation()).norm();
+    }
+
+    double calibrateStewartFollowerActuatorSign(
+        RuntimeRobot& follower,
+        int dofIndex,
+        const std::string& baseLink,
+        const std::string& platformLink)
+    {
+        if(!follower.instance || dofIndex < 0) {
+            return 1.0;
+        }
+
+        constexpr double kProbe = 1.0e-4;
+        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), 0.0);
+        follower.instance->update();
+        const double homeDistance = distanceBetweenLinks(follower, baseLink, platformLink);
+
+        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), kProbe);
+        follower.instance->update();
+        const double probeDistance = distanceBetweenLinks(follower, baseLink, platformLink);
+
+        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), 0.0);
+        follower.instance->update();
+
+        return probeDistance >= homeDistance ? 1.0 : -1.0;
+    }
+
+    double calibrateStewartInternalActuatorSign(
+        RuntimeRobot& platform,
+        const StewartLegRuntimeControl& leg)
+    {
+        if(!platform.instance ||
+            leg.actuatorDofIndex < 0 ||
+            leg.legIndex < 0 ||
+            leg.legIndex >= 6) {
+            return 1.0;
+        }
+
+        const std::size_t dofIndex = static_cast<std::size_t>(leg.actuatorDofIndex);
+        const auto& state = platform.instance->getState();
+        const double oldQ = dofIndex < state.q.size() ? state.q[dofIndex] : 0.0;
+        const std::size_t legArrayIndex = static_cast<std::size_t>(leg.legIndex);
+        const collision::Vec3 baseAnchorWorld =
+            platform.parallelHomeBaseTransform *
+            platform.parallelGeometry.baseAnchors[legArrayIndex];
+
+        constexpr double kProbe = 1.0e-4;
+        platform.instance->setJoint(dofIndex, 0.0);
+        platform.instance->update();
+        const double homeDistance =
+            (stewartLegPlatformAnchorWorld(platform, leg) - baseAnchorWorld).norm();
+
+        platform.instance->setJoint(dofIndex, kProbe);
+        platform.instance->update();
+        const double probeDistance =
+            (stewartLegPlatformAnchorWorld(platform, leg) - baseAnchorWorld).norm();
+
+        platform.instance->setJoint(dofIndex, oldQ);
+        platform.instance->update();
+
+        return probeDistance >= homeDistance ? 1.0 : -1.0;
+    }
+
+    Eigen::Matrix4d makeLegFollowerAffine(
+        const collision::Transform3& platformHomeTransform,
+        const kine::StewartPlatformPose& pose,
+        const collision::Vec3& homeStart,
+        const collision::Vec3& homeEnd)
+    {
+        const Eigen::Vector3d currentStart = homeStart;
+        const Eigen::Vector3d currentEnd =
+            kine::StewartPlatformKinematics::poseTransform(pose) * homeEnd;
+
+        const Eigen::Vector3d homeVector = homeEnd - homeStart;
+        const Eigen::Vector3d currentVector = currentEnd - currentStart;
+        const double homeLength = homeVector.norm();
+        const double currentLength = currentVector.norm();
+        if(homeLength < 1.0e-9 || currentLength < 1.0e-9) {
+            return Eigen::Matrix4d::Identity();
+        }
+
+        const Eigen::Vector3d homeAxis = homeVector / homeLength;
+        const Eigen::Quaterniond rotation =
+            Eigen::Quaterniond::FromTwoVectors(homeVector, currentVector).normalized();
+        const Eigen::Matrix3d stretch =
+            Eigen::Matrix3d::Identity() +
+            ((currentLength / homeLength) - 1.0) *
+                (homeAxis * homeAxis.transpose());
+        const Eigen::Matrix3d linear = rotation.toRotationMatrix() * stretch;
+
+        Eigen::Matrix4d local = Eigen::Matrix4d::Identity();
+        local.block<3, 3>(0, 0) = linear;
+        local.block<3, 1>(0, 3) = currentStart - linear * homeStart;
+
+        return platformHomeTransform.matrix() *
+            local *
+            platformHomeTransform.inverse().matrix();
+    }
+
+    void captureStewartFollowerDrivenLinks(RuntimeRobot& follower, int legIndex)
+    {
+        follower.parallelFollowerDrivenLinks.clear();
+        follower.parallelFollowerHomeLinkTransforms.clear();
+
+        if(!follower.instance) {
+            return;
+        }
+
+        for(const std::string& linkName : follower.model.linkNames) {
+            if(linkName == follower.model.root || linkName == follower.model.base_link) {
+                continue;
+            }
+            if(stewartLegIndexFromLinkName(linkName) != legIndex) {
+                continue;
+            }
+
+            follower.parallelFollowerDrivenLinks.push_back(linkName);
+            follower.parallelFollowerHomeLinkTransforms[linkName] =
+                follower.instance->getLinkTransform(linkName);
+        }
+    }
+
+    void configureStewartInternalActuatorDofs(RuntimeRobot& platform)
+    {
+        platform.parallelActuatorDofIndices.fill(-1);
+        platform.parallelActuatorSigns.fill(1.0);
+        if(!platform.instance) {
+            return;
+        }
+
+        for(int legIndex = 0; legIndex < 6; ++legIndex) {
+            const std::string upperLink = findFirstLinkForLeg(
+                platform.model,
+                stewartUpperActuatorMarker(),
+                legIndex);
+            if(upperLink.empty()) {
+                continue;
+            }
+
+            std::string baseLink = findFirstLinkForLeg(
+                platform.model,
+                stewartLowerActuatorMarker(),
+                legIndex);
+            if(baseLink.empty()) {
+                baseLink = findFirstLinkForLeg(
+                    platform.model,
+                    stewartHookeMarker(),
+                    legIndex);
+            }
+
+            const int dofIndex = findStewartFollowerActuatorDofIndex(platform, legIndex);
+            const std::size_t index = static_cast<std::size_t>(legIndex);
+            platform.parallelActuatorDofIndices[index] = dofIndex;
+
+            StewartLegRuntimeControl& leg = platform.parallelLegControls[index];
+            leg.enabled = dofIndex >= 0;
+            leg.legIndex = legIndex;
+            leg.lowerLink = baseLink;
+            leg.upperLink = upperLink;
+            leg.baseRevoluteDofIndices =
+                findStewartBaseRevoluteDofIndices(platform, legIndex, baseLink);
+            leg.actuatorDofIndex = dofIndex;
+            leg.actuatorSign = 1.0;
+            leg.homeLength = platform.parallelActuatorHomeLengths[index];
+            leg.platformAnchorLocalInUpperLink = collision::Vec3::Zero();
+            if(!upperLink.empty()) {
+                const collision::Vec3 homePlatformAnchorWorld =
+                    platform.parallelHomeBaseTransform *
+                    platform.parallelGeometry.platformAnchors[index];
+                leg.platformAnchorLocalInUpperLink =
+                    platform.instance->getLinkTransform(upperLink).inverse() *
+                    homePlatformAnchorWorld;
+            }
+            platform.parallelActuatorSigns[index] =
+                calibrateStewartInternalActuatorSign(platform, leg);
+            leg.actuatorSign = platform.parallelActuatorSigns[index];
+
+            if(leg.enabled &&
+                (leg.baseRevoluteDofIndices[0] < 0 || leg.baseRevoluteDofIndices[1] < 0)) {
+                leg.enabled = false;
+                LOG_WARNING("rs2026") << "Stewart leg IK disabled because base revolute DOFs are incomplete: robot="
+                    << platform.documentId
+                    << ", leg=" << (legIndex + 1)
+                    << ", dof0=" << leg.baseRevoluteDofIndices[0]
+                    << ", dof1=" << leg.baseRevoluteDofIndices[1];
+            }
+        }
+    }
+
+    void captureStewartInternalPlatformVisuals(RuntimeRobot& platform)
+    {
+        platform.parallelInternalPlatformVisualsEnabled = false;
+        platform.parallelInternalPlatformDrivenLinks.clear();
+        platform.parallelInternalPlatformHomeLocalTransforms.clear();
+
+        if(!platform.instance) {
+            return;
+        }
+
+        const collision::Transform3 baseInverse =
+            platform.parallelHomeBaseTransform.inverse();
+        for(const std::string& linkName : platform.model.linkNames) {
+            if(!isStewartInternalPlatformDrivenLink(linkName)) {
+                continue;
+            }
+
+            platform.parallelInternalPlatformDrivenLinks.push_back(linkName);
+            platform.parallelInternalPlatformHomeLocalTransforms[linkName] =
+                baseInverse * platform.instance->getLinkTransform(linkName);
+        }
+
+        platform.parallelInternalPlatformVisualsEnabled =
+            !platform.parallelInternalPlatformDrivenLinks.empty();
+    }
+
+    void applyStewartInternalPlatformVisualOverride(RuntimeRobot& platform)
+    {
+        if(!platform.parallelControlEnabled ||
+            !platform.parallelInternalPlatformVisualsEnabled ||
+            !platform.visualBridge) {
+            return;
+        }
+
+        const collision::Transform3 poseTransform =
+            kine::StewartPlatformKinematics::poseTransform(platform.parallelPose);
+        for(const std::string& linkName : platform.parallelInternalPlatformDrivenLinks) {
+            const auto homeIt =
+                platform.parallelInternalPlatformHomeLocalTransforms.find(linkName);
+            if(homeIt == platform.parallelInternalPlatformHomeLocalTransforms.end()) {
+                continue;
+            }
+
+            const auto node = platform.visualBridge->linkNode(linkName);
+            if(!node) {
+                continue;
+            }
+
+            const collision::Transform3 linkTransform =
+                platform.parallelHomeBaseTransform * poseTransform * homeIt->second;
+            node->setLocal(math::eigenToGlm(linkTransform.matrix()));
+            if(platform.collisionInstance) {
+                platform.collisionInstance->setLinkTransform(linkName, linkTransform);
+            }
+        }
+    }
+
+    void applyStewartFollowerVisualOverride(
+        const RuntimeRobot& platform,
+        RuntimeRobot& follower)
+    {
+        if(!platform.parallelControlEnabled ||
+            !follower.parallelFollowerEnabled ||
+            !follower.parallelFollowerAnchorsValid ||
+            !follower.visualBridge ||
+            follower.parallelFollowerDrivenLinks.empty()) {
+            return;
+        }
+
+        const Eigen::Matrix4d followerAffine = makeLegFollowerAffine(
+            platform.parallelHomeBaseTransform,
+            platform.parallelPose,
+            follower.parallelFollowerHomeBaseAnchor,
+            follower.parallelFollowerHomePlatformAnchor);
+
+        for(const std::string& linkName : follower.parallelFollowerDrivenLinks) {
+            const auto homeIt = follower.parallelFollowerHomeLinkTransforms.find(linkName);
+            if(homeIt == follower.parallelFollowerHomeLinkTransforms.end()) {
+                continue;
+            }
+
+            const auto node = follower.visualBridge->linkNode(linkName);
+            if(!node) {
+                continue;
+            }
+
+            const Eigen::Matrix4d linkTransform =
+                followerAffine * homeIt->second.matrix();
+            node->setLocal(math::eigenToGlm(linkTransform));
+        }
+    }
+
+    void configureParallelControlIfNeeded(
+        RuntimeRobot& runtime,
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        if(!isStewartSimscapePlatformModel(robotDesc, model)) {
+            return;
+        }
+
+        runtime.parallelControlEnabled = true;
+        runtime.parallelHomeBaseTransform = runtime.baseTransform;
+        runtime.parallelGeometry = kine::StewartPlatformKinematics::makeDefaultGeometry();
+        runtime.parallelPose = kine::StewartPlatformPose();
+
+        std::string error;
+        if(!kine::StewartPlatformKinematics::computeActuatorLengths(
+               runtime.parallelGeometry,
+               runtime.parallelPose,
+               runtime.parallelActuatorLengths,
+               &error)) {
+            runtime.parallelControlEnabled = false;
+            LOG_WARNING("rs2026") << "Failed to initialize Stewart platform control: robot="
+                << robotDesc.id << ", error=" << error;
+            return;
+        }
+        runtime.parallelActuatorHomeLengths = runtime.parallelActuatorLengths;
+
+        LOG_INFO("rs2026") << "Stewart platform task-space control enabled: robot="
+            << robotDesc.id
+            << ", sourceModelIndex=" << robotDesc.sourceModelIndex;
+    }
+
+    void configureParallelFollowerIfNeeded(
+        RuntimeRobot& runtime,
+        const simulation_project::RobotDesc& robotDesc,
+        const robot::RobotModel& model)
+    {
+        if(!isStewartSimscapeFollowerFragment(robotDesc, model)) {
+            return;
+        }
+
+        runtime.parallelFollowerEnabled = true;
+        runtime.parallelFollowerLegIndex = -1;
+        runtime.parallelFollowerHomeTransform = runtime.baseTransform;
+
+        LOG_INFO("rs2026") << "Stewart platform follower candidate enabled: robot="
+            << robotDesc.id
+            << ", sourceModelIndex=" << robotDesc.sourceModelIndex;
+    }
+
     RuntimeRobot* findRuntimeRobot(
         std::vector<RuntimeRobot>& robots,
         const std::string& documentId)
@@ -2182,8 +3173,6 @@ namespace
         runtime.type = desc.type;
         runtime.enabled = desc.enabled;
         runtime.visible = desc.visualization.visible;
-        runtime.options.geometryRole = collisionRoleFromString(desc.geometryRole);
-        runtime.options.geometrySource = desc.geometrySource;
         runtime.options.enableContacts = shouldRequestDetectorContacts(desc);
         runtime.options.enableNearestPoints = desc.nearestPoints;
         runtime.options.enableDistance = desc.distance;
@@ -2350,10 +3339,16 @@ namespace
         const std::string& targetKey)
     {
         CollisionGeneratedAssetRequest request;
-        const simulation_project::AssetResolveContext context =
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, document.assetSearchPaths);
-        request.generatedAssetRoot =
-            simulation_project::AssetResolver::appGeneratedAssetRoot(context);
+        if(!projectBasePath.empty() && !document.assetStore.directory.empty()) {
+            request.generatedAssetRoot = projectBasePath
+                / std::filesystem::u8path(document.assetStore.directory);
+            request.uriPrefix = "project://assets/collision/coacd";
+        } else {
+            const simulation_project::AssetResolveContext context =
+                ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, document.assetSearchPaths);
+            request.generatedAssetRoot =
+                simulation_project::AssetResolver::appGeneratedAssetRoot(context);
+        }
         request.sourceKey = sourceKey;
         request.targetKey = targetKey;
         request.role = simulation_project::kCoacdCollisionModelRole;
@@ -2636,6 +3631,9 @@ struct ProjectScene::Impl
     int width = 1;
     int height = 1;
     cameracore::CameraControllerPtr controller;
+    assetcore::ModelAssetLeaseCache modelAssetCache;
+    rendercore::GeometryResourceCache geometryResourceCache;
+    std::string assetCorrelationId;
     scenecore::SceneGraph sceneGraph;
     scenecore::Renderer renderer;
     std::shared_ptr<scenecore::CameraNode> mainCameraNode;
@@ -2719,6 +3717,13 @@ struct ProjectScene::Impl
     void buildProjectPointClouds();
     void buildProjectToolAttachments();
     void syncProjectToolAttachments();
+    void configureStewartGroups();
+    void syncStewartFollowers(const RuntimeRobot& platform);
+    void syncAllStewartFollowers();
+    void setStewartPlatformBaseTransform(RuntimeRobot& platform, const collision::Transform3& baseTransform);
+    void applyStewartInternalPlatformVisualOverrides(RuntimeRobot& platform);
+    void applyStewartFollowerVisualOverrides(const RuntimeRobot& platform);
+    void applyAllStewartFollowerVisualOverrides();
     void ensureToolAttachmentCollisionObjects();
     bool ensureCollisionRuntimeBuilt();
     void registerRuntimeCollisionObjects();
@@ -3274,7 +4279,9 @@ std::vector<simulation_runtime::RuntimeAttachmentRobotContext> ProjectScene::Imp
 bool ProjectScene::Impl::rebuildMountedAttachmentGraph()
 {
     const simulation_project::AssetResolveContext resolveContext =
-        ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument.assetSearchPaths);
+        ProjectRuntimeBuilder::makeAssetResolveContext(
+            projectBasePath,
+            projectDocument);
     const simulation_runtime::Result result =
         mountedAttachments.load(projectDocument, resolveContext, attachmentRobotContexts());
     if(!result.success) {
@@ -3286,11 +4293,317 @@ bool ProjectScene::Impl::rebuildMountedAttachmentGraph()
     return true;
 }
 
+void ProjectScene::Impl::syncStewartFollowers(const RuntimeRobot& platform)
+{
+    if(!platform.parallelControlEnabled) {
+        return;
+    }
+
+    for(RuntimeRobot& follower : robots) {
+        if(!follower.parallelFollowerEnabled ||
+            !follower.parallelFollowerAnchorsValid ||
+            follower.documentId == platform.documentId ||
+            !sameStewartSource(platform, follower)) {
+            continue;
+        }
+
+        const std::size_t legIndex =
+            static_cast<std::size_t>(follower.parallelFollowerLegIndex);
+        if(follower.parallelFollowerActuatorDofIndex >= 0 && legIndex < 6) {
+            const double targetLength = platform.parallelActuatorLengths[legIndex];
+            const double travel =
+                follower.parallelFollowerActuatorSign *
+                (targetLength - follower.parallelFollowerHomeLength);
+            follower.instance->setJoint(
+                static_cast<std::size_t>(follower.parallelFollowerActuatorDofIndex),
+                travel);
+        }
+
+        follower.baseTransform = follower.parallelFollowerHomeTransform;
+    }
+}
+
+void ProjectScene::Impl::configureStewartGroups()
+{
+    for(RuntimeRobot& platform : robots) {
+        if(!platform.parallelControlEnabled) {
+            continue;
+        }
+
+        kine::StewartPlatformGeometry importedGeometry = platform.parallelGeometry;
+        std::array<bool, 6> baseAnchorsFound{};
+        std::array<bool, 6> platformAnchorsFound{};
+        std::array<std::vector<collision::Vec3>, 6> baseAnchorCandidates;
+        std::array<std::vector<collision::Vec3>, 6> baseFallbackAnchorCandidates;
+        std::array<std::vector<collision::Vec3>, 6> platformAnchorCandidates;
+
+        const collision::Transform3 platformHomeInverse =
+            platform.parallelHomeBaseTransform.inverse();
+
+        for(RuntimeRobot& candidate : robots) {
+            if(!sameStewartSource(platform, candidate) ||
+                !candidate.instance) {
+                continue;
+            }
+
+            for(int legIndex = 0; legIndex < 6; ++legIndex) {
+                const std::size_t index = static_cast<std::size_t>(legIndex);
+                collectJointAnchorsForLeg(
+                    candidate,
+                    stewartLowerActuatorMarker(),
+                    legIndex,
+                    baseAnchorCandidates[index]);
+                collectJointAnchorsForLeg(
+                    candidate,
+                    stewartHookeMarker(),
+                    legIndex,
+                    baseFallbackAnchorCandidates[index]);
+                collectJointAnchorsForLeg(
+                    candidate,
+                    stewartUpperActuatorMarker(),
+                    legIndex,
+                    platformAnchorCandidates[index]);
+            }
+        }
+
+        for(int legIndex = 0; legIndex < 6; ++legIndex) {
+            const std::size_t index = static_cast<std::size_t>(legIndex);
+            if(baseAnchorCandidates[index].empty()) {
+                baseAnchorCandidates[index] = baseFallbackAnchorCandidates[index];
+            }
+            if(baseAnchorCandidates[index].empty()) {
+                for(RuntimeRobot& candidate : robots) {
+                    if(!sameStewartSource(platform, candidate) ||
+                        !candidate.instance) {
+                        continue;
+                    }
+                    collectLinkOriginAnchorForLeg(
+                        candidate,
+                        stewartLowerActuatorMarker(),
+                        legIndex,
+                        baseAnchorCandidates[index]);
+                }
+            }
+            if(baseAnchorCandidates[index].empty()) {
+                for(RuntimeRobot& candidate : robots) {
+                    if(!sameStewartSource(platform, candidate) ||
+                        !candidate.instance) {
+                        continue;
+                    }
+                    collectLinkOriginAnchorForLeg(
+                        candidate,
+                        stewartHookeMarker(),
+                        legIndex,
+                        baseAnchorCandidates[index]);
+                }
+            }
+            if(platformAnchorCandidates[index].empty()) {
+                for(RuntimeRobot& candidate : robots) {
+                    if(!sameStewartSource(platform, candidate) ||
+                        !candidate.instance) {
+                        continue;
+                    }
+                    collectLinkOriginAnchorForLeg(
+                        candidate,
+                        stewartUpperActuatorMarker(),
+                        legIndex,
+                        platformAnchorCandidates[index]);
+                }
+            }
+
+            collision::Vec3 baseAnchorWorld = collision::Vec3::Zero();
+            if(chooseLowestLocalZAnchor(
+                   baseAnchorCandidates[index],
+                   platformHomeInverse,
+                   baseAnchorWorld)) {
+                importedGeometry.baseAnchors[index] =
+                    platformHomeInverse * baseAnchorWorld;
+                baseAnchorsFound[index] = true;
+            }
+
+            collision::Vec3 platformAnchorWorld = collision::Vec3::Zero();
+            if(baseAnchorsFound[index] &&
+                chooseFarthestAnchor(
+                    platformAnchorCandidates[index],
+                    baseAnchorWorld,
+                    platformAnchorWorld)) {
+                importedGeometry.platformAnchors[index] =
+                    platformHomeInverse * platformAnchorWorld;
+                platformAnchorsFound[index] = true;
+            }
+        }
+
+        for(RuntimeRobot& follower : robots) {
+            if(!follower.parallelFollowerEnabled ||
+                follower.documentId == platform.documentId ||
+                !sameStewartSource(platform, follower) ||
+                !follower.instance) {
+                continue;
+            }
+
+            const std::string upperLink = findFirstLinkContaining(
+                follower.model,
+                stewartUpperActuatorMarker());
+            if(upperLink.empty()) {
+                continue;
+            }
+
+            const int legIndex = actuatorLegIndexFromLinkName(upperLink);
+            if(legIndex < 0 || legIndex >= 6) {
+                continue;
+            }
+            const std::size_t index = static_cast<std::size_t>(legIndex);
+            if(!baseAnchorsFound[index] || !platformAnchorsFound[index]) {
+                continue;
+            }
+
+            std::string baseLink = findFirstLinkForLeg(
+                follower.model,
+                stewartLowerActuatorMarker(),
+                legIndex);
+            if(baseLink.empty()) {
+                baseLink = findFirstLinkForLeg(
+                    follower.model,
+                    stewartHookeMarker(),
+                    legIndex);
+            }
+
+            follower.parallelFollowerLegIndex = legIndex;
+            follower.parallelFollowerHomeTransform = follower.baseTransform;
+            follower.parallelFollowerHomeBaseAnchor = importedGeometry.baseAnchors[index];
+            follower.parallelFollowerHomePlatformAnchor = importedGeometry.platformAnchors[index];
+            follower.parallelFollowerAnchorsValid = true;
+            follower.parallelFollowerHomeLength =
+                (follower.parallelFollowerHomePlatformAnchor -
+                    follower.parallelFollowerHomeBaseAnchor).norm();
+            follower.parallelFollowerActuatorDofIndex =
+                findStewartFollowerActuatorDofIndex(follower, legIndex);
+            follower.parallelFollowerActuatorSign =
+                calibrateStewartFollowerActuatorSign(
+                    follower,
+                    follower.parallelFollowerActuatorDofIndex,
+                    baseLink,
+                    upperLink);
+            captureStewartFollowerDrivenLinks(follower, legIndex);
+            LOG_INFO("rs2026") << "Stewart follower configured: platform="
+                << platform.documentId
+                << ", follower=" << follower.documentId
+                << ", leg=" << (legIndex + 1)
+                << ", homeLength=" << follower.parallelFollowerHomeLength << " m"
+                << ", actuatorDof=" << follower.parallelFollowerActuatorDofIndex
+                << ", actuatorSign=" << follower.parallelFollowerActuatorSign
+                << ", drivenLinks=" << follower.parallelFollowerDrivenLinks.size();
+        }
+
+        const bool hasAllAnchors =
+            std::all_of(baseAnchorsFound.begin(), baseAnchorsFound.end(), [](bool found) {
+                return found;
+            }) &&
+            std::all_of(platformAnchorsFound.begin(), platformAnchorsFound.end(), [](bool found) {
+                return found;
+            });
+        if(!hasAllAnchors) {
+            LOG_WARNING("rs2026") << "Stewart imported geometry incomplete: robot="
+                << platform.documentId;
+            continue;
+        }
+
+        platform.parallelGeometry = importedGeometry;
+        std::string error;
+        if(!kine::StewartPlatformKinematics::computeActuatorLengths(
+               platform.parallelGeometry,
+               platform.parallelPose,
+               platform.parallelActuatorLengths,
+               &error)) {
+            LOG_WARNING("rs2026") << "Failed to initialize imported Stewart geometry: robot="
+                << platform.documentId << ", error=" << error;
+        } else {
+            platform.parallelActuatorHomeLengths = platform.parallelActuatorLengths;
+            configureStewartInternalActuatorDofs(platform);
+            captureStewartInternalPlatformVisuals(platform);
+            const auto lengthRange = std::minmax_element(
+                platform.parallelActuatorLengths.begin(),
+                platform.parallelActuatorLengths.end());
+            LOG_INFO("rs2026") << "Stewart imported actuator home length range: robot="
+                << platform.documentId
+                << ", min=" << *lengthRange.first << " m"
+                << ", max=" << *lengthRange.second << " m"
+                << ", internalPlatformLinks="
+                << platform.parallelInternalPlatformDrivenLinks.size();
+        }
+    }
+}
+
+void ProjectScene::Impl::syncAllStewartFollowers()
+{
+    for(const RuntimeRobot& platform : robots) {
+        syncStewartFollowers(platform);
+    }
+}
+
+void ProjectScene::Impl::setStewartPlatformBaseTransform(
+    RuntimeRobot& platform,
+    const collision::Transform3& baseTransform)
+{
+    if(!platform.parallelControlEnabled) {
+        platform.baseTransform = baseTransform;
+        ProjectRuntimeBuilder::updateRobotPose(platform);
+        return;
+    }
+
+    platform.parallelHomeBaseTransform = baseTransform;
+    platform.baseTransform = platform.parallelHomeBaseTransform;
+    solveStewartInternalLegControls(platform);
+    ProjectRuntimeBuilder::updateRobotPose(platform);
+    applyStewartInternalPlatformVisualOverrides(platform);
+    syncStewartFollowers(platform);
+    for(RuntimeRobot& follower : robots) {
+        if(follower.parallelFollowerEnabled && sameStewartSource(platform, follower)) {
+            follower.parallelFollowerHomeTransform = baseTransform;
+            follower.baseTransform = baseTransform;
+            ProjectRuntimeBuilder::updateRobotPose(follower);
+        }
+    }
+    applyStewartFollowerVisualOverrides(platform);
+}
+
+void ProjectScene::Impl::applyStewartInternalPlatformVisualOverrides(RuntimeRobot& platform)
+{
+    applyStewartInternalPlatformVisualOverride(platform);
+}
+
+void ProjectScene::Impl::applyStewartFollowerVisualOverrides(const RuntimeRobot& platform)
+{
+    if(!platform.parallelControlEnabled) {
+        return;
+    }
+
+    for(RuntimeRobot& follower : robots) {
+        if(!follower.parallelFollowerEnabled ||
+            follower.documentId == platform.documentId ||
+            !sameStewartSource(platform, follower)) {
+            continue;
+        }
+
+        applyStewartFollowerVisualOverride(platform, follower);
+    }
+}
+
+void ProjectScene::Impl::applyAllStewartFollowerVisualOverrides()
+{
+    for(RuntimeRobot& platform : robots) {
+        applyStewartInternalPlatformVisualOverrides(platform);
+        applyStewartFollowerVisualOverrides(platform);
+    }
+}
+
 void ProjectScene::Impl::buildProjectRobots()
 {
     const auto buildStart = std::chrono::steady_clock::now();
     const RobotCollisionLinkSelectionMap collisionLinkSelection =
         buildRobotCollisionLinkSelection(projectDocument);
+    const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
     uint64_t runtimeId = 1;
     robots.reserve(projectDocument.robots.size());
     for(const auto& robotDesc : projectDocument.robots) {
@@ -3300,19 +4613,55 @@ void ProjectScene::Impl::buildProjectRobots()
         runtime.runtimeId = runtimeId++;
         runtime.documentId = robotDesc.id;
         runtime.name = robotDesc.name;
+        runtime.sourceType = robotDesc.sourceType;
+        runtime.sourcePath = robotDesc.sourcePath;
+        runtime.sourceModelIndex = robotDesc.sourceModelIndex;
         runtime.baseTransform = ProjectRuntimeBuilder::makeTransform(robotDesc.baseTransform);
         runtime.collisionEnabled = robotDesc.collisionEnabled;
 
-        const std::filesystem::path robotPath = simulation_project::AssetResolver::resolveProjectPath(
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument.assetSearchPaths),
-            robotDesc.sourcePath);
-        runtime.model = ProjectRuntimeBuilder::loadSingleRobot(robotPath, robotDesc.sourceType);
+        const simulation_project::AssetResolveContext robotResolveContext =
+            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument);
+        std::filesystem::path robotPath;
+        if(robotDesc.sourcePath.find("://") != std::string::npos
+            && !simulation_project::AssetResolver::isAppGeneratedAssetReference(
+                robotDesc.sourcePath)) {
+            const assetcore::AssetResolveResult resolveResult =
+                simulation_project::AssetResolver::resolveProjectReference(
+                    robotResolveContext,
+                    robotDesc.sourcePath);
+            if(!resolveResult.success()) {
+                throw std::runtime_error(
+                    "Robot asset URI resolution failed: " + robotDesc.sourcePath
+                    + (resolveResult.diagnostic.empty()
+                        ? std::string()
+                        : " (" + resolveResult.diagnostic + ")"));
+            }
+            robotPath = resolveResult.resolvedPath;
+        } else {
+            robotPath = simulation_project::AssetResolver::resolveProjectPath(
+                robotResolveContext,
+                robotDesc.sourcePath);
+        }
+        runtime.model = ProjectRuntimeBuilder::loadSingleRobot(
+            robotPath,
+            robotDesc.sourceType,
+            robotDesc.sourceModelIndex,
+            simulation_project::AssetResolver::urdfPackageRootsForReference(
+                robotResolveContext,
+                robotDesc.sourcePath));
+        configureParallelControlIfNeeded(runtime, robotDesc, runtime.model);
+        configureParallelFollowerIfNeeded(runtime, robotDesc, runtime.model);
         RobotCollisionOverrideApplier::apply(projectDocument, robotDesc, projectBasePath, runtime.model);
         runtime.instance = std::make_shared<robotinstance::RobotInstance>(runtime.model, robotDesc.id);
         runtime.instance->setBaseTransform(runtime.baseTransform);
         ProjectRuntimeBuilder::applyInitialJoints(*runtime.instance, robotDesc.initialJoints);
         runtime.instance->update();
-        runtime.visualBridge = std::make_shared<robot_render::RobotVisualBridge>(runtime.instance, sceneGraph);
+        runtime.visualBridge = std::make_shared<robot_render::RobotVisualBridge>(
+            runtime.instance,
+            sceneGraph,
+            modelAssetCache,
+            geometryResourceCache,
+            assetCorrelationId);
         if(collisionRuntimeBuilt) {
             const auto selectionIt = collisionLinkSelection.find(runtime.documentId);
             buildRobotCollision(
@@ -3321,7 +4670,8 @@ void ProjectScene::Impl::buildProjectRobots()
                 runtime.model,
                 sceneGraph,
                 showCollisionGeometry,
-                selectionIt != collisionLinkSelection.end() ? &selectionIt->second : nullptr);
+                selectionIt != collisionLinkSelection.end() ? &selectionIt->second : nullptr,
+                collisionBuildPlan);
         }
         ProjectRuntimeBuilder::updateRobotPose(runtime);
 
@@ -3334,16 +4684,33 @@ void ProjectScene::Impl::buildProjectRobots()
                 << ", collisionObjects=" << (runtime.collisionInstance ? runtime.collisionInstance->objects().size() : 0);
         }
 
-        robotLinks.push_back(ProjectScene::RobotLinkGroup{
-            runtime.documentId,
-            runtime.name,
-            runtime.model.linkNames,
-            jointNames(runtime.model),
-            movableJointInfos(runtime.model) });
+        if(!runtime.parallelFollowerEnabled) {
+            robotLinks.push_back(ProjectScene::RobotLinkGroup{
+                runtime.documentId,
+                runtime.name,
+                runtime.model.linkNames,
+                runtime.parallelControlEnabled
+                    ? parallelControlJointNames()
+                    : jointNames(runtime.model),
+                runtime.parallelControlEnabled
+                    ? parallelControlJointInfos()
+                    : movableJointInfos(runtime.model) });
+        }
         LOG_DEBUG("rs2026") << "Project robot build: robot=" << runtime.documentId
             << ", links=" << runtime.model.linkNames.size()
             << ", elapsedMs=" << elapsedMilliseconds(robotStart);
     }
+    configureStewartGroups();
+    syncAllStewartFollowers();
+    for(RuntimeRobot& runtime : robots) {
+        if(runtime.parallelControlEnabled) {
+            solveStewartInternalLegControls(runtime);
+            ProjectRuntimeBuilder::updateRobotPose(runtime);
+        } else if(runtime.parallelFollowerEnabled) {
+            ProjectRuntimeBuilder::updateRobotPose(runtime);
+        }
+    }
+    applyAllStewartFollowerVisualOverrides();
     LOG_DEBUG("rs2026") << "Project robots build: count=" << robots.size()
         << ", elapsedMs=" << elapsedMilliseconds(buildStart);
 }
@@ -3351,6 +4718,8 @@ void ProjectScene::Impl::buildProjectRobots()
 void ProjectScene::Impl::buildProjectObjects()
 {
     const auto buildStart = std::chrono::steady_clock::now();
+    const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
     uint64_t runtimeId = 100000;
     objects.reserve(projectDocument.objects.size());
 
@@ -3360,10 +4729,13 @@ void ProjectScene::Impl::buildProjectObjects()
             objectDesc,
             projectDocument.collision,
             runtimeId++,
-            projectBasePath,
-            projectDocument.assetSearchPaths,
+            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument),
             sceneGraph,
-            collisionRuntimeBuilt);
+            collisionRuntimeBuilt,
+            collisionBuildPlan.explicitObjectModels(objectDesc.id),
+            &modelAssetCache,
+            &geometryResourceCache,
+            assetCorrelationId);
 
         if(collisionRuntimeBuilt && runtime.collisionEnabled && !runtime.collisionObjects.empty()) {
             for(const RuntimeSceneCollisionObject& collisionObject : runtime.collisionObjects) {
@@ -3378,6 +4750,9 @@ void ProjectScene::Impl::buildProjectObjects()
                 info.info.elementName = collisionObject.collisionShape.label.empty()
                     ? runtime.documentId
                     : collisionObject.collisionShape.label;
+                info.info.modelId = collisionObject.modelId.empty()
+                    ? collisionObject.collisionShape.modelId
+                    : collisionObject.modelId;
                 info.info.geometryRole = collisionObject.collisionShape.role;
                 info.shape = collisionObject.collisionShape;
                 collisionScene.addEnvironmentObject(collisionObject.collisionObject, info);
@@ -3416,8 +4791,7 @@ void ProjectScene::Impl::buildProjectPointClouds()
         RuntimeSceneObject runtime = ProjectRuntimeBuilder::buildPointCloud(
             pointCloudDesc,
             runtimeId++,
-            projectBasePath,
-            projectDocument.assetSearchPaths,
+            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument),
             sceneGraph);
 
         if(collisionRuntimeBuilt && runtime.collisionEnabled && !runtime.collisionObjects.empty()) {
@@ -3483,6 +4857,9 @@ void ProjectScene::Impl::registerRuntimeCollisionObjects()
                 info.info.elementName = collisionObject.collisionShape.label.empty()
                     ? runtime.documentId
                     : collisionObject.collisionShape.label;
+                info.info.modelId = collisionObject.modelId.empty()
+                    ? collisionObject.collisionShape.modelId
+                    : collisionObject.modelId;
                 info.info.geometryRole = collisionObject.collisionShape.role;
                 info.shape = collisionObject.collisionShape;
                 collisionScene.addEnvironmentObject(collisionObject.collisionObject, info);
@@ -3514,6 +4891,8 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
 
     const RobotCollisionLinkSelectionMap collisionLinkSelection =
         buildRobotCollisionLinkSelection(projectDocument);
+    const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
     std::size_t robotCollisionCount = 0;
     for(RuntimeRobot& runtime : robots) {
         const auto selectionIt = collisionLinkSelection.find(runtime.documentId);
@@ -3523,7 +4902,8 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
             runtime.model,
             sceneGraph,
             showCollisionGeometry,
-            selectionIt != collisionLinkSelection.end() ? &selectionIt->second : nullptr);
+            selectionIt != collisionLinkSelection.end() ? &selectionIt->second : nullptr,
+            collisionBuildPlan);
         if(runtime.collisionInstance) {
             robotCollisionCount += runtime.collisionInstance->objects().size();
         }
@@ -3541,15 +4921,17 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
             runtime,
             *objectDesc,
             projectDocument.collision,
-            projectBasePath,
-            projectDocument.assetSearchPaths)) {
+            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument),
+            collisionBuildPlan.explicitObjectModels(runtime.documentId),
+            &modelAssetCache,
+            assetCorrelationId)) {
             objectCollisionCount += runtime.collisionObjects.size();
         }
     }
 
     ensureToolAttachmentCollisionObjects();
     registerRuntimeCollisionObjects();
-    collisionDetectors = ProjectCollisionDetectorBuilder::build(projectDocument, robots, objects);
+    collisionDetectors = buildProjectCollisionDetectorViewRuntimes(projectDocument, robots, objects);
     collisionRuntimeBuilt = true;
     collisionRuntimeBuildInProgress = false;
     invalidateCollisionGeometryOverlayCache();
@@ -3608,20 +4990,45 @@ void ProjectScene::Impl::buildProjectToolAttachments()
         runtime.visualPath = mountedAttachment.visual.visualPath;
 
         std::shared_ptr<assetcore::ModelDesc> modelDesc;
+        std::string assetKey;
+        assetcore::ModelAssetLeaseMetrics assetMetrics;
+        const auto assetAcquireStart = std::chrono::steady_clock::now();
         if(!runtime.visualPath.empty()) {
-            modelDesc = assetcore::AssetManager::instance().loadModel(
-                pathToUtf8(runtime.visualPath),
-                static_cast<float>(runtime.visualScale));
+            assetcore::ModelAssetLeaseRequest request;
+            request.resolveContext = assetcore::AssetResolver::defaultContext(projectBasePath);
+            if(!projectDocument.assetStore.directory.empty()) {
+                request.resolveContext.projectAssetRootPath =
+                    projectBasePath / projectDocument.assetStore.directory;
+            }
+            request.resolveContext.assetSearchPaths = projectDocument.assetSearchPaths;
+            request.source = pathToUtf8(runtime.visualPath);
+            request.scale = static_cast<float>(runtime.visualScale);
+            request.consumer = "mountedAttachment:" + runtime.documentId;
+            request.correlationId = assetCorrelationId;
+            assetcore::ModelAssetLeaseResult lease = modelAssetCache.acquire(request);
+            if(!lease.success()) {
+                throw std::runtime_error(lease.errorMessage);
+            }
+            modelDesc = std::move(lease.model);
+            assetKey = std::move(lease.assetKey);
+            assetMetrics = lease.metrics;
         }
+        const double assetAcquireMs = elapsedMilliseconds(assetAcquireStart);
 
         robot_render::MountedAttachmentVisualDesc visualDesc;
         visualDesc.id = runtime.documentId;
         visualDesc.worldAttachmentMount = math::eigenToGlm(runtime.worldToolMount);
         visualDesc.attachmentMountToVisual = math::eigenToGlm(runtime.assetMountToVisual);
+        rendercore::ModelGeometryBuildMetrics geometryMetrics;
+        const auto geometryBuildStart = std::chrono::steady_clock::now();
         runtime.visual = robot_render::MountedAttachmentVisualBridge::build(
             visualDesc,
             modelDesc.get(),
-            sceneGraph);
+            sceneGraph,
+            geometryResourceCache,
+            assetKey,
+            &geometryMetrics);
+        const double geometryBuildMs = elapsedMilliseconds(geometryBuildStart);
 
         const std::size_t index = toolAttachments.size();
         if(runtime.visible && firstVisible == static_cast<std::size_t>(-1)) {
@@ -3643,9 +5050,16 @@ void ProjectScene::Impl::buildProjectToolAttachments()
             << "\n";
 
         toolAttachments.push_back(std::move(runtime));
-        LOG_DEBUG("rs2026") << "Project mounted attachment build: attachment="
+        LOG_DEBUG("rs2026") << "ATTACHMENT VISUAL "
             << mountedAttachment.documentId
-            << ", elapsedMs=" << elapsedMilliseconds(attachmentStart);
+            << " | asset=" << (assetMetrics.cacheHit ? "hit" : "miss")
+            << ' ' << std::fixed << std::setprecision(2) << assetAcquireMs << " ms"
+            << " | geometry=" << (geometryMetrics.geometryHitCount > 0 ? "hit" : "build")
+            << ' ' << geometryBuildMs << " ms"
+            << " | total=" << elapsedMilliseconds(attachmentStart) << " ms";
+        LOG_TRACE("rs2026") << "Project mounted attachment asset detail: attachment="
+            << mountedAttachment.documentId
+            << " | key=" << assetKey;
     }
 
     activeToolAttachmentIndex = firstEnabled != static_cast<std::size_t>(-1)
@@ -3716,6 +5130,8 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
     std::size_t referencedCount = 0;
     std::size_t builtCount = 0;
     std::size_t skippedCount = 0;
+    const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
 
     for(std::size_t index = 0; index < toolAttachments.size(); ++index) {
         RuntimeToolAttachmentVisual& runtime = toolAttachments[index];
@@ -3743,100 +5159,124 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
 
         const simulation_project::ObjectCollisionOverrideDesc* collisionOverride =
             findToolAttachmentCollisionOverride(projectDocument, runtime.documentId);
-        std::string activeModelId =
+        std::string currentModelId =
             activeObjectCollisionModelId(projectDocument.collision, runtime.documentId);
-        if(simulation_project::isConvertFromVisualCollisionModelId(activeModelId) &&
+        if(simulation_project::isConvertFromVisualCollisionModelId(currentModelId) &&
             collisionOverride != nullptr &&
             collisionOverride->objectId != runtime.documentId) {
-            activeModelId = activeObjectCollisionModelId(projectDocument.collision, collisionOverride->objectId);
+            currentModelId = activeObjectCollisionModelId(
+                projectDocument.collision,
+                collisionOverride->objectId);
         }
-        const bool useOverrideCollision =
-            collisionOverride != nullptr &&
-            !simulation_project::isConvertFromVisualCollisionModelId(activeModelId);
-        const bool hasOverrideCollision = useOverrideCollision &&
-            ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
-                toolCollisionObject,
-                *collisionOverride,
-                runtimeIdBase,
-                projectBasePath,
-                projectDocument.assetSearchPaths,
-                activeModelId);
-        if(hasOverrideCollision) {
-            toolCollisionObject.collisionObject = toolCollisionObject.collisionObjects.front().collisionObject;
-            toolCollisionObject.collisionShape = toolCollisionObject.collisionObjects.front().collisionShape;
-            ProjectRuntimeBuilder::updateSceneObjectPose(toolCollisionObject);
-
-            runtime.collisionObjectIndex = objects.size();
-            objects.push_back(std::move(toolCollisionObject));
-            ++builtCount;
-
-            LOG_DEBUG("rs2026") << "Tool attachment collision override lazy build: attachment="
-                << runtime.documentId
-                << ", overrideObject=" << collisionOverride->objectId
-                << ", elements=" << objects[runtime.collisionObjectIndex].collisionObjects.size()
-                << ", replaceOriginal=true"
-                << ", elapsedMs=" << elapsedMilliseconds(attachmentStart);
-            continue;
+        std::unordered_set<std::string> modelIds{ currentModelId };
+        if(const std::unordered_set<std::string>* explicitModels =
+            collisionBuildPlan.explicitObjectModels(runtime.documentId)) {
+            modelIds.insert(explicitModels->begin(), explicitModels->end());
         }
 
-        if(useOverrideCollision) {
+        bool visualModelRequested = false;
+        for(const std::string& modelId : modelIds) {
+            if(simulation_project::isConvertFromVisualCollisionModelId(modelId)) {
+                visualModelRequested = true;
+            } else if(collisionOverride != nullptr) {
+                ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
+                    toolCollisionObject,
+                    *collisionOverride,
+                    runtimeIdBase,
+                    projectBasePath,
+                    projectDocument.assetSearchPaths,
+                    modelId,
+                    currentModelId,
+                    projectDocument.assetStore.directory);
+            }
+        }
+
+        if(!visualModelRequested && toolCollisionObject.collisionObjects.empty()) {
             ++skippedCount;
             LOG_WARNING("rs2026") << "Tool attachment collision lazy build skipped: attachment="
                 << runtime.documentId
-                << ", overrideObject=" << collisionOverride->objectId
-                << ", reason=collision override produced no geometry";
+                << ", reason=requested models produced no geometry";
             continue;
         }
 
-        if(runtime.visualPath.empty()) {
-            ++skippedCount;
-            continue;
+        if(visualModelRequested) {
+            [&]() {
+                if(runtime.visualPath.empty()) {
+                    LOG_WARNING("rs2026") << "Tool attachment collision visual model unavailable: attachment="
+                        << runtime.documentId
+                        << ", reason=visual path is empty";
+                    return false;
+                }
+
+                std::shared_ptr<assetcore::ModelDesc> modelDesc =
+                    assetcore::AssetManager::instance().loadModel(
+                        pathToUtf8(runtime.visualPath),
+                        static_cast<float>(runtime.visualScale));
+                if(!modelDesc) {
+                    LOG_WARNING("rs2026") << "Tool attachment collision visual model unavailable: attachment="
+                        << runtime.documentId
+                        << ", reason=model load failed";
+                    return false;
+                }
+
+                ObjMesh mesh = makeObjMesh(*modelDesc, 1.0);
+                if(mesh.vertices.empty() || mesh.indices.empty()) {
+                    LOG_WARNING("rs2026") << "Tool attachment collision visual model unavailable: attachment="
+                        << runtime.documentId
+                        << ", reason=empty mesh";
+                    return false;
+                }
+
+                CollisionShapeDesc buildShape;
+                buildShape.type = CollisionShapeType::TriangleMesh;
+                buildShape.label = "tool:" + runtime.documentId;
+                buildShape.source = pathToUtf8(runtime.visualPath);
+                buildShape.modelId = simulation_project::kConvertFromVisualCollisionModelId;
+                buildShape.vertices = mesh.vertices;
+                buildShape.indices = mesh.indices;
+                auto geometry = buildGeometryForTarget(
+                    buildShape,
+                    "attachment",
+                    runtime.documentId,
+                    buildShape.modelId,
+                    buildShape.label);
+                if(!geometry) {
+                    LOG_WARNING("rs2026") << "Tool attachment collision visual model unavailable: attachment="
+                        << runtime.documentId
+                        << ", reason=triangle mesh build failed";
+                    return false;
+                }
+
+                RuntimeSceneCollisionObject collisionRuntime;
+                collisionRuntime.modelId = simulation_project::kConvertFromVisualCollisionModelId;
+                collisionRuntime.currentModel = collisionRuntime.modelId == currentModelId;
+                collisionRuntime.collisionShape.type = CollisionShapeType::TriangleMesh;
+                collisionRuntime.collisionShape.label = "tool:" + runtime.documentId;
+                collisionRuntime.collisionShape.role = CollisionGeometryRole::Exact;
+                collisionRuntime.collisionShape.modelId = collisionRuntime.modelId;
+                collisionRuntime.collisionShape.currentModel = collisionRuntime.currentModel;
+                collisionRuntime.collisionShape.vertices = mesh.vertices;
+                collisionRuntime.collisionShape.indices = mesh.indices;
+                collisionRuntime.collisionShape.localTransform = runtime.assetMountToVisual;
+                collisionRuntime.localTransform = runtime.assetMountToVisual;
+                collisionRuntime.collisionObject = std::make_shared<CollisionObject>(
+                    collisionVariantObjectId(runtimeIdBase, collisionRuntime.modelId, 0),
+                    geometry);
+                toolCollisionObject.collisionObjects.push_back(std::move(collisionRuntime));
+                return true;
+            }();
         }
 
-        std::shared_ptr<assetcore::ModelDesc> modelDesc =
-            assetcore::AssetManager::instance().loadModel(
-                pathToUtf8(runtime.visualPath),
-                static_cast<float>(runtime.visualScale));
-        if(!modelDesc) {
+        if(toolCollisionObject.collisionObjects.empty()) {
             ++skippedCount;
             LOG_WARNING("rs2026") << "Tool attachment collision lazy build skipped: attachment="
                 << runtime.documentId
-                << ", reason=model load failed";
+                << ", reason=requested models produced no geometry";
             continue;
         }
 
-        ObjMesh mesh = makeObjMesh(*modelDesc, 1.0);
-        if(mesh.vertices.empty() || mesh.indices.empty()) {
-            ++skippedCount;
-            LOG_WARNING("rs2026") << "Tool attachment collision lazy build skipped: attachment="
-                << runtime.documentId
-                << ", reason=empty mesh";
-            continue;
-        }
-
-        auto geometry = CollisionGeometryBuilder::buildTriangleMesh(makeTriangleMeshData(mesh));
-        if(!geometry) {
-            ++skippedCount;
-            LOG_WARNING("rs2026") << "Tool attachment collision lazy build skipped: attachment="
-                << runtime.documentId
-                << ", reason=triangle mesh build failed";
-            continue;
-        }
-
-        RuntimeSceneCollisionObject collisionRuntime;
-        collisionRuntime.collisionShape.type = CollisionShapeType::TriangleMesh;
-        collisionRuntime.collisionShape.label = "tool:" + runtime.documentId;
-        collisionRuntime.collisionShape.role = CollisionGeometryRole::Exact;
-        collisionRuntime.collisionShape.vertices = mesh.vertices;
-        collisionRuntime.collisionShape.indices = mesh.indices;
-        collisionRuntime.collisionShape.localTransform = runtime.assetMountToVisual;
-        collisionRuntime.localTransform = runtime.assetMountToVisual;
-        collisionRuntime.collisionObject =
-            std::make_shared<CollisionObject>(runtimeIdBase, geometry);
-
-        toolCollisionObject.collisionObject = collisionRuntime.collisionObject;
-        toolCollisionObject.collisionShape = collisionRuntime.collisionShape;
-        toolCollisionObject.collisionObjects.push_back(std::move(collisionRuntime));
+        toolCollisionObject.collisionObject = toolCollisionObject.collisionObjects.front().collisionObject;
+        toolCollisionObject.collisionShape = toolCollisionObject.collisionObjects.front().collisionShape;
         ProjectRuntimeBuilder::updateSceneObjectPose(toolCollisionObject);
 
         runtime.collisionObjectIndex = objects.size();
@@ -3845,8 +5285,8 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
 
         LOG_DEBUG("rs2026") << "Tool attachment collision lazy build: attachment="
             << runtime.documentId
-            << ", vertices=" << mesh.vertices.size()
-            << ", indices=" << mesh.indices.size()
+            << ", models=" << modelIds.size()
+            << ", elements=" << objects[runtime.collisionObjectIndex].collisionObjects.size()
             << ", elapsedMs=" << elapsedMilliseconds(attachmentStart);
     }
 
@@ -4274,7 +5714,7 @@ void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
                 const simulation_project::AssetResolveContext context =
                     ProjectRuntimeBuilder::makeAssetResolveContext(
                         projectBasePath,
-                        projectDocument.assetSearchPaths);
+                        projectDocument);
                 addPreviewModel(
                     simulation_project::AssetResolver::resolveProjectPath(
                         context,
@@ -4297,7 +5737,7 @@ void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
                 const simulation_project::AssetResolveContext context =
                     ProjectRuntimeBuilder::makeAssetResolveContext(
                         projectBasePath,
-                        projectDocument.assetSearchPaths);
+                        projectDocument);
                 for(const simulation_project::ObjectCollisionElementOverrideDesc& element :
                     collisionOverride->elements) {
                     if(!element.enabled) {
@@ -4391,7 +5831,9 @@ void ProjectScene::Impl::drawObjectCollisionModelVariantPreview()
            previewObject.runtimeId,
            projectBasePath,
            projectDocument.assetSearchPaths,
-           previewObjectCollisionModelVariantId)) {
+           previewObjectCollisionModelVariantId,
+           previewObjectCollisionModelVariantId,
+           projectDocument.assetStore.directory)) {
         return;
     }
 
@@ -4525,7 +5967,9 @@ void ProjectScene::Impl::buildToolAssetPreview()
 
     if(!toolAssetPreview.asset.visualPath.empty()) {
         const simulation_project::AssetResolveContext resolveContext =
-            ProjectRuntimeBuilder::makeAssetResolveContext(toolAssetPreview.basePath, {});
+            ProjectRuntimeBuilder::makeAssetResolveContext(
+                toolAssetPreview.basePath,
+                std::vector<std::string>{});
         toolAssetPreview.visualPath = simulation_project::AssetResolver::resolveProjectPath(
             resolveContext,
             toolAssetPreview.asset.visualPath);
@@ -4683,7 +6127,7 @@ void ProjectScene::Impl::setActiveToolFrameRobot(const std::string& robotId)
 void ProjectScene::Impl::applyProjectCollisionAndView()
 {
     const auto buildStart = std::chrono::steady_clock::now();
-    collisionDetectors = ProjectCollisionDetectorBuilder::build(projectDocument, robots, objects);
+    collisionDetectors = buildProjectCollisionDetectorViewRuntimes(projectDocument, robots, objects);
     if(activeCollisionDetectorId.empty() ||
         std::none_of(
             collisionDetectors.begin(),
@@ -4756,6 +6200,11 @@ void ProjectScene::setProjectDocument(
     m_impl->invalidateCollisionGeometryOverlayCache();
 }
 
+const std::filesystem::path& ProjectScene::projectBasePath() const
+{
+    return m_impl->projectBasePath;
+}
+
 void ProjectScene::setDefaultBackgroundColor(const simulation_project::ColorDesc& color)
 {
     m_impl->defaultBackgroundColor = color;
@@ -4779,7 +6228,7 @@ bool ProjectScene::refreshCollisionConfiguration(
     m_impl->projectBasePath = basePath;
     m_impl->toolAssetPreviewSet = false;
     m_impl->invalidateCollisionRuntime();
-    m_impl->collisionDetectors = ProjectCollisionDetectorBuilder::build(
+    m_impl->collisionDetectors = buildProjectCollisionDetectorViewRuntimes(
         m_impl->projectDocument,
         m_impl->robots,
         m_impl->objects);
@@ -4826,6 +6275,9 @@ bool ProjectScene::initialize()
     if(m_impl->initialized) {
         return true;
     }
+
+    m_impl->assetCorrelationId = "project-scene-" + std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
 
     const auto openGlStart = std::chrono::steady_clock::now();
     if(!m_impl->initializeOpenGlRuntime()) {
@@ -4942,8 +6394,15 @@ void ProjectScene::update(double timeSeconds)
     const auto poseStart = std::chrono::steady_clock::now();
     for(RuntimeRobot& robot : m_impl->robots) {
         ProjectRuntimeBuilder::applyAutoMotion(robot, timeSeconds);
+        if(robot.parallelControlEnabled && robot.autoMotionEnabled) {
+            solveStewartInternalLegControls(robot);
+        }
+    }
+    m_impl->syncAllStewartFollowers();
+    for(RuntimeRobot& robot : m_impl->robots) {
         ProjectRuntimeBuilder::updateRobotPose(robot);
     }
+    m_impl->applyAllStewartFollowerVisualOverrides();
     m_impl->syncProjectToolAttachments();
     m_impl->lastRobotPoseUpdateMs = elapsedMilliseconds(poseStart);
 
@@ -4965,7 +6424,7 @@ void ProjectScene::update(double timeSeconds)
     double totalCheckMs = 0.0;
     double totalDistanceMs = 0.0;
     for(ProjectCollisionDetectorRuntime& detector : m_impl->collisionDetectors) {
-        if(m_impl->collisionQueriesEnabled && detector.enabled) {
+        if(m_impl->collisionQueriesEnabled && detector.enabled && detector.valid) {
             const bool isActive = &detector == activeDetector;
             const bool wasMissingResult = !detector.hasResult;
 
@@ -5044,8 +6503,8 @@ void ProjectScene::update(double timeSeconds)
             detector.lastDistanceMs = 0.0;
             detector.lastQueryMs = 0.0;
             detector.lastNearestQueryFrame = 0;
-            detector.nearestState = "NotComputed";
-            detector.nearestReason.clear();
+            detector.nearestState = detector.valid ? "NotComputed" : "InvalidDetector";
+            detector.nearestReason = detector.valid ? std::string() : detector.errorMessage;
         }
     }
     if(totalQueryMs > 16.0) {
@@ -5752,7 +7211,7 @@ bool ProjectScene::applySurfaceScalarOverlay(
     const std::filesystem::path sourcePath = simulation_project::AssetResolver::resolveProjectPath(
         ProjectRuntimeBuilder::makeAssetResolveContext(
             m_impl->projectBasePath,
-            m_impl->projectDocument.assetSearchPaths),
+            m_impl->projectDocument),
         objectDesc->sourcePath);
     std::string loadError;
     const std::shared_ptr<assetcore::ModelDesc> sourceDesc =
@@ -6018,8 +7477,6 @@ bool ProjectScene::setVisibleRobotCollisionVariant(
         RobotCollisionModelInspector::summarizeLink(
             *robot,
             linkName,
-            std::string(),
-            std::string(),
             variantId);
     const auto it = std::find_if(
         summary.variants.begin(),
@@ -6286,8 +7743,13 @@ bool ProjectScene::setRobotBaseTransform(
         return false;
     }
 
-    robot->baseTransform = ProjectRuntimeBuilder::makeTransform(transform);
-    ProjectRuntimeBuilder::updateRobotPose(*robot);
+    const collision::Transform3 baseTransform = ProjectRuntimeBuilder::makeTransform(transform);
+    if(robot->parallelControlEnabled) {
+        m_impl->setStewartPlatformBaseTransform(*robot, baseTransform);
+    } else {
+        robot->baseTransform = baseTransform;
+        ProjectRuntimeBuilder::updateRobotPose(*robot);
+    }
     m_impl->syncProjectToolAttachments();
     return true;
 }
@@ -6302,7 +7764,18 @@ bool ProjectScene::setRobotJointValue(
         return false;
     }
 
+    m_impl->syncStewartFollowers(*robot);
+    if(robot->parallelControlEnabled) {
+        solveStewartInternalLegControls(*robot);
+    }
     ProjectRuntimeBuilder::updateRobotPose(*robot);
+    m_impl->applyStewartInternalPlatformVisualOverrides(*robot);
+    for(RuntimeRobot& follower : m_impl->robots) {
+        if(follower.parallelFollowerEnabled && sameStewartSource(*robot, follower)) {
+            ProjectRuntimeBuilder::updateRobotPose(follower);
+        }
+    }
+    m_impl->applyStewartFollowerVisualOverrides(*robot);
     m_impl->syncProjectToolAttachments();
     return true;
 }
@@ -6772,6 +8245,8 @@ std::vector<ProjectScene::CollisionDetectorInfo> ProjectScene::collisionDetector
         info.enabled = detector.enabled;
         info.visible = detector.visible;
         info.active = detector.id == m_impl->activeCollisionDetectorId;
+        info.valid = detector.valid;
+        info.errorMessage = detector.errorMessage;
         info.includePairCount = detector.options.includePairs.size();
         info.effectiveIncludePairCount = detector.effectiveIncludePairCount;
         info.contactCount = visualizableContactCount(detector.lastResult);
@@ -6855,21 +8330,21 @@ bool ProjectScene::setActiveCollisionDetector(const std::string& id)
 
 bool ProjectScene::setCollisionDetectorEnabled(const std::string& id, bool enabled)
 {
-    for(ProjectCollisionDetectorRuntime& detector : m_impl->collisionDetectors) {
-        if(detector.id == id) {
-            detector.enabled = enabled;
-            detector.hasResult = false;
-            detector.lastResult.clear();
-            for(simulation_project::CollisionDetectorDesc& desc : m_impl->projectDocument.collision.detectors) {
-                if(desc.id == id) {
-                    desc.enabled = enabled;
-                    break;
-                }
-            }
-            return true;
-        }
+    simulation_project::ProjectDocument document = m_impl->projectDocument;
+    const auto detectorIt = std::find_if(
+        document.collision.detectors.begin(),
+        document.collision.detectors.end(),
+        [&](const simulation_project::CollisionDetectorDesc& detector) {
+            return detector.id == id;
+        });
+    if(detectorIt == document.collision.detectors.end()) {
+        return false;
     }
-    return false;
+    if(detectorIt->enabled == enabled) {
+        return true;
+    }
+    detectorIt->enabled = enabled;
+    return rebuildCollisionDetectorsFromDocument(document);
 }
 
 bool ProjectScene::setCollisionDetectorVisible(const std::string& id, bool visible)
@@ -6910,9 +8385,20 @@ bool ProjectScene::updateCollisionDetectorRuntimeOptions(const simulation_projec
 
 bool ProjectScene::rebuildCollisionDetectorsFromDocument(const simulation_project::ProjectDocument& document)
 {
+    const bool collisionRuntimeWasBuilt = m_impl->collisionRuntimeBuilt;
     m_impl->projectDocument = document;
     const std::string previousActiveId = m_impl->activeCollisionDetectorId;
-    m_impl->collisionDetectors = ProjectCollisionDetectorBuilder::build(document, m_impl->robots, m_impl->objects);
+    m_impl->invalidateCollisionRuntime();
+    if(collisionRuntimeWasBuilt || m_impl->collisionQueriesEnabled) {
+        if(!m_impl->ensureCollisionRuntimeBuilt()) {
+            return false;
+        }
+    } else {
+        m_impl->collisionDetectors = buildProjectCollisionDetectorViewRuntimes(
+            document,
+            m_impl->robots,
+            m_impl->objects);
+    }
 
     const auto activeIt = std::find_if(
         m_impl->collisionDetectors.begin(),
@@ -6930,26 +8416,21 @@ bool ProjectScene::rebuildCollisionDetectorsFromDocument(const simulation_projec
 
 bool ProjectScene::removeCollisionDetector(const std::string& id)
 {
-    const auto oldSize = m_impl->collisionDetectors.size();
-    m_impl->collisionDetectors.erase(
+    simulation_project::ProjectDocument document = m_impl->projectDocument;
+    const auto oldSize = document.collision.detectors.size();
+    document.collision.detectors.erase(
         std::remove_if(
-            m_impl->collisionDetectors.begin(),
-            m_impl->collisionDetectors.end(),
-            [&](const ProjectCollisionDetectorRuntime& detector) {
+            document.collision.detectors.begin(),
+            document.collision.detectors.end(),
+            [&](const simulation_project::CollisionDetectorDesc& detector) {
                 return detector.id == id;
             }),
-        m_impl->collisionDetectors.end());
+        document.collision.detectors.end());
 
-    if(m_impl->collisionDetectors.size() == oldSize) {
+    if(document.collision.detectors.size() == oldSize) {
         return false;
     }
-
-    if(m_impl->activeCollisionDetectorId == id) {
-        m_impl->activeCollisionDetectorId = m_impl->collisionDetectors.empty()
-            ? std::string()
-            : m_impl->collisionDetectors.front().id;
-    }
-    return true;
+    return rebuildCollisionDetectorsFromDocument(document);
 }
 
 bool ProjectScene::generateRobotCollisionProxy(
@@ -7082,7 +8563,7 @@ bool ProjectScene::generateObjectCollisionCoacdFromVisual(
     const simulation_project::AssetResolveContext assetContext =
         ProjectRuntimeBuilder::makeAssetResolveContext(
             m_impl->projectBasePath,
-            m_impl->projectDocument.assetSearchPaths);
+            m_impl->projectDocument);
     const simulation_project::SceneObjectDesc* objectDesc =
         findSceneObjectDesc(m_impl->projectDocument, objectId);
 
@@ -7207,9 +8688,7 @@ bool ProjectScene::generateMissingRobotCollisionProxies(
 }
 
 RobotCollisionRobotSummary ProjectScene::robotCollisionSummary(
-    const std::string& robotId,
-    const std::string& activeDetectorRole,
-    const std::string& activeDetectorSource) const
+    const std::string& robotId) const
 {
     const RuntimeRobot* robot = findRuntimeRobot(m_impl->robots, robotId);
     if(robot == nullptr) {
@@ -7217,7 +8696,7 @@ RobotCollisionRobotSummary ProjectScene::robotCollisionSummary(
     }
 
     RobotCollisionRobotSummary summary =
-        RobotCollisionModelInspector::summarizeRobot(*robot, activeDetectorRole, activeDetectorSource);
+        RobotCollisionModelInspector::summarizeRobot(*robot);
     for(RobotCollisionLinkSummary& link : summary.links) {
         const std::string visibleVariantId =
             m_impl->visibleCollisionVariantId(robotId, link.linkName);

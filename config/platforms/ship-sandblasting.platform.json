@@ -1,0 +1,32 @@
+{
+  "schema": "smrobot.platform-profile",
+  "version": 1,
+  "id": "ship-sandblasting",
+  "displayName": "Ship Sandblasting Simulation Platform",
+  "requiredFeatures": [
+    "smrobot.feature.project-assembly",
+    "smrobot.feature.robot-run"
+  ],
+  "requiredModes": [
+    "smrobot.mode.collision-config"
+  ],
+  "optionalModes": [
+    "smrobot.mode.tool-setup",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.coating-analysis"
+  ],
+  "defaultEnabledOptionalModes": [
+    "smrobot.mode.tool-setup",
+    "smrobot.mode.motion-planning"
+  ],
+  "defaultMode": "smrobot.mode.project-assembly",
+  "modeOrder": [
+    "smrobot.mode.project-assembly",
+    "smrobot.mode.robot-run",
+    "smrobot.mode.tool-setup",
+    "smrobot.mode.collision-config",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.coating-analysis"
+  ],
+  "allowUserOverrides": true
+}

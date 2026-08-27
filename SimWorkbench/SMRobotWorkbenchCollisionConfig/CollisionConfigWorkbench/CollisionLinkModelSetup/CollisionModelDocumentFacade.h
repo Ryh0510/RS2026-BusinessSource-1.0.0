@@ -15,18 +15,10 @@ namespace simulation_project
 
 namespace robot_qt_viewer
 {
-    struct CollisionModelRuntimeContext
-    {
-        QString role;
-        QString source;
-    };
-
     class CollisionModelDocumentFacade
     {
     public:
         explicit CollisionModelDocumentFacade(const simulation_project::ProjectDocument& document);
-
-        CollisionModelRuntimeContext runtimeContext(const QString& activeDetectorId) const;
 
         CollisionLinkModelsViewModel buildViewModel(
             const QString& selectedRobotId,

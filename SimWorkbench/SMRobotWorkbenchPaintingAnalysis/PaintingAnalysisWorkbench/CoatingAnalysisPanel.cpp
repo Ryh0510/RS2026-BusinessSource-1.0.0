@@ -1,5 +1,7 @@
 #include "CoatingAnalysisPanel.h"
 
+#include "RobotQtWidgetUtils.h"
+
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QLabel>
@@ -21,6 +23,7 @@ namespace robot_qt_viewer
         m_modelPathLabel->setWordWrap(true);
         m_modelPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         m_openModelButton = new QPushButton(QStringLiteral("Open Model"), modelGroup);
+        configureActionButton(m_openModelButton, UiActionRole::Accent);
         modelLayout->addWidget(m_modelNameLabel);
         modelLayout->addWidget(m_modelPathLabel);
         modelLayout->addWidget(m_openModelButton, 0, Qt::AlignHCenter);
@@ -29,6 +32,7 @@ namespace robot_qt_viewer
         auto* predictionGroup = new QGroupBox(QStringLiteral("Prediction"), this);
         auto* predictionLayout = new QVBoxLayout(predictionGroup);
         m_predictionButton = new QPushButton(QStringLiteral("Thickness Prediction"), predictionGroup);
+        configureActionButton(m_predictionButton, UiActionRole::Primary);
         m_statusLabel = new QLabel(predictionGroup);
         m_statusLabel->setWordWrap(true);
         predictionLayout->addWidget(m_predictionButton, 0, Qt::AlignHCenter);
@@ -38,6 +42,7 @@ namespace robot_qt_viewer
         auto* thicknessGroup = new QGroupBox(QStringLiteral("Thickness"), this);
         auto* thicknessLayout = new QVBoxLayout(thicknessGroup);
         m_showThicknessCheckBox = new QCheckBox(QStringLiteral("Show Thickness"), thicknessGroup);
+        configureInspectorToggle(m_showThicknessCheckBox);
         m_statisticsLabel = new QLabel(thicknessGroup);
         m_statisticsLabel->setWordWrap(true);
         m_currentLabel = new QLabel(QStringLiteral("Current: --"), thicknessGroup);

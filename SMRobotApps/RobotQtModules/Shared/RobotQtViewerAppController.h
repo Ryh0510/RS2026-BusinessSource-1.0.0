@@ -17,6 +17,7 @@ namespace robot_qt_viewer
     class RobotQtViewerDocumentController;
     class RobotQtViewerEventHub;
     class RobotQtViewerSelectionModel;
+    class RobotQtViewerOperationStatusStore;
 
     class RobotQtViewerAppController
     {
@@ -32,19 +33,24 @@ namespace robot_qt_viewer
         RobotQtViewerDocumentController& documentController();
         RobotQtViewerSelectionModel& selectionModel();
         RobotQtViewerEventHub& eventHub();
+        RobotQtViewerOperationStatusStore& operationStatusStore();
 
         ProjectSessionWorkflowResult resetProject(const QString& sourceId);
         ProjectSessionWorkflowResult loadProject(
             const std::filesystem::path& path,
-            const QString& sourceId);
+            const QString& sourceId,
+            const QString& operationId = QString());
         ProjectSessionWorkflowResult loadStartupProject(
             const std::filesystem::path& path,
-            const QString& sourceId);
+            const QString& sourceId,
+            const QString& operationId = QString());
         ProjectSessionWorkflowResult saveProject(
             const std::filesystem::path& path,
             bool saveAsV3,
             const QString& sourceId);
-        ViewportReloadWorkflowResult reloadViewport(const QString& sourceId);
+        ViewportReloadWorkflowResult reloadViewport(
+            const QString& sourceId,
+            const QString& operationId = QString());
         void setCollisionGeometryVisible(bool visible, const QString& sourceId);
         bool hasRobot(const QString& robotId) const;
         void setObjectInspectorContext(const QString& objectId);

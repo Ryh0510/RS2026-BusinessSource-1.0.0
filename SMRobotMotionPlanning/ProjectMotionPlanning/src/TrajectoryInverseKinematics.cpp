@@ -129,18 +129,51 @@ namespace motion_planning
             return error;
         }
 
-        Eigen::MatrixXd numericalJacobian(
+        Eigen::MatrixXd computeJacobianModifiedDh(
             const std::vector<DhParam>& dhParams,
-            const std::vector<double>& joints,
-            const Eigen::Matrix4d& current)
+            const std::vector<double>& joints)
         {
-            constexpr double epsilon = 1.0e-6;
             Eigen::MatrixXd jacobian = Eigen::MatrixXd::Zero(6, static_cast<int>(joints.size()));
+            std::vector<Eigen::Matrix4d> transforms(joints.size());
+            Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
+
+            for(std::size_t index = 0; index < joints.size() && index < dhParams.size(); ++index) {
+                const DhParam& dh = dhParams[index];
+                const double theta = joints[index] + dh.thetaOffset;
+                const double cosTheta = std::cos(theta);
+                const double sinTheta = std::sin(theta);
+                const double cosAlpha = std::cos(dh.alpha);
+                const double sinAlpha = std::sin(dh.alpha);
+
+                Eigen::Matrix4d jointTransform;
+                jointTransform <<
+                    cosTheta, -sinTheta, 0.0, dh.a,
+                    sinTheta * cosAlpha, cosTheta * cosAlpha, -sinAlpha, -sinAlpha * dh.d,
+                    sinTheta * sinAlpha, cosTheta * sinAlpha, cosAlpha, cosAlpha * dh.d,
+                    0.0, 0.0, 0.0, 1.0;
+                transform = transform * jointTransform;
+                transforms[index] = transform;
+            }
+
+            if(transforms.empty()) {
+                return jacobian;
+            }
+
+            const Eigen::Vector3d pEnd = transforms.back().block<3, 1>(0, 3);
+
             for(std::size_t column = 0; column < joints.size(); ++column) {
-                std::vector<double> perturbed = joints;
-                perturbed[column] += epsilon;
-                const Eigen::Matrix4d plus = forwardKinematicsModifiedDh(dhParams, perturbed);
-                jacobian.col(static_cast<int>(column)) = poseError(current, plus) / epsilon;
+                Eigen::Vector3d zAxis;
+                Eigen::Vector3d origin;
+                if(column == 0) {
+                    zAxis << 0.0, 0.0, 1.0;
+                    origin << 0.0, 0.0, 0.0;
+                } else {
+                    zAxis = transforms[column].block<3, 1>(0, 2);
+                    origin = transforms[column].block<3, 1>(0, 3);
+                }
+
+                jacobian.block<3, 1>(0, static_cast<int>(column)) = zAxis.cross(pEnd - origin);
+                jacobian.block<3, 1>(3, static_cast<int>(column)) = zAxis;
             }
             return jacobian;
         }
@@ -174,7 +207,7 @@ namespace motion_planning
                     return attempt;
                 }
 
-                const Eigen::MatrixXd jacobian = numericalJacobian(dhParams, attempt.joints, current);
+                const Eigen::MatrixXd jacobian = computeJacobianModifiedDh(dhParams, attempt.joints);
                 const Eigen::MatrixXd regularizer =
                     dampingSquared * Eigen::MatrixXd::Identity(6, 6);
                 Eigen::VectorXd delta =
@@ -186,9 +219,7 @@ namespace motion_planning
                     break;
                 }
 
-                constexpr double maxStep = 0.25;
                 for(int index = 0; index < delta.size(); ++index) {
-                    delta(index) = std::clamp(delta(index), -maxStep, maxStep);
                     attempt.joints[static_cast<std::size_t>(index)] =
                         normalizeAngle(attempt.joints[static_cast<std::size_t>(index)] + delta(index));
                 }

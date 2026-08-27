@@ -123,6 +123,8 @@ public:
         bool enabled = true;
         bool visible = true;
         bool active = false;
+        bool valid = true;
+        std::string errorMessage;
         std::size_t includePairCount = 0;
         std::size_t effectiveIncludePairCount = 0;
         std::size_t contactCount = 0;
@@ -192,6 +194,7 @@ public:
     void setProjectDocument(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
+    const std::filesystem::path& projectBasePath() const;
     void setDefaultBackgroundColor(const simulation_project::ColorDesc& color);
     bool refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
@@ -394,9 +397,7 @@ public:
         const RobotCollisionProxyRequest& request,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements) const;
     RobotCollisionRobotSummary robotCollisionSummary(
-        const std::string& robotId,
-        const std::string& activeDetectorRole = std::string(),
-        const std::string& activeDetectorSource = std::string()) const;
+        const std::string& robotId) const;
 
 private:
     struct Impl;

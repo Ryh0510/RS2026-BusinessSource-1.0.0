@@ -53,22 +53,30 @@ CollisionSelectionSetsWidget::CollisionSelectionSetsWidget(QWidget* parent)
     configureInspectorGrid(buttonLayout);
 
     m_addSetButton = new QPushButton("Add Target Set", this);
-    makeHorizontallyCompressible(m_addSetButton);
+    robot_qt_viewer::configureActionButton(
+        m_addSetButton,
+        robot_qt_viewer::UiActionRole::Primary);
     connect(m_addSetButton, &QPushButton::clicked, this, &CollisionSelectionSetsWidget::addSetRequested);
     buttonLayout->addWidget(m_addSetButton, 0, 0);
 
     m_renameSetButton = new QPushButton("Rename Set", this);
-    makeHorizontallyCompressible(m_renameSetButton);
+    robot_qt_viewer::configureActionButton(
+        m_renameSetButton,
+        robot_qt_viewer::UiActionRole::Standard);
     connect(m_renameSetButton, &QPushButton::clicked, this, &CollisionSelectionSetsWidget::renameSetRequested);
     buttonLayout->addWidget(m_renameSetButton, 0, 1);
 
     m_removeSetButton = new QPushButton("Remove Set", this);
-    makeHorizontallyCompressible(m_removeSetButton);
+    robot_qt_viewer::configureActionButton(
+        m_removeSetButton,
+        robot_qt_viewer::UiActionRole::Destructive);
     connect(m_removeSetButton, &QPushButton::clicked, this, &CollisionSelectionSetsWidget::removeSetRequested);
     buttonLayout->addWidget(m_removeSetButton, 1, 0);
 
     m_removeMemberButton = new QPushButton("Remove Member", this);
-    makeHorizontallyCompressible(m_removeMemberButton);
+    robot_qt_viewer::configureActionButton(
+        m_removeMemberButton,
+        robot_qt_viewer::UiActionRole::Destructive);
     connect(m_removeMemberButton, &QPushButton::clicked, this, &CollisionSelectionSetsWidget::removeMemberRequested);
     buttonLayout->addWidget(m_removeMemberButton, 1, 1);
     buttonLayout->setColumnStretch(0, 1);

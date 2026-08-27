@@ -6,7 +6,7 @@
 #   1. Get all package names
 ############################################################
 set( ExcludeBuildPackages
-    cmake data build out .vs .git .idea Prune doc .codex .planning
+    cmake data build .git .idea Prune doc .codex .planning
     PrebuiltPackages PackagesInstallation cmake_bk
     cmake_upgrade config include license thirdparty
     external archives archive
@@ -14,6 +14,9 @@ set( ExcludeBuildPackages
     tests
     tutorials
     scripts
+    Reference
+    .vs
+    out
     SimWorkbench
     # Algorithm
     Applications

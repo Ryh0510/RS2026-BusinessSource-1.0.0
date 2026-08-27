@@ -1,0 +1,40 @@
+{
+  "schema": "smrobot.platform-profile",
+  "version": 1,
+  "id": "base-robot",
+  "displayName": "General Robot Simulation Platform",
+  "requiredFeatures": [
+    "smrobot.feature.project-assembly"
+  ],
+  "requiredModes": [],
+  "optionalModes": [
+    "smrobot.mode.tool-setup",
+    "smrobot.mode.robot-run",
+    "smrobot.mode.collision-config",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.spray-process",
+    "smrobot.mode.coating-analysis",
+    "smrobot.mode.digital-twin"
+  ],
+  "defaultEnabledOptionalModes": [
+    "smrobot.mode.tool-setup",
+    "smrobot.mode.robot-run",
+    "smrobot.mode.collision-config",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.spray-process",
+    "smrobot.mode.coating-analysis",
+    "smrobot.mode.digital-twin"
+  ],
+  "defaultMode": "smrobot.mode.project-assembly",
+  "modeOrder": [
+    "smrobot.mode.project-assembly",
+    "smrobot.mode.robot-run",
+    "smrobot.mode.tool-setup",
+    "smrobot.mode.collision-config",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.spray-process",
+    "smrobot.mode.coating-analysis",
+    "smrobot.mode.digital-twin"
+  ],
+  "allowUserOverrides": true
+}

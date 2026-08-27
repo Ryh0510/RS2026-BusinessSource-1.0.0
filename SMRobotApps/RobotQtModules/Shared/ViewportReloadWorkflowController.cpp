@@ -2,10 +2,10 @@
 
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
+#include "RobotQtViewerOperationStatus.h"
 #include "RobotQtViewerViewportServices.h"
 
 #include <SimulationProject/ProjectDocument.h>
-#include <SimulationProject/ProjectDocumentService.h>
 #include <SimulationProject/ProjectSession.h>
 #include <SimulationProject/RuntimePaths.h>
 
@@ -42,12 +42,26 @@ namespace robot_qt_viewer
     {
     }
 
-    ViewportReloadWorkflowResult ViewportReloadWorkflowController::reload(const QString& sourceId)
+    ViewportReloadWorkflowResult ViewportReloadWorkflowController::reload(
+        const QString& sourceId,
+        const QString& operationId)
     {
         const auto reloadStart = std::chrono::steady_clock::now();
 
         ViewportReloadWorkflowResult result;
         result.sourceId = sourceId;
+        result.operationId = operationId;
+
+        if(!operationId.isEmpty()) {
+            m_context.operationStatusStore().reportProgress(
+                operationId,
+                QStringLiteral("status.operation.projectOpen.step.viewport"),
+                QStringLiteral("Rebuilding viewport scene"),
+                3,
+                3,
+                2,
+                3);
+        }
 
         const auto requestStart = std::chrono::steady_clock::now();
         m_context.documentController().publishViewportReloadRequested(sourceId);
@@ -59,21 +73,16 @@ namespace robot_qt_viewer
             result.elapsedMs = elapsedMilliseconds(reloadStart);
             printProfileRow("Viewport reload total", result.elapsedMs, result.errorMessage);
             m_context.documentController().publishViewportReloaded(false, sourceId);
+            if(!operationId.isEmpty()) {
+                m_context.operationStatusStore().fail(
+                    operationId,
+                    QStringLiteral("status.operation.projectOpen.failed"),
+                    QStringLiteral("Failed to open %1"),
+                    QStringLiteral("project.open.viewport_unavailable"),
+                    result.errorMessage);
+            }
             return result;
         }
-
-        const auto detectorsStart = std::chrono::steady_clock::now();
-        m_context.documentController().mutateProject(
-            sourceId,
-            ProjectDirtyPolicy::RuntimeOnly,
-            [](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
-                changed = service.ensureCollisionDetectors();
-                return true;
-            });
-        printProfileRow(
-            "Viewport ensure detectors",
-            elapsedMilliseconds(detectorsStart),
-            QString("detectors=%1").arg(static_cast<int>(m_context.document().collision.detectors.size())));
 
         std::filesystem::path basePath = simulation_project::RuntimePaths::applicationRoot();
         if(!m_context.projectSession().path().empty()) {
@@ -96,6 +105,14 @@ namespace robot_qt_viewer
             result.elapsedMs = elapsedMilliseconds(reloadStart);
             printProfileRow("Viewport reload total", result.elapsedMs, result.errorMessage);
             m_context.documentController().publishViewportReloaded(false, sourceId);
+            if(!operationId.isEmpty()) {
+                m_context.operationStatusStore().fail(
+                    operationId,
+                    QStringLiteral("status.operation.projectOpen.failed"),
+                    QStringLiteral("Failed to open %1"),
+                    QStringLiteral("project.open.viewport_rebuild_failed"),
+                    result.errorMessage);
+            }
             return result;
         }
 
@@ -119,6 +136,12 @@ namespace robot_qt_viewer
                 .arg(result.objectCount)
                 .arg(result.detectorCount));
         m_context.documentController().publishViewportReloaded(true, sourceId);
+        if(!operationId.isEmpty()) {
+            m_context.operationStatusStore().succeed(
+                operationId,
+                QStringLiteral("status.operation.projectOpen.succeeded"),
+                QStringLiteral("Opened %1"));
+        }
         return result;
     }
 }

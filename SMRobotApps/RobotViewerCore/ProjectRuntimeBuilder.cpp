@@ -1,10 +1,12 @@
 #include "ProjectRuntimeBuilder.h"
 
 #include <AssetCore/AssetManager.h>
+#include <AssetCore/ModelAssetLeaseCache.h>
 #include <Collision/CollisionGeometryBuilder.h>
 #include <Collision/PointCloudCollisionBuilder.h>
 #include <CustomLog/CustomLog.h>
 #include <RenderCore/ModelManager.h>
+#include <RenderCore/GeometryResourceCache.h>
 #include <RenderCore/PointCloudVertex.h>
 #include <RobotIO/IRobotLoader.h>
 #include <SensorCore/PointCloudProcessing.h>
@@ -16,6 +18,7 @@
 #include <data_path.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -24,7 +27,6 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -38,16 +40,43 @@ namespace
         return path.generic_u8string();
     }
 
+    assetcore::AssetResolveContext toAssetCoreContext(
+        const simulation_project::AssetResolveContext& context)
+    {
+        assetcore::AssetResolveContext result;
+        result.projectBasePath = context.projectBasePath;
+        result.projectAssetRootPath = context.projectAssetRootPath;
+        result.sourceRootPath = context.sourceRootPath;
+        result.dataRootPath = context.dataRootPath;
+        result.appRootPath = context.appRootPath;
+        result.generatedAssetRootPath = context.generatedAssetRootPath;
+        result.assetLibraries = context.assetLibraries;
+        result.assetSearchPaths = context.assetSearchPaths;
+        return result;
+    }
+
+    std::filesystem::path resolveRequiredAssetPath(
+        const simulation_project::AssetResolveContext& context,
+        const std::string& reference)
+    {
+        if(reference.find("://") == std::string::npos
+            || simulation_project::AssetResolver::isAppGeneratedAssetReference(reference)) {
+            return simulation_project::AssetResolver::resolveProjectPath(context, reference);
+        }
+        const assetcore::AssetResolveResult result =
+            simulation_project::AssetResolver::resolveProjectReference(context, reference);
+        if(result.success())
+            return result.resolvedPath;
+        std::string message = "Asset URI resolution failed: " + reference;
+        if(!result.diagnostic.empty())
+            message += " (" + result.diagnostic + ")";
+        throw std::runtime_error(message);
+    }
+
     struct RuntimeObjMesh
     {
         std::vector<Vec3> vertices;
         std::vector<uint32_t> indices;
-    };
-
-    struct CachedSceneObjectCollision
-    {
-        CollisionGeometryPtr geometry;
-        RuntimeObjMesh mesh;
     };
 
     struct SceneObjectBuildProfile
@@ -61,15 +90,29 @@ namespace
         double collisionSetupMs = 0.0;
         double graphRegisterMs = 0.0;
         double totalMs = 0.0;
+        bool collisionBuildRequested = false;
+        bool collisionGeometryBuilt = false;
         bool collisionCacheHit = false;
+        bool assetCacheHit = false;
+        std::string assetKey;
+        std::size_t geometryHitCount = 0;
+        std::size_t geometryMissCount = 0;
         std::size_t modelVertices = 0;
         std::size_t modelIndices = 0;
         std::size_t collisionVertices = 0;
         std::size_t collisionIndices = 0;
     };
 
-    std::mutex g_sceneObjectCollisionCacheMutex;
-    std::unordered_map<std::string, std::shared_ptr<CachedSceneObjectCollision>> g_sceneObjectCollisionCache;
+    ObjectID collisionVariantObjectId(
+        ObjectID entityRuntimeId,
+        const std::string& modelId,
+        std::size_t elementIndex)
+    {
+        const std::string key = std::to_string(entityRuntimeId) + "|" + modelId + "|" +
+            std::to_string(elementIndex);
+        const ObjectID id = static_cast<ObjectID>(std::hash<std::string>()(key));
+        return id == 0 ? 1 : id;
+    }
 
     double elapsedMilliseconds(const std::chrono::steady_clock::time_point& start)
     {
@@ -82,6 +125,199 @@ namespace
         std::ostringstream stream;
         stream << std::fixed << std::setprecision(6) << value;
         return stream.str();
+    }
+
+    int parallelPoseVariableIndex(const std::string& name)
+    {
+        static const char* kNames[] = {
+            "parallel.pose.x",
+            "parallel.pose.y",
+            "parallel.pose.z",
+            "parallel.pose.roll",
+            "parallel.pose.pitch",
+            "parallel.pose.yaw"
+        };
+        for(int i = 0; i < 6; ++i) {
+            if(name == kNames[i]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    int parallelActuatorIndex(const std::string& name)
+    {
+        const std::string prefix = "parallel.actuator.";
+        if(name.rfind(prefix, 0) != 0) {
+            return -1;
+        }
+
+        const std::string suffix = name.substr(prefix.size());
+        if(suffix.size() != 1 || suffix[0] < '1' || suffix[0] > '6') {
+            return -1;
+        }
+        return suffix[0] - '1';
+    }
+
+    double parallelPoseValue(const kine::StewartPlatformPose& pose, int index)
+    {
+        switch(index) {
+        case 0:
+            return pose.x;
+        case 1:
+            return pose.y;
+        case 2:
+            return pose.z;
+        case 3:
+            return pose.roll;
+        case 4:
+            return pose.pitch;
+        case 5:
+            return pose.yaw;
+        default:
+            return 0.0;
+        }
+    }
+
+    void setParallelPoseValue(kine::StewartPlatformPose& pose, int index, double value)
+    {
+        switch(index) {
+        case 0:
+            pose.x = value;
+            break;
+        case 1:
+            pose.y = value;
+            break;
+        case 2:
+            pose.z = value;
+            break;
+        case 3:
+            pose.roll = value;
+            break;
+        case 4:
+            pose.pitch = value;
+            break;
+        case 5:
+            pose.yaw = value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    void syncParallelPlatformTransform(RuntimeRobot& runtime)
+    {
+        runtime.baseTransform = runtime.parallelHomeBaseTransform;
+    }
+
+    void applyParallelActuatorJointValues(RuntimeRobot& runtime)
+    {
+        if(!runtime.instance) {
+            return;
+        }
+
+        for(std::size_t index = 0; index < runtime.parallelActuatorLengths.size(); ++index) {
+            const int dofIndex = runtime.parallelActuatorDofIndices[index];
+            if(dofIndex < 0) {
+                continue;
+            }
+
+            const double travel =
+                runtime.parallelActuatorSigns[index] *
+                (runtime.parallelActuatorLengths[index] -
+                    runtime.parallelActuatorHomeLengths[index]);
+            runtime.instance->setJoint(static_cast<std::size_t>(dofIndex), travel);
+        }
+    }
+
+    bool refreshParallelActuatorLengths(RuntimeRobot& runtime)
+    {
+        std::string error;
+        const bool ok = kine::StewartPlatformKinematics::computeActuatorLengths(
+            runtime.parallelGeometry,
+            runtime.parallelPose,
+            runtime.parallelActuatorLengths,
+            &error);
+        if(!ok) {
+            LOG_WARNING("rs2026") << "Failed to update Stewart actuator lengths: " << error;
+        }
+        return ok;
+    }
+
+    bool setParallelControlValue(RuntimeRobot& runtime, const std::string& name, double value)
+    {
+        if(!runtime.parallelControlEnabled) {
+            return false;
+        }
+
+        const int poseIndex = parallelPoseVariableIndex(name);
+        if(poseIndex >= 0) {
+            setParallelPoseValue(runtime.parallelPose, poseIndex, value);
+            if(!refreshParallelActuatorLengths(runtime)) {
+                return false;
+            }
+            applyParallelActuatorJointValues(runtime);
+            syncParallelPlatformTransform(runtime);
+            return true;
+        }
+
+        const int actuatorIndex = parallelActuatorIndex(name);
+        if(actuatorIndex >= 0) {
+            if(!std::isfinite(value) || value <= 0.0) {
+                const std::size_t index = static_cast<std::size_t>(actuatorIndex);
+                LOG_WARNING("rs2026") << "Rejected Stewart actuator target length: "
+                    << name << "=" << value << " m"
+                    << ", home=" << runtime.parallelActuatorHomeLengths[index] << " m"
+                    << ", current=" << runtime.parallelActuatorLengths[index] << " m";
+                return false;
+            }
+
+            std::array<double, 6> requestedLengths = runtime.parallelActuatorLengths;
+            requestedLengths[static_cast<std::size_t>(actuatorIndex)] = value;
+
+            kine::StewartPlatformPose solvedPose;
+            std::string error;
+            if(!kine::StewartPlatformKinematics::solvePoseFromLengths(
+                   runtime.parallelGeometry,
+                   requestedLengths,
+                   runtime.parallelPose,
+                   solvedPose,
+                   &error)) {
+                LOG_WARNING("rs2026") << "Failed to solve Stewart pose from actuator lengths: "
+                    << error;
+                return false;
+            }
+
+            runtime.parallelPose = solvedPose;
+            runtime.parallelActuatorLengths = requestedLengths;
+            refreshParallelActuatorLengths(runtime);
+            applyParallelActuatorJointValues(runtime);
+            syncParallelPlatformTransform(runtime);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool getParallelControlValue(const RuntimeRobot& runtime, const std::string& name, double& value)
+    {
+        if(!runtime.parallelControlEnabled) {
+            return false;
+        }
+
+        const int poseIndex = parallelPoseVariableIndex(name);
+        if(poseIndex >= 0) {
+            value = parallelPoseValue(runtime.parallelPose, poseIndex);
+            return true;
+        }
+
+        const int actuatorIndex = parallelActuatorIndex(name);
+        if(actuatorIndex >= 0) {
+            value = runtime.parallelActuatorLengths[static_cast<std::size_t>(actuatorIndex)];
+            return true;
+        }
+
+        return false;
     }
 
     std::string fileTimestampKey(const std::filesystem::path& path)
@@ -127,25 +363,6 @@ namespace
             "|" + fileTimestampKey(objectPath) +
             "|visualScale=" + formatDouble(visualScale) +
             "|collisionScale=" + formatDouble(collisionScale);
-    }
-
-    std::shared_ptr<CachedSceneObjectCollision> findSceneObjectCollisionCache(const std::string& key)
-    {
-        std::lock_guard<std::mutex> lock(g_sceneObjectCollisionCacheMutex);
-        const auto it = g_sceneObjectCollisionCache.find(key);
-        return it == g_sceneObjectCollisionCache.end() ? nullptr : it->second;
-    }
-
-    void storeSceneObjectCollisionCache(
-        const std::string& key,
-        std::shared_ptr<CachedSceneObjectCollision> value)
-    {
-        if(!value || !value->geometry) {
-            return;
-        }
-
-        std::lock_guard<std::mutex> lock(g_sceneObjectCollisionCacheMutex);
-        g_sceneObjectCollisionCache[key] = std::move(value);
     }
 
     std::size_t countModelVertices(const assetcore::ModelDesc& modelDesc)
@@ -200,11 +417,19 @@ namespace
         logObjectProfileRow(objectId, "asset path resolve", profile.resolveMs, pathToUtf8(objectPath));
         logObjectProfileRow(
             objectId,
-            "AssetManager load",
+            "model asset acquire",
             profile.assetLoadMs,
-            "vertices=" + std::to_string(profile.modelVertices) +
-                " indices=" + std::to_string(profile.modelIndices));
-        logObjectProfileRow(objectId, "RenderCore build", profile.renderBuildMs, "gl buffers included");
+            std::string("cache=") + (profile.assetCacheHit ? "hit" : "miss") +
+                " mesh=" + std::to_string(profile.modelVertices) + "v/" +
+                std::to_string(profile.modelIndices) + "i");
+        LOG_TRACE("rs2026") << "Object asset detail: object=" << objectId
+            << " | key=" << profile.assetKey;
+        logObjectProfileRow(
+            objectId,
+            "RenderCore build",
+            profile.renderBuildMs,
+            "geometryHits=" + std::to_string(profile.geometryHitCount) +
+                " geometryMisses=" + std::to_string(profile.geometryMissCount));
         logObjectProfileRow(objectId, "visual setup", profile.visualSetupMs, "");
         logObjectProfileRow(
             objectId,
@@ -216,14 +441,23 @@ namespace
             objectId,
             "FCL BVH build",
             profile.fclBuildMs,
-            profile.collisionCacheHit ? "cache=hit" : "cache=miss");
+            !profile.collisionBuildRequested
+                ? "not-requested"
+                : (profile.collisionGeometryBuilt
+                    ? std::string("cache=") + (profile.collisionCacheHit ? "hit" : "miss")
+                    : "build-failed"));
         logObjectProfileRow(objectId, "collision setup", profile.collisionSetupMs, "");
         logObjectProfileRow(objectId, "graph register", profile.graphRegisterMs, "");
         logObjectProfileRow(
             objectId,
             "total",
             profile.totalMs,
-            "collisionCache=" + std::string(profile.collisionCacheHit ? "hit" : "miss"));
+            !profile.collisionBuildRequested
+                ? "collisionCache=not-requested"
+                : (profile.collisionGeometryBuilt
+                    ? std::string("collisionCache=") +
+                        (profile.collisionCacheHit ? "hit" : "miss")
+                    : "collisionCache=build-failed"));
     }
 
     RobotType robotTypeFromDesc(const std::string& sourceType)
@@ -302,14 +536,6 @@ namespace
         return mesh;
     }
 
-    TriangleMeshGeometryData makeTriangleMeshData(const RuntimeObjMesh& mesh)
-    {
-        TriangleMeshGeometryData data;
-        data.vertices = mesh.vertices;
-        data.indices = mesh.indices;
-        return data;
-    }
-
     CollisionShapeDesc makeSceneObjectShapeDesc(
         const simulation_project::SceneObjectDesc& desc,
         const RuntimeObjMesh& mesh)
@@ -321,6 +547,68 @@ namespace
         shape.vertices = mesh.vertices;
         shape.indices = mesh.indices;
         return shape;
+    }
+
+    CollisionGeometryBuildResult buildSceneObjectVisualCollision(
+        const simulation_project::SceneObjectDesc& objectDesc,
+        const std::filesystem::path& objectPath,
+        assetcore::ModelDesc& modelDesc,
+        double collisionScale,
+        const std::string& modelId,
+        SceneObjectBuildProfile& profile,
+        CollisionShapeDesc& shape)
+    {
+        const std::string sourceRevision = makeSceneObjectCollisionCacheKey(
+            objectPath, objectDesc.visualScale, objectDesc.collisionScale);
+        profile.collisionBuildRequested = true;
+        CollisionGeometryBuildContext context;
+        context.targetKind = "sceneObject";
+        context.targetId = objectDesc.id;
+        context.modelId = modelId;
+        context.elementId = objectDesc.id;
+        context.label = objectDesc.name;
+        context.source = pathToUtf8(objectPath);
+        context.sourceRevision = sourceRevision;
+
+        CollisionGeometryCacheQuery query;
+        query.sourceRevision = sourceRevision;
+        const auto cachedEntries = CollisionGeometryBuilder::queryCache(query);
+        for(const CollisionGeometryCacheEntrySnapshot& entry : cachedEntries) {
+            if(entry.shapeType != CollisionShapeType::TriangleMesh) {
+                continue;
+            }
+            CollisionGeometryBuildResult cached;
+            if(CollisionGeometryBuilder::reuseCacheEntry(entry.entryId, context, cached) &&
+                cached.displayShape) {
+                shape = *cached.displayShape;
+                shape.label = objectDesc.id;
+                shape.modelId = modelId;
+                shape.source = pathToUtf8(objectPath);
+                profile.collisionCacheHit = true;
+                profile.collisionVertices = shape.vertices.size();
+                profile.collisionIndices = shape.indices.size();
+                profile.collisionGeometryBuilt = true;
+                return cached;
+            }
+        }
+
+        const auto meshConvertStart = std::chrono::steady_clock::now();
+        const RuntimeObjMesh mesh = makeObjMesh(modelDesc, collisionScale);
+        profile.meshConvertMs = elapsedMilliseconds(meshConvertStart);
+        shape = makeSceneObjectShapeDesc(objectDesc, mesh);
+        shape.modelId = modelId;
+        shape.source = pathToUtf8(objectPath);
+
+        CollisionGeometryBuildRequest request;
+        request.context = context;
+        request.shape = shape;
+        const CollisionGeometryBuildResult result = CollisionGeometryBuilder::build(request);
+        profile.collisionCacheHit = result.metrics.cacheHit;
+        profile.fclBuildMs = result.metrics.cacheHit ? 0.0 : result.metrics.fclBuildMs;
+        profile.collisionVertices = shape.vertices.size();
+        profile.collisionIndices = shape.indices.size();
+        profile.collisionGeometryBuilt = result.success();
+        return result;
     }
 
     CollisionGeometryRole geometryRoleFromString(const std::string& value)
@@ -387,9 +675,7 @@ namespace
             return mesh;
         }
 
-        const std::filesystem::path meshPath = simulation_project::AssetResolver::resolveProjectPath(
-            context,
-            element.meshPath);
+        const std::filesystem::path meshPath = resolveRequiredAssetPath(context, element.meshPath);
         auto modelDesc = assetcore::AssetManager::instance().loadModel(pathToUtf8(meshPath), 1.0f);
         if(!modelDesc) {
             return mesh;
@@ -421,6 +707,9 @@ namespace
     CollisionGeometryPtr buildOverrideGeometry(
         const simulation_project::ObjectCollisionElementOverrideDesc& element,
         const simulation_project::AssetResolveContext& context,
+        const std::string& targetKind,
+        const std::string& targetId,
+        const std::string& modelId,
         CollisionShapeDesc& shape)
     {
         shape.type = shapeTypeFromString(element.type);
@@ -433,23 +722,25 @@ namespace
         shape.radius = element.radius;
         shape.length = element.length;
 
-        if(shape.type == CollisionShapeType::Box) {
-            return CollisionGeometryBuilder::buildBox(shape.boxSize);
-        }
-        if(shape.type == CollisionShapeType::Sphere) {
-            return CollisionGeometryBuilder::buildSphere(shape.radius);
-        }
-        if(shape.type == CollisionShapeType::Cylinder || shape.type == CollisionShapeType::Capsule) {
-            return CollisionGeometryBuilder::buildCylinder(shape.radius, shape.length);
-        }
         if(shape.type == CollisionShapeType::TriangleMesh) {
             RuntimeObjMesh mesh = makeOverrideMesh(element, context);
             shape.vertices = mesh.vertices;
             shape.indices = mesh.indices;
-            return CollisionGeometryBuilder::buildTriangleMesh(makeTriangleMeshData(mesh));
         }
+        shape.modelId = modelId;
 
-        return nullptr;
+        CollisionGeometryBuildRequest request;
+        request.context.targetKind = targetKind;
+        request.context.targetId = targetId;
+        request.context.modelId = modelId;
+        request.context.elementId = element.id;
+        request.context.label = shape.label;
+        request.context.source = shape.source;
+        request.shape = shape;
+        if(request.shape.type == CollisionShapeType::Capsule) {
+            request.shape.type = CollisionShapeType::Cylinder;
+        }
+        return CollisionGeometryBuilder::build(request).geometry;
     }
 
     std::shared_ptr<rendercore::Material> makeSceneObjectMaterial()
@@ -563,15 +854,26 @@ namespace
 
 simulation_project::AssetResolveContext ProjectRuntimeBuilder::makeAssetResolveContext(
     const std::filesystem::path& basePath,
-    const std::vector<std::string>& assetSearchPaths)
+    const std::vector<std::string>& assetSearchPaths,
+    const std::string& projectAssetDirectory)
 {
     simulation_project::AssetResolveContext context;
     context.projectBasePath = basePath;
+    if(!projectAssetDirectory.empty()) {
+        context.projectAssetRootPath = basePath / std::filesystem::u8path(projectAssetDirectory);
+    }
     context.sourceRootPath = simulation_project::RuntimePaths::sourceRoot();
     context.dataRootPath = simulation_project::RuntimePaths::dataRoot();
     context.appRootPath = simulation_project::RuntimePaths::applicationRoot();
     context.assetSearchPaths = assetSearchPaths;
     return context;
+}
+
+simulation_project::AssetResolveContext ProjectRuntimeBuilder::makeAssetResolveContext(
+    const std::filesystem::path& basePath,
+    const simulation_project::ProjectDocument& document)
+{
+    return simulation_project::AssetResolver::makeProjectContext(basePath, document);
 }
 
 collision::Transform3 ProjectRuntimeBuilder::makeTransform(const simulation_project::TransformDesc& desc)
@@ -633,12 +935,27 @@ bool ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
     uint64_t runtimeIdBase,
     const std::filesystem::path& projectBasePath,
     const std::vector<std::string>& assetSearchPaths,
-    const std::string& collisionModelId)
+    const std::string& collisionModelId,
+    const std::string& currentModelId,
+    const std::string& projectAssetDirectory)
 {
-    const simulation_project::AssetResolveContext context = makeAssetResolveContext(
-        projectBasePath,
-        assetSearchPaths);
+    return appendObjectCollisionOverrideObjects(
+        runtime,
+        collisionOverride,
+        runtimeIdBase,
+        makeAssetResolveContext(projectBasePath, assetSearchPaths, projectAssetDirectory),
+        collisionModelId,
+        currentModelId);
+}
 
+bool ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
+    RuntimeSceneObject& runtime,
+    const simulation_project::ObjectCollisionOverrideDesc& collisionOverride,
+    uint64_t runtimeIdBase,
+    const simulation_project::AssetResolveContext& context,
+    const std::string& collisionModelId,
+    const std::string& currentModelId)
+{
     bool appended = false;
     uint64_t overrideIndex = 1;
     for(const simulation_project::ObjectCollisionElementOverrideDesc& element : collisionOverride.elements) {
@@ -655,10 +972,23 @@ bool ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
         }
 
         RuntimeSceneCollisionObject collisionRuntime;
-        auto geometry = buildOverrideGeometry(element, context, collisionRuntime.collisionShape);
+        auto geometry = buildOverrideGeometry(
+            element,
+            context,
+            runtime.objectType.empty() ? "sceneObject" : runtime.objectType,
+            runtime.documentId,
+            collisionModelId,
+            collisionRuntime.collisionShape);
         if(geometry) {
+            collisionRuntime.modelId = collisionModelId;
+            collisionRuntime.currentModel = collisionModelId == currentModelId;
+            collisionRuntime.collisionShape.modelId = collisionRuntime.modelId;
+            collisionRuntime.collisionShape.currentModel = collisionRuntime.currentModel;
             collisionRuntime.localTransform = collisionRuntime.collisionShape.localTransform;
-            const uint64_t objectId = runtimeIdBase * 100000ull + overrideIndex;
+            const uint64_t objectId = collisionVariantObjectId(
+                runtimeIdBase,
+                collisionModelId,
+                overrideIndex);
             collisionRuntime.collisionObject = std::make_shared<collision::CollisionObject>(objectId, geometry);
             runtime.collisionObjects.push_back(std::move(collisionRuntime));
             appended = true;
@@ -671,15 +1001,25 @@ bool ProjectRuntimeBuilder::appendObjectCollisionOverrideObjects(
 
 robot::RobotModel ProjectRuntimeBuilder::loadSingleRobot(
     const std::filesystem::path& path,
-    const std::string& sourceType)
+    const std::string& sourceType,
+    int sourceModelIndex,
+    const std::vector<std::string>& resourceSearchPaths)
 {
     const std::string robotPath = pathToUtf8(path);
-    auto robots = IRobotLoader::get_robots(robotTypeFromDesc(sourceType), robotPath);
+    RobotLoadOptions options;
+    options.resourceSearchPaths = resourceSearchPaths;
+    auto robots = IRobotLoader::get_robots(robotTypeFromDesc(sourceType), robotPath, options);
     if(robots.empty()) {
         throw std::runtime_error("Failed to load robot: " + robotPath);
     }
+    if(sourceModelIndex < 0 || static_cast<std::size_t>(sourceModelIndex) >= robots.size()) {
+        throw std::runtime_error(
+            "Robot source model index " + std::to_string(sourceModelIndex) +
+            " is out of range for " + robotPath +
+            " (models=" + std::to_string(robots.size()) + ")");
+    }
 
-    return robots.front();
+    return robots[static_cast<std::size_t>(sourceModelIndex)];
 }
 
 void ProjectRuntimeBuilder::applyInitialJoints(
@@ -751,7 +1091,37 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     const std::filesystem::path& projectBasePath,
     const std::vector<std::string>& assetSearchPaths,
     scenecore::SceneGraph& graph,
-    bool buildCollision)
+    bool buildCollision,
+    const std::unordered_set<std::string>* explicitModelIds,
+    assetcore::ModelAssetLeaseCache* assetCache,
+    rendercore::GeometryResourceCache* geometryCache,
+    const std::string& correlationId,
+    const std::string& projectAssetDirectory)
+{
+    return buildSceneObject(
+        objectDesc,
+        collisionDesc,
+        runtimeId,
+        makeAssetResolveContext(projectBasePath, assetSearchPaths, projectAssetDirectory),
+        graph,
+        buildCollision,
+        explicitModelIds,
+        assetCache,
+        geometryCache,
+        correlationId);
+}
+
+RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
+    const simulation_project::SceneObjectDesc& objectDesc,
+    const simulation_project::CollisionSceneDesc& collisionDesc,
+    uint64_t runtimeId,
+    const simulation_project::AssetResolveContext& assetResolveContext,
+    scenecore::SceneGraph& graph,
+    bool buildCollision,
+    const std::unordered_set<std::string>* explicitModelIds,
+    assetcore::ModelAssetLeaseCache* assetCache,
+    rendercore::GeometryResourceCache* geometryCache,
+    const std::string& correlationId)
 {
     const auto totalStart = std::chrono::steady_clock::now();
     SceneObjectBuildProfile profile;
@@ -764,15 +1134,32 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     runtime.collisionEnabled = objectDesc.collisionEnabled;
 
     const auto resolveStart = std::chrono::steady_clock::now();
-    const std::filesystem::path objectPath = simulation_project::AssetResolver::resolveProjectPath(
-        makeAssetResolveContext(projectBasePath, assetSearchPaths),
-        objectDesc.sourcePath);
+    const std::filesystem::path objectPath =
+        resolveRequiredAssetPath(assetResolveContext, objectDesc.sourcePath);
     profile.resolveMs = elapsedMilliseconds(resolveStart);
 
     const auto assetLoadStart = std::chrono::steady_clock::now();
-    auto modelDesc = assetcore::AssetManager::instance().loadModel(
-        pathToUtf8(objectPath),
-        static_cast<float>(objectDesc.visualScale));
+    std::shared_ptr<assetcore::ModelDesc> modelDesc;
+    if(assetCache != nullptr) {
+        assetcore::ModelAssetLeaseRequest request;
+        request.resolveContext = toAssetCoreContext(assetResolveContext);
+        request.source = pathToUtf8(objectPath);
+        request.scale = static_cast<float>(objectDesc.visualScale);
+        request.consumer = "sceneObject:" + objectDesc.id;
+        request.correlationId = correlationId;
+        assetcore::ModelAssetLeaseResult lease = assetCache->acquire(request);
+        if(!lease.success()) {
+            throw std::runtime_error(lease.errorMessage);
+        }
+        modelDesc = std::move(lease.model);
+        profile.assetCacheHit = lease.metrics.cacheHit;
+        profile.assetKey = std::move(lease.assetKey);
+    } else {
+        modelDesc = assetcore::AssetManager::instance().loadModel(
+            pathToUtf8(objectPath),
+            static_cast<float>(objectDesc.visualScale));
+        profile.assetKey = pathToUtf8(objectPath);
+    }
     profile.assetLoadMs = elapsedMilliseconds(assetLoadStart);
     if(!modelDesc) {
         throw std::runtime_error("Failed to load scene object model: " + pathToUtf8(objectPath));
@@ -781,8 +1168,17 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     profile.modelIndices = countModelIndices(*modelDesc);
 
     const auto renderBuildStart = std::chrono::steady_clock::now();
-    auto renderModel = rendercore::ModelManager::instance().buildModelFromDesc(*modelDesc);
+    rendercore::ModelGeometryBuildMetrics geometryMetrics;
+    auto renderModel = geometryCache != nullptr && !profile.assetKey.empty()
+        ? rendercore::ModelManager::instance().buildModelFromDesc(
+            *modelDesc,
+            *geometryCache,
+            profile.assetKey,
+            &geometryMetrics)
+        : rendercore::ModelManager::instance().buildModelFromDesc(*modelDesc);
     profile.renderBuildMs = elapsedMilliseconds(renderBuildStart);
+    profile.geometryHitCount = geometryMetrics.geometryHitCount;
+    profile.geometryMissCount = geometryMetrics.geometryMissCount;
     if(!renderModel) {
         throw std::runtime_error("Failed to build scene object model: " + pathToUtf8(objectPath));
     }
@@ -805,59 +1201,53 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     profile.graphRegisterMs = elapsedMilliseconds(graphRegisterStart);
 
     if(buildCollision && objectDesc.collisionEnabled) {
+        profile.collisionBuildRequested = true;
         const auto collisionSetupStart = std::chrono::steady_clock::now();
         const simulation_project::ObjectCollisionOverrideDesc* collisionOverride =
             findObjectCollisionOverride(collisionDesc, objectDesc.id);
-        const std::string activeModelId = activeObjectCollisionModelId(collisionDesc, objectDesc.id);
-        const bool useVisualCollision =
-            simulation_project::isConvertFromVisualCollisionModelId(activeModelId);
-
-        if(useVisualCollision) {
-            const double collisionScale = objectDesc.visualScale != 0.0
-                ? objectDesc.collisionScale / objectDesc.visualScale
-                : 1.0;
-            const std::string cacheKey = makeSceneObjectCollisionCacheKey(
-                objectPath,
-                objectDesc.visualScale,
-                objectDesc.collisionScale);
-            std::shared_ptr<CachedSceneObjectCollision> cachedCollision =
-                findSceneObjectCollisionCache(cacheKey);
-            if(cachedCollision && cachedCollision->geometry) {
-                profile.collisionCacheHit = true;
-            } else {
-                cachedCollision = std::make_shared<CachedSceneObjectCollision>();
-                const auto meshConvertStart = std::chrono::steady_clock::now();
-                cachedCollision->mesh = makeObjMesh(*modelDesc, collisionScale);
-                profile.meshConvertMs = elapsedMilliseconds(meshConvertStart);
-
-                const auto fclBuildStart = std::chrono::steady_clock::now();
-                cachedCollision->geometry = CollisionGeometryBuilder::buildTriangleMesh(
-                    makeTriangleMeshData(cachedCollision->mesh));
-                profile.fclBuildMs = elapsedMilliseconds(fclBuildStart);
-                storeSceneObjectCollisionCache(cacheKey, cachedCollision);
-            }
-
-            profile.collisionVertices = cachedCollision ? cachedCollision->mesh.vertices.size() : 0;
-            profile.collisionIndices = cachedCollision ? cachedCollision->mesh.indices.size() : 0;
-
-            if(cachedCollision && cachedCollision->geometry) {
-                RuntimeSceneCollisionObject collisionRuntime;
-                collisionRuntime.collisionShape = makeSceneObjectShapeDesc(objectDesc, cachedCollision->mesh);
-                collisionRuntime.collisionObject = std::make_shared<CollisionObject>(
-                    runtimeId,
-                    cachedCollision->geometry);
-                runtime.collisionObjects.push_back(std::move(collisionRuntime));
-            }
+        const std::string currentModelId = activeObjectCollisionModelId(collisionDesc, objectDesc.id);
+        std::unordered_set<std::string> modelIds{ currentModelId };
+        if(explicitModelIds != nullptr) {
+            modelIds.insert(explicitModelIds->begin(), explicitModelIds->end());
         }
 
-        if(collisionOverride != nullptr && !useVisualCollision) {
-            appendObjectCollisionOverrideObjects(
-                runtime,
-                *collisionOverride,
-                runtimeId,
-                projectBasePath,
-                assetSearchPaths,
-                activeModelId);
+        for(const std::string& modelId : modelIds) {
+            const bool useVisualCollision =
+                simulation_project::isConvertFromVisualCollisionModelId(modelId);
+            if(useVisualCollision) {
+                const double collisionScale = objectDesc.visualScale != 0.0
+                    ? objectDesc.collisionScale / objectDesc.visualScale
+                    : 1.0;
+                CollisionShapeDesc collisionShape;
+                const CollisionGeometryBuildResult buildResult = buildSceneObjectVisualCollision(
+                    objectDesc,
+                    objectPath,
+                    *modelDesc,
+                    collisionScale,
+                    modelId,
+                    profile,
+                    collisionShape);
+                if(buildResult.success()) {
+                    RuntimeSceneCollisionObject collisionRuntime;
+                    collisionRuntime.collisionShape = std::move(collisionShape);
+                    collisionRuntime.modelId = modelId;
+                    collisionRuntime.currentModel = modelId == currentModelId;
+                    collisionRuntime.collisionShape.modelId = collisionRuntime.modelId;
+                    collisionRuntime.collisionShape.currentModel = collisionRuntime.currentModel;
+                    collisionRuntime.collisionObject = std::make_shared<CollisionObject>(
+                        collisionVariantObjectId(runtimeId, modelId, 0),
+                        buildResult.geometry);
+                    runtime.collisionObjects.push_back(std::move(collisionRuntime));
+                }
+            } else if(collisionOverride != nullptr) {
+                appendObjectCollisionOverrideObjects(
+                    runtime,
+                    *collisionOverride,
+                    runtimeId,
+                    assetResolveContext,
+                    modelId,
+                    currentModelId);
+            }
         }
 
         if(!runtime.collisionObjects.empty()) {
@@ -866,6 +1256,7 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
             updateSceneObjectPose(runtime);
         }
         profile.collisionSetupMs = elapsedMilliseconds(collisionSetupStart);
+        profile.collisionGeometryBuilt = !runtime.collisionObjects.empty();
     }
 
     profile.totalMs = elapsedMilliseconds(totalStart);
@@ -878,7 +1269,30 @@ bool ProjectRuntimeBuilder::ensureSceneObjectCollisionObjects(
     const simulation_project::SceneObjectDesc& objectDesc,
     const simulation_project::CollisionSceneDesc& collisionDesc,
     const std::filesystem::path& projectBasePath,
-    const std::vector<std::string>& assetSearchPaths)
+    const std::vector<std::string>& assetSearchPaths,
+    const std::unordered_set<std::string>* explicitModelIds,
+    assetcore::ModelAssetLeaseCache* assetCache,
+    const std::string& correlationId,
+    const std::string& projectAssetDirectory)
+{
+    return ensureSceneObjectCollisionObjects(
+        runtime,
+        objectDesc,
+        collisionDesc,
+        makeAssetResolveContext(projectBasePath, assetSearchPaths, projectAssetDirectory),
+        explicitModelIds,
+        assetCache,
+        correlationId);
+}
+
+bool ProjectRuntimeBuilder::ensureSceneObjectCollisionObjects(
+    RuntimeSceneObject& runtime,
+    const simulation_project::SceneObjectDesc& objectDesc,
+    const simulation_project::CollisionSceneDesc& collisionDesc,
+    const simulation_project::AssetResolveContext& assetResolveContext,
+    const std::unordered_set<std::string>* explicitModelIds,
+    assetcore::ModelAssetLeaseCache* assetCache,
+    const std::string& correlationId)
 {
     if(!objectDesc.collisionEnabled) {
         runtime.collisionEnabled = false;
@@ -893,15 +1307,32 @@ bool ProjectRuntimeBuilder::ensureSceneObjectCollisionObjects(
     runtime.collisionEnabled = true;
 
     const auto resolveStart = std::chrono::steady_clock::now();
-    const std::filesystem::path objectPath = simulation_project::AssetResolver::resolveProjectPath(
-        makeAssetResolveContext(projectBasePath, assetSearchPaths),
-        objectDesc.sourcePath);
+    const std::filesystem::path objectPath =
+        resolveRequiredAssetPath(assetResolveContext, objectDesc.sourcePath);
     profile.resolveMs = elapsedMilliseconds(resolveStart);
 
     const auto assetLoadStart = std::chrono::steady_clock::now();
-    auto modelDesc = assetcore::AssetManager::instance().loadModel(
-        pathToUtf8(objectPath),
-        static_cast<float>(objectDesc.visualScale));
+    std::shared_ptr<assetcore::ModelDesc> modelDesc;
+    if(assetCache != nullptr) {
+        assetcore::ModelAssetLeaseRequest request;
+        request.resolveContext = toAssetCoreContext(assetResolveContext);
+        request.source = pathToUtf8(objectPath);
+        request.scale = static_cast<float>(objectDesc.visualScale);
+        request.consumer = "sceneObjectCollision:" + objectDesc.id;
+        request.correlationId = correlationId;
+        assetcore::ModelAssetLeaseResult lease = assetCache->acquire(request);
+        if(!lease.success()) {
+            throw std::runtime_error(lease.errorMessage);
+        }
+        modelDesc = std::move(lease.model);
+        profile.assetCacheHit = lease.metrics.cacheHit;
+        profile.assetKey = std::move(lease.assetKey);
+    } else {
+        modelDesc = assetcore::AssetManager::instance().loadModel(
+            pathToUtf8(objectPath),
+            static_cast<float>(objectDesc.visualScale));
+        profile.assetKey = pathToUtf8(objectPath);
+    }
     profile.assetLoadMs = elapsedMilliseconds(assetLoadStart);
     if(!modelDesc) {
         throw std::runtime_error("Failed to load scene object collision model: " + pathToUtf8(objectPath));
@@ -910,58 +1341,52 @@ bool ProjectRuntimeBuilder::ensureSceneObjectCollisionObjects(
     profile.modelIndices = countModelIndices(*modelDesc);
 
     const auto collisionSetupStart = std::chrono::steady_clock::now();
+    profile.collisionBuildRequested = true;
     const simulation_project::ObjectCollisionOverrideDesc* collisionOverride =
         findObjectCollisionOverride(collisionDesc, objectDesc.id);
-    const std::string activeModelId = activeObjectCollisionModelId(collisionDesc, objectDesc.id);
-    const bool useVisualCollision =
-        simulation_project::isConvertFromVisualCollisionModelId(activeModelId);
-
-    if(useVisualCollision) {
-        const double collisionScale = objectDesc.visualScale != 0.0
-            ? objectDesc.collisionScale / objectDesc.visualScale
-            : 1.0;
-        const std::string cacheKey = makeSceneObjectCollisionCacheKey(
-            objectPath,
-            objectDesc.visualScale,
-            objectDesc.collisionScale);
-        std::shared_ptr<CachedSceneObjectCollision> cachedCollision =
-            findSceneObjectCollisionCache(cacheKey);
-        if(cachedCollision && cachedCollision->geometry) {
-            profile.collisionCacheHit = true;
-        } else {
-            cachedCollision = std::make_shared<CachedSceneObjectCollision>();
-            const auto meshConvertStart = std::chrono::steady_clock::now();
-            cachedCollision->mesh = makeObjMesh(*modelDesc, collisionScale);
-            profile.meshConvertMs = elapsedMilliseconds(meshConvertStart);
-
-            const auto fclBuildStart = std::chrono::steady_clock::now();
-            cachedCollision->geometry = CollisionGeometryBuilder::buildTriangleMesh(
-                makeTriangleMeshData(cachedCollision->mesh));
-            profile.fclBuildMs = elapsedMilliseconds(fclBuildStart);
-            storeSceneObjectCollisionCache(cacheKey, cachedCollision);
-        }
-
-        profile.collisionVertices = cachedCollision ? cachedCollision->mesh.vertices.size() : 0;
-        profile.collisionIndices = cachedCollision ? cachedCollision->mesh.indices.size() : 0;
-
-        if(cachedCollision && cachedCollision->geometry) {
-            RuntimeSceneCollisionObject collisionRuntime;
-            collisionRuntime.collisionShape = makeSceneObjectShapeDesc(objectDesc, cachedCollision->mesh);
-            collisionRuntime.collisionObject = std::make_shared<CollisionObject>(
-                runtime.runtimeId,
-                cachedCollision->geometry);
-            runtime.collisionObjects.push_back(std::move(collisionRuntime));
-        }
+    const std::string currentModelId = activeObjectCollisionModelId(collisionDesc, objectDesc.id);
+    std::unordered_set<std::string> modelIds{ currentModelId };
+    if(explicitModelIds != nullptr) {
+        modelIds.insert(explicitModelIds->begin(), explicitModelIds->end());
     }
 
-    if(collisionOverride != nullptr && !useVisualCollision) {
-        appendObjectCollisionOverrideObjects(
-            runtime,
-            *collisionOverride,
-            runtime.runtimeId,
-            projectBasePath,
-            assetSearchPaths,
-            activeModelId);
+    for(const std::string& modelId : modelIds) {
+        const bool useVisualCollision =
+            simulation_project::isConvertFromVisualCollisionModelId(modelId);
+        if(useVisualCollision) {
+            const double collisionScale = objectDesc.visualScale != 0.0
+                ? objectDesc.collisionScale / objectDesc.visualScale
+                : 1.0;
+            CollisionShapeDesc collisionShape;
+            const CollisionGeometryBuildResult buildResult = buildSceneObjectVisualCollision(
+                objectDesc,
+                objectPath,
+                *modelDesc,
+                collisionScale,
+                modelId,
+                profile,
+                collisionShape);
+            if(buildResult.success()) {
+                RuntimeSceneCollisionObject collisionRuntime;
+                collisionRuntime.collisionShape = std::move(collisionShape);
+                collisionRuntime.modelId = modelId;
+                collisionRuntime.currentModel = modelId == currentModelId;
+                collisionRuntime.collisionShape.modelId = collisionRuntime.modelId;
+                collisionRuntime.collisionShape.currentModel = collisionRuntime.currentModel;
+                collisionRuntime.collisionObject = std::make_shared<CollisionObject>(
+                    collisionVariantObjectId(runtime.runtimeId, modelId, 0),
+                    buildResult.geometry);
+                runtime.collisionObjects.push_back(std::move(collisionRuntime));
+            }
+        } else if(collisionOverride != nullptr) {
+            appendObjectCollisionOverrideObjects(
+                runtime,
+                *collisionOverride,
+                runtime.runtimeId,
+                assetResolveContext,
+                modelId,
+                currentModelId);
+        }
     }
 
     if(!runtime.collisionObjects.empty()) {
@@ -971,6 +1396,7 @@ bool ProjectRuntimeBuilder::ensureSceneObjectCollisionObjects(
     }
 
     profile.collisionSetupMs = elapsedMilliseconds(collisionSetupStart);
+    profile.collisionGeometryBuilt = !runtime.collisionObjects.empty();
     profile.totalMs = elapsedMilliseconds(totalStart);
     logSceneObjectProfile(objectDesc, objectPath, profile);
     return !runtime.collisionObjects.empty();
@@ -981,6 +1407,20 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
     uint64_t runtimeId,
     const std::filesystem::path& projectBasePath,
     const std::vector<std::string>& assetSearchPaths,
+    scenecore::SceneGraph& graph,
+    const std::string& projectAssetDirectory)
+{
+    return buildPointCloud(
+        pointCloudDesc,
+        runtimeId,
+        makeAssetResolveContext(projectBasePath, assetSearchPaths, projectAssetDirectory),
+        graph);
+}
+
+RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
+    const simulation_project::PointCloudDesc& pointCloudDesc,
+    uint64_t runtimeId,
+    const simulation_project::AssetResolveContext& assetResolveContext,
     scenecore::SceneGraph& graph)
 {
     if(pointCloudDesc.format != "pcd" && pointCloudDesc.format != "PCD") {
@@ -995,9 +1435,8 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
     runtime.transform = makeTransform(pointCloudDesc.transform);
     runtime.collisionEnabled = pointCloudDesc.collision.enabled;
 
-    const std::filesystem::path cloudPath = simulation_project::AssetResolver::resolveProjectPath(
-        makeAssetResolveContext(projectBasePath, assetSearchPaths),
-        pointCloudDesc.sourcePath);
+    const std::filesystem::path cloudPath =
+        resolveRequiredAssetPath(assetResolveContext, pointCloudDesc.sourcePath);
 
     sensorsimulation::PcdPointCloudLoader loader;
     sensorsimulation::PcdLoadOptions loadOptions;
@@ -1064,6 +1503,10 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
 
             RuntimeSceneCollisionObject collisionRuntime;
             collisionRuntime.collisionShape = buildResult.shapes[index];
+            collisionRuntime.modelId = "pointCloudProxy";
+            collisionRuntime.currentModel = true;
+            collisionRuntime.collisionShape.modelId = collisionRuntime.modelId;
+            collisionRuntime.collisionShape.currentModel = true;
             collisionRuntime.localTransform = buildResult.shapes[index].localTransform;
             if(collisionRuntime.collisionShape.label.empty()) {
                 collisionRuntime.collisionShape.label = pointCloudDesc.id;
@@ -1084,6 +1527,10 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
 
 bool ProjectRuntimeBuilder::setJointValue(RuntimeRobot& runtime, const std::string& jointName, double value)
 {
+    if(setParallelControlValue(runtime, jointName, value)) {
+        return true;
+    }
+
     auto it = runtime.model.jointNameToIndex.find(jointName);
     if(it == runtime.model.jointNameToIndex.end()) {
         return false;
@@ -1100,6 +1547,10 @@ bool ProjectRuntimeBuilder::setJointValue(RuntimeRobot& runtime, const std::stri
 
 bool ProjectRuntimeBuilder::getJointValue(const RuntimeRobot& runtime, const std::string& jointName, double& value)
 {
+    if(getParallelControlValue(runtime, jointName, value)) {
+        return true;
+    }
+
     auto it = runtime.model.jointNameToIndex.find(jointName);
     if(it == runtime.model.jointNameToIndex.end()) {
         return false;
@@ -1122,6 +1573,15 @@ bool ProjectRuntimeBuilder::getJointValue(const RuntimeRobot& runtime, const std
 void ProjectRuntimeBuilder::applyAutoMotion(RuntimeRobot& runtime, double timeSeconds)
 {
     if(!runtime.autoMotionEnabled) {
+        return;
+    }
+
+    if(runtime.parallelControlEnabled) {
+        runtime.parallelPose.z =
+            runtime.autoMotionAmplitude * std::sin(timeSeconds * runtime.autoMotionSpeed);
+        refreshParallelActuatorLengths(runtime);
+        applyParallelActuatorJointValues(runtime);
+        syncParallelPlatformTransform(runtime);
         return;
     }
 

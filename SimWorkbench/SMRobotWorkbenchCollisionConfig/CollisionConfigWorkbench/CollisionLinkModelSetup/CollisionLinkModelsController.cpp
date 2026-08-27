@@ -15,6 +15,7 @@
 #include <memory>
 #include <sstream>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 
 namespace
@@ -68,6 +69,15 @@ namespace
             .arg(static_cast<qulonglong>(stats.size() - 1));
     }
 
+    bool modelIdMatchesVariant(
+        const std::string& modelId,
+        const CollisionRuntimeModelVariantSummary& variant)
+    {
+        return modelId == variant.variantId ||
+            (simulation_project::isConvertFromVisualCollisionModelId(modelId) &&
+                variant.source == simulation_project::kConvertFromVisualCollisionSource);
+    }
+
     QString shortCollisionSourceText(const std::string& source)
     {
         if(source == "original") {
@@ -88,7 +98,8 @@ namespace
 
     QString collisionVariantStateText(
         const CollisionRuntimeModelVariantSummary& variant,
-        const QString& activeModelId)
+        const QString& activeModelId,
+        const std::unordered_set<std::string>& detectorModelIds)
     {
         QStringList states;
         if(!activeModelId.isEmpty() &&
@@ -100,7 +111,13 @@ namespace
         if(variant.visibleInViewport) {
             states << "Shown";
         }
-        if(variant.usedByActiveDetector) {
+        const bool usedByActiveDetector = std::any_of(
+            detectorModelIds.begin(),
+            detectorModelIds.end(),
+            [&](const std::string& modelId) {
+                return modelIdMatchesVariant(modelId, variant);
+            });
+        if(usedByActiveDetector) {
             states << "Used";
         }
         return states.isEmpty() ? "-" : states.join("+");
@@ -187,11 +204,36 @@ namespace
         return nullptr;
     }
 
-    QString activeSourceForDetector(const simulation_project::CollisionDetectorDesc* detector)
+    bool bindingMatchesRobotLink(
+        const simulation_project::CollisionDetectorModelBindingDesc& binding,
+        const std::string& robotId,
+        const std::string& linkName)
     {
-        return detector != nullptr && !detector->geometrySource.empty()
-            ? QString::fromStdString(normalizedCollisionSource(detector->geometrySource))
-            : QString();
+        return binding.robotId == robotId && binding.linkName == linkName &&
+            binding.objectId.empty() && binding.attachmentId.empty() && binding.pointCloudId.empty();
+    }
+
+    std::unordered_set<std::string> detectorModelIdsForRobotLink(
+        const simulation_project::CollisionDetectorDesc* detector,
+        const std::string& robotId,
+        const std::string& linkName,
+        const QString& currentModelId)
+    {
+        std::unordered_set<std::string> modelIds;
+        if(detector == nullptr) {
+            return modelIds;
+        }
+        for(const simulation_project::CollisionDetectorModelBindingDesc& binding : detector->modelBindings) {
+            if(!bindingMatchesRobotLink(binding, robotId, linkName)) {
+                continue;
+            }
+            if(binding.mode == "ExplicitModel" && !binding.modelId.empty()) {
+                modelIds.insert(binding.modelId);
+            } else if(binding.mode == "Current" && !currentModelId.isEmpty()) {
+                modelIds.insert(currentModelId.toStdString());
+            }
+        }
+        return modelIds;
     }
 
     QString targetDisplayName(const QString& selectedRobotId, const QString& selectedLinkName)
@@ -343,44 +385,6 @@ namespace
         ++it->count;
     }
 
-    std::filesystem::path ancestorWithDataDirectory(std::filesystem::path start)
-    {
-        std::error_code error;
-        start = start.empty()
-            ? std::filesystem::current_path(error)
-            : std::filesystem::weakly_canonical(start, error);
-        if(error) {
-            start = start.lexically_normal();
-        }
-
-        for(std::filesystem::path cursor = start; !cursor.empty(); cursor = cursor.parent_path()) {
-            if(std::filesystem::is_directory(cursor / "data", error)) {
-                return cursor;
-            }
-            if(cursor == cursor.parent_path()) {
-                break;
-            }
-        }
-        return start;
-    }
-
-    std::filesystem::path resolveSourceRoot(const std::filesystem::path& projectBasePath)
-    {
-        const std::filesystem::path fromProjectBase = ancestorWithDataDirectory(projectBasePath);
-        std::error_code error;
-        if(std::filesystem::is_directory(fromProjectBase / "data", error)) {
-            return fromProjectBase;
-        }
-
-        const std::filesystem::path currentPath = std::filesystem::current_path(error);
-        const std::filesystem::path fromCurrent = ancestorWithDataDirectory(currentPath);
-        if(std::filesystem::is_directory(fromCurrent / "data", error)) {
-            return fromCurrent;
-        }
-
-        return projectBasePath.empty() ? currentPath : projectBasePath;
-    }
-
     std::string pathToUtf8(const std::filesystem::path& path)
     {
         return path.generic_u8string();
@@ -390,15 +394,9 @@ namespace
         const std::filesystem::path& projectBasePath,
         const simulation_project::ProjectDocument& document)
     {
-        simulation_project::AssetResolveContext context;
-        context.projectBasePath = projectBasePath.empty()
-            ? std::filesystem::current_path()
-            : projectBasePath;
-        context.sourceRootPath = resolveSourceRoot(context.projectBasePath);
-        context.dataRootPath = context.sourceRootPath / "data";
-        context.appRootPath = std::filesystem::current_path();
-        context.assetSearchPaths = document.assetSearchPaths;
-        return context;
+        return simulation_project::AssetResolver::makeProjectContext(
+            projectBasePath.empty() ? std::filesystem::current_path() : projectBasePath,
+            document);
     }
 
     std::filesystem::path resolveStoredAssetPath(
@@ -690,34 +688,14 @@ namespace
         return normalizedCollisionSource(element.source);
     }
 
-    std::string stableHashHex(const std::vector<std::string>& values)
-    {
-        std::uint64_t hash = 1469598103934665603ull;
-        for(const std::string& value : values) {
-            for(char c : value) {
-                hash ^= static_cast<unsigned char>(c);
-                hash *= 1099511628211ull;
-            }
-            hash ^= 0xffu;
-            hash *= 1099511628211ull;
-        }
-
-        std::ostringstream text;
-        text << std::hex << std::setw(16) << std::setfill('0') << hash;
-        return text.str();
-    }
-
     QString makeObjectVariantId(
         const QString& targetId,
         const std::string& source,
         const std::string& role,
         const std::vector<std::string>& elementIds)
     {
-        return QString("%1|%2|%3|%4")
-            .arg(targetId)
-            .arg(QString::fromStdString(source))
-            .arg(QString::fromStdString(role))
-            .arg(QString::fromStdString(stableHashHex(elementIds)));
+        return QString::fromStdString(simulation_project::makeGeneratedObjectCollisionModelId(
+            targetId.toStdString(), source, role, elementIds));
     }
 
     QString activeObjectModelId(
@@ -1043,11 +1021,12 @@ CollisionLinkModelsViewModel CollisionLinkModelsController::buildViewModel(
 
     const simulation_project::CollisionDetectorDesc* activeDetector =
         findDetector(document, activeDetectorId);
-    const QString activeRole = activeDetector != nullptr
-        ? QString::fromStdString(activeDetector->geometryRole)
-        : QString();
-    const QString activeSource = activeSourceForDetector(activeDetector);
     const QString activeModelId = activeLinkModelId(document, robotId, linkName);
+    const std::unordered_set<std::string> detectorModelIds = detectorModelIdsForRobotLink(
+        activeDetector,
+        robotId,
+        linkName,
+        activeModelId);
 
     const CollisionRuntimeLinkSummary* linkSummary = findLinkSummary(robotSummary, linkName);
     if(linkSummary != nullptr) {
@@ -1070,7 +1049,7 @@ CollisionLinkModelsViewModel CollisionLinkModelsController::buildViewModel(
                         item.source == simulation_project::kConvertFromVisualCollisionSource));
             item.tooltip = QString("label: %1\nstate: %2\nrole: %3\nsource: %4\nelements: %5\ntypes: %6\nid: %7")
                 .arg(item.label)
-                .arg(collisionVariantStateText(variant, activeModelId))
+                .arg(collisionVariantStateText(variant, activeModelId, detectorModelIds))
                 .arg(item.role)
                 .arg(item.source)
                 .arg(static_cast<qulonglong>(variant.elementCount))
@@ -1129,10 +1108,22 @@ CollisionLinkModelsViewModel CollisionLinkModelsController::buildViewModel(
             if(!visibleVariantId.isEmpty() && item.variantId == visibleVariantId) {
                 visibleIndex = i;
             }
-            if(activeIndex < 0 &&
-                item.role == activeRole &&
-                (activeSource.isEmpty() || item.source == activeSource)) {
-                activeIndex = i;
+            if(activeIndex < 0) {
+                const auto runtimeVariantIt = std::find_if(
+                    linkSummary->variants.begin(),
+                    linkSummary->variants.end(),
+                    [&](const CollisionRuntimeModelVariantSummary& variant) {
+                        return QString::fromStdString(variant.variantId) == item.variantId;
+                    });
+                if(runtimeVariantIt != linkSummary->variants.end() &&
+                    std::any_of(
+                        detectorModelIds.begin(),
+                        detectorModelIds.end(),
+                        [&](const std::string& modelId) {
+                            return modelIdMatchesVariant(modelId, *runtimeVariantIt);
+                        })) {
+                    activeIndex = i;
+                }
             }
         }
         if(currentIndex < 0 && activeModelId.isEmpty()) {
@@ -1193,14 +1184,15 @@ CollisionLinkModelsSummaryView CollisionLinkModelsController::buildSummary(
 
     const simulation_project::CollisionDetectorDesc* activeDetector =
         findDetector(document, activeDetectorId);
-    const QString activeRole = activeDetector != nullptr
-        ? QString::fromStdString(activeDetector->geometryRole)
-        : QString();
-    const QString activeSource = activeSourceForDetector(activeDetector);
     const CollisionRuntimeLinkSummary* linkSummary =
         findLinkSummary(robotSummary, selectedLinkName.toStdString());
     const QString activeModelId =
         activeLinkModelId(document, selectedRobotId.toStdString(), selectedLinkName.toStdString());
+    const std::unordered_set<std::string> detectorModelIds = detectorModelIdsForRobotLink(
+        activeDetector,
+        selectedRobotId.toStdString(),
+        selectedLinkName.toStdString(),
+        activeModelId);
 
     view.target.valid = linkSummary != nullptr;
     view.target.entityKind = "Link";
@@ -1226,10 +1218,13 @@ CollisionLinkModelsSummaryView CollisionLinkModelsController::buildSummary(
             if(variant.visibleInViewport && shownVariant == nullptr) {
                 shownVariant = &variant;
             }
-            if(!activeRole.isEmpty() &&
-                variant.role == activeRole.toStdString() &&
-                (activeSource.isEmpty() || variant.source == activeSource.toStdString()) &&
-                detectorVariant == nullptr) {
+            if(detectorVariant == nullptr &&
+                std::any_of(
+                    detectorModelIds.begin(),
+                    detectorModelIds.end(),
+                    [&](const std::string& modelId) {
+                        return modelIdMatchesVariant(modelId, variant);
+                    })) {
                 detectorVariant = &variant;
             }
         }

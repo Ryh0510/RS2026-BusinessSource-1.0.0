@@ -5,8 +5,6 @@
 #include "CollisionDocumentEventPublisher.h"
 #include "CollisionWorkbenchServices.h"
 #include "CollisionWorkbenchPanel.h"
-#include "CollisionLegacyPairDocumentFacade.h"
-#include "CollisionLegacyPairWorkbenchController.h"
 #include "CollisionSelectionSetDocumentFacade.h"
 #include "CollisionSelectionSetViewController.h"
 #include "CollisionSelectionSetWorkbenchController.h"
@@ -76,27 +74,6 @@ namespace robot_qt_viewer
                   [this](const QString& message, int timeoutMs) {
                       showStatus(message, timeoutMs);
                   }}))
-        , m_legacyPairDocument(std::make_unique<CollisionLegacyPairDocumentFacade>(
-              m_appServices.document(),
-              m_appServices))
-        , m_legacyPairWorkbench(std::make_unique<CollisionLegacyPairWorkbenchController>(
-              m_panel,
-              *m_legacyPairDocument,
-              CollisionLegacyPairWorkbenchController::Callbacks{
-                  [this]() {
-                      return isUpdating();
-                  },
-                  [this]() {
-                      if(m_callbacks.viewportReload) {
-                          m_callbacks.viewportReload();
-                      }
-                  },
-                  [this](const QString& sourceId) {
-                      m_documentEvents.publishCollisionChanged(sourceId);
-                  },
-                  [this](const QString& message, int timeoutMs) {
-                      showStatus(message, timeoutMs);
-                  }}))
         , m_selectionSetDocument(std::make_unique<CollisionSelectionSetDocumentFacade>(
               m_appServices.document(),
               m_appServices))
@@ -131,11 +108,6 @@ namespace robot_qt_viewer
     CollisionDetectorWorkbenchDocumentFacade& CollisionDetectorConfigModuleController::detectorDocument()
     {
         return *m_detectorDocument;
-    }
-
-    CollisionLegacyPairWorkbenchController& CollisionDetectorConfigModuleController::legacyPairWorkbench()
-    {
-        return *m_legacyPairWorkbench;
     }
 
     CollisionSelectionSetViewController& CollisionDetectorConfigModuleController::selectionSetView()
@@ -256,14 +228,6 @@ namespace robot_qt_viewer
                 m_detectorWorkbench->previewDraftMember(robotId, linkName, objectId, attachmentId);
             });
 
-        QObject::connect(&m_panel, &CollisionWorkbenchPanel::legacyPairEnabledChanged,
-            &receiver, [this](const QString& robotId, const QString& objectId, bool enabled) {
-                setLegacyPairEnabled(robotId, objectId, enabled);
-            });
-        QObject::connect(&m_panel, &CollisionWorkbenchPanel::autoPairAllRequested,
-            &receiver, [this]() {
-                autoPairAllRobotObjects();
-            });
     }
 
     QString CollisionDetectorConfigModuleController::currentSelectionSetId() const
@@ -274,13 +238,6 @@ namespace robot_qt_viewer
     QString CollisionDetectorConfigModuleController::currentDetectorId() const
     {
         return m_panel.currentDetectorId();
-    }
-
-    void CollisionDetectorConfigModuleController::refreshPairList()
-    {
-        m_updating = true;
-        m_legacyPairWorkbench->refreshPairList();
-        m_updating = false;
     }
 
     void CollisionDetectorConfigModuleController::refreshDetectorList()
@@ -336,24 +293,6 @@ namespace robot_qt_viewer
         }
         m_panel.setDetectorPairs(m_detectorDocument->detectorPairs(currentDetectorId(), detectors));
         m_updating = wasUpdating;
-    }
-
-    bool CollisionDetectorConfigModuleController::syncLegacyRobotObjectPairs()
-    {
-        return m_legacyPairWorkbench->syncRobotObjectPairs();
-    }
-
-    void CollisionDetectorConfigModuleController::autoPairAllRobotObjects()
-    {
-        m_legacyPairWorkbench->autoPairAllRobotObjects();
-    }
-
-    void CollisionDetectorConfigModuleController::setLegacyPairEnabled(
-        const QString& robotId,
-        const QString& objectId,
-        bool enabled)
-    {
-        m_legacyPairWorkbench->setPairEnabled(robotId, objectId, enabled);
     }
 
     void CollisionDetectorConfigModuleController::previewSelectionSetMember()

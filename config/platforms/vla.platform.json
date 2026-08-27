@@ -1,0 +1,28 @@
+{
+  "schema": "smrobot.platform-profile",
+  "version": 1,
+  "id": "vla",
+  "displayName": "VLA Robot Simulation Platform",
+  "requiredFeatures": [
+    "smrobot.feature.project-assembly",
+    "smrobot.feature.robot-run",
+    "smrobot.feature.digital-twin"
+  ],
+  "requiredModes": [],
+  "optionalModes": [
+    "smrobot.mode.collision-config",
+    "smrobot.mode.motion-planning"
+  ],
+  "defaultEnabledOptionalModes": [
+    "smrobot.mode.motion-planning"
+  ],
+  "defaultMode": "smrobot.mode.project-assembly",
+  "modeOrder": [
+    "smrobot.mode.project-assembly",
+    "smrobot.mode.robot-run",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.collision-config",
+    "smrobot.mode.digital-twin"
+  ],
+  "allowUserOverrides": true
+}

@@ -1,11 +1,11 @@
 ﻿{
     "businessPackage":  "RS2026-BusinessSource",
-    "businessVersion":  "1.0.1",
+    "businessVersion":  "1.0.3",
     "platform":  "win64-vs2019",
-    "sourceCommit":  "e119884439b53cfb2496cadc000563f82c67dfdc",
+    "sourceCommit":  "37177fbee61f86eb0ac9520343c73ca19d8e379d",
     "sourceBranch":  "branch-codex-dev",
-    "sourceDirty":  false,
-    "generatedAtUtc":  "2026-07-23T07:46:22Z",
+    "sourceDirty":  true,
+    "generatedAtUtc":  "2026-08-25T13:45:21Z",
     "sourceAllowlist":  [
                             "cmake",
                             "config",
@@ -24,20 +24,20 @@
     "sdk":  {
                 "name":  "SMRobotSDK",
                 "pathHint":  "PrebuiltPackages",
-                "manifestSha256":  "a9e7be518b636b77f358a2871946bbc8588d195df5879fe3e017ec7a53f78af9",
+                "manifestSha256":  "575eef727400a5596911ee3639b21ab8292d77d22bfac7665f3a4908b0df5880",
                 "copiedThirdParty":  true
             },
     "thirdparty":  {
                        "name":  "SMRobotWindowsThirdParty",
                        "mode":  "sdk-curated-windows-external-fcl",
                        "pathHint":  "PrebuiltPackages\\thirdparty",
-                       "gitCommit":  "a4e59c94c1588cfbb4d88c8f82261ecb14bc6e6f"
+                       "gitCommit":  "e4e016f9729ff2a5df9409189f0d537d5c45f1f9"
                    },
     "data":  {
                  "name":  "SMRobotData",
                  "mode":  "external",
                  "pathHint":  "data",
-                 "gitCommit":  "1f1bbae43b530e2354dca5a5bc29c57d75768a5e"
+                 "gitCommit":  "17f8941a974a333190ee25de760e05ef3ad63f24"
              },
     "cmake":  {
                   "prebuiltPackageRoot":  "PrebuiltPackages",
@@ -49,5 +49,12 @@
                                         "SMRobotCore",
                                         "SMRobotPlatform"
                                     ]
-              }
+              },
+    "runtimeDeployment":  {
+                              "ktxExternalDevelopmentPackageRequired":  false,
+                              "ktxOwner":  "SMRobotPlatform::RenderCore (private static dependency)",
+                              "licenseMode":  "package",
+                              "licenseFile":  "license-420-prod.LIC",
+                              "licenseOutputDirectory":  "\u003cbuild\u003e/\u003cConfig\u003e/bin/license"
+                          }
 }

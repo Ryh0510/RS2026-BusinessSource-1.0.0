@@ -9,6 +9,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
+class QTableWidget;
 
 class CollisionDetectorQueryDialog : public QDialog
 {
@@ -25,10 +26,13 @@ private:
     CollisionDetectorQueryContractView m_initialContract;
     QLabel* m_idLabel = nullptr;
     QLineEdit* m_nameEdit = nullptr;
+    QCheckBox* m_collisionCheck = nullptr;
     QCheckBox* m_contactsCheck = nullptr;
     QCheckBox* m_normalsCheck = nullptr;
     QCheckBox* m_nearestCheck = nullptr;
     QDoubleSpinBox* m_maxContactsSpin = nullptr;
     QDoubleSpinBox* m_distanceThresholdSpin = nullptr;
-    QComboBox* m_roleCombo = nullptr;
+    QTableWidget* m_bindingTable = nullptr;
+    QVector<QComboBox*> m_bindingModeCombos;
+    QVector<QLineEdit*> m_bindingModelIdEdits;
 };

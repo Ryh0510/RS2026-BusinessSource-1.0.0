@@ -15,6 +15,7 @@ namespace robot_qt_viewer
         bool migratedCollisionDetectors = false;
         QString message;
         QString sourceId;
+        QString operationId;
     };
 
     class ProjectSessionWorkflowController
@@ -25,10 +26,12 @@ namespace robot_qt_viewer
         ProjectSessionWorkflowResult resetNew(const QString& sourceId);
         ProjectSessionWorkflowResult loadFromPath(
             const std::filesystem::path& path,
-            const QString& sourceId);
+            const QString& sourceId,
+            const QString& operationId = QString());
         ProjectSessionWorkflowResult loadStartupProject(
             const std::filesystem::path& path,
-            const QString& sourceId);
+            const QString& sourceId,
+            const QString& operationId = QString());
         ProjectSessionWorkflowResult saveToPath(
             const std::filesystem::path& path,
             bool saveAsV3,
@@ -38,7 +41,8 @@ namespace robot_qt_viewer
         ProjectSessionWorkflowResult loadProject(
             const std::filesystem::path& path,
             const QString& sourceId,
-            bool requireSaveAs);
+            bool requireSaveAs,
+            const QString& operationId);
 
         RobotQtViewerDocumentContext& m_context;
     };

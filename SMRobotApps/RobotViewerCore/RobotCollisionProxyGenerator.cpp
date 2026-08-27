@@ -568,6 +568,7 @@ namespace
         buildRequest.targetKey = request.targetKey;
         buildRequest.source = source;
         buildRequest.role = request.role;
+        buildRequest.uriPrefix = request.uriPrefix;
         buildRequest.options = request.options;
         assetResult = collision::CollisionCoacdAssetWriter::build(mesh, buildRequest);
         if(!assetResult.ok()) {
@@ -591,7 +592,7 @@ namespace
     {
         for(std::size_t i = 0; i < assetResult.parts.size(); ++i) {
             simulation_project::CollisionElementOverrideDesc element;
-            element.id = linkName + "_coacd_" + std::to_string(i + 1);
+            element.id = linkName + "_coacd_" + assetResult.hash + "_" + std::to_string(i + 1);
             element.linkName = linkName;
             element.label = element.id;
             element.type = "mesh";
@@ -615,7 +616,7 @@ namespace
             collision::CollisionCoacdAssetWriter::sanitizePathToken(request.targetKey, "target");
         for(std::size_t i = 0; i < assetResult.parts.size(); ++i) {
             simulation_project::ObjectCollisionElementOverrideDesc element;
-            element.id = targetKey + "_coacd_" + std::to_string(i + 1);
+            element.id = targetKey + "_coacd_" + assetResult.hash + "_" + std::to_string(i + 1);
             element.label = element.id;
             element.type = "mesh";
             element.role = request.role.empty()

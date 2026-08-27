@@ -339,6 +339,20 @@ if(_rs4090_load_ompl)
 endif()
 
 _rs4090_decide_provider(_rs4090_load_ktx KTX KTX)
+if(_rs4090_load_ktx
+   AND _rs4090_prebuilt_platform_asset_stack
+   AND RS2026_DEPENDENCY_SNAPSHOT_COMPLETE)
+    rs_project_requires_package(KTX _rs4090_source_requires_ktx)
+    if(NOT _rs4090_source_requires_ktx)
+        set(_rs4090_load_ktx OFF)
+        if(RS2026_4090_DEPENDENCY_REPORT)
+            message(STATUS
+                "[4090 Dependency] KTX: actual=SKIP, reason=private static "
+                "dependency is already contained in prebuilt SMRobotPlatform::RenderCore")
+        endif()
+    endif()
+    unset(_rs4090_source_requires_ktx)
+endif()
 if(_rs4090_load_ktx)
     include( CMake_FindKtx )
     _rs4090_assert_provider_targets(KTX KTX::ktx)

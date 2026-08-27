@@ -18,6 +18,7 @@ class CollisionDetectorsWidget : public QWidget
 public:
     explicit CollisionDetectorsWidget(QWidget* parent = nullptr);
 
+    bool configureNewDetector(CollisionDetectorQueryContractView& contract);
     void setDetectors(const QVector<CollisionDetectorListItemView>& items, const QString& preferredId);
     void setProperties(const CollisionDetectorPropertiesView& view);
     void setPairs(const CollisionDetectorPairsViewModel& view);
@@ -28,7 +29,6 @@ public:
     void selectDetector(const QString& detectorId);
     void setDetectorActionsEnabled(bool canAdd, bool hasDetector, bool canRemove);
     void setLinkPairActionsEnabled(bool canMarkLinkA, bool canCreateLinkLink);
-    bool setCurrentRole(const QString& role);
     void addDraftSetMember(const QString& side, const CollisionDetectorDraftMemberView& member);
     void clearDraftPairBuilder();
     QVector<CollisionDetectorDraftMemberView> draftSetMembers(const QString& side) const;

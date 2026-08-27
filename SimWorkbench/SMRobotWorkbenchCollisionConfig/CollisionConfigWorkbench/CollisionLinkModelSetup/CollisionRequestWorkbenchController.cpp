@@ -167,14 +167,9 @@ namespace robot_qt_viewer
             return;
         }
 
-        const QString role = m_widget.currentVariantRole();
-        if(role.isEmpty()) {
-            showStatus("Selected collision model variant has no detector role.", 3000);
-            return;
-        }
-        const QString source = m_widget.currentVariantSource();
-        if(source.isEmpty()) {
-            showStatus("Selected collision model variant has no source.", 3000);
+        const QString variantId = m_widget.currentVariantId();
+        if(variantId.isEmpty()) {
+            showStatus("Selected collision model variant has no stable modelId.", 3000);
             return;
         }
 
@@ -184,17 +179,16 @@ namespace robot_qt_viewer
             return;
         }
 
-        if(!m_callbacks.setCurrentDetectorRole || !m_callbacks.setCurrentDetectorRole(role)) {
-            showStatus(QString("Detector role is not available: %1").arg(role), 5000);
-            return;
-        }
-
+        const QString attachmentId = m_appServices.selectedToolAttachmentId();
+        const QString objectId = !attachmentId.isEmpty() ? attachmentId : m_appServices.selectedObjectId();
         const CollisionLinkModelVariantCommandResult result =
             m_documentFacade.useVariantInDetector(
                 m_context.viewportServices(),
                 detectorId,
-                role,
-                source);
+                m_appServices.selectedRobotId(),
+                m_appServices.selectedLinkName(),
+                objectId,
+                variantId);
         if(!result.success) {
             showStatus(result.message, 3000);
             refreshDetectorProperties();

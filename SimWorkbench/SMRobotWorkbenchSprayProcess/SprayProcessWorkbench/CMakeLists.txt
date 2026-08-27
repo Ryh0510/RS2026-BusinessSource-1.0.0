@@ -2,11 +2,22 @@ cmake_minimum_required(VERSION 3.20)
 
 set(TARGET_NAME SprayProcessWorkbench)
 
-add_library(${TARGET_NAME} INTERFACE)
+set(SOURCES
+    SprayProcessWorkbenchContribution.cpp
+    SprayProcessWorkbenchContribution.h
+)
+
+add_library(${TARGET_NAME} STATIC ${SOURCES})
 add_library(SMRobotWorkbenchSprayProcess::${TARGET_NAME} ALIAS ${TARGET_NAME})
 
+target_include_directories(${TARGET_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<INSTALL_INTERFACE:${PACKAGE_NAME}/include/${TARGET_NAME}>
+)
+
 target_link_libraries(${TARGET_NAME}
-    INTERFACE
+    PUBLIC
         SMRobotWorkbenchCommon::WorkbenchCommon
         SMRobotSpray::SprayCore
         SMRobotSpray::SprayPathPlanning
@@ -14,7 +25,7 @@ target_link_libraries(${TARGET_NAME}
 )
 
 target_compile_features(${TARGET_NAME}
-    INTERFACE
+    PUBLIC
         cxx_std_17
 )
 
@@ -28,10 +39,20 @@ set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
 set_target_properties(${TARGET_NAME}
     PROPERTIES
         FOLDER SMRobotWorkbenchSprayProcess
+        DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX}
+        RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX}
+        SMROBOT_WORKBENCH_REGISTRAR_HEADER "SprayProcessWorkbenchContribution.h"
+        SMROBOT_WORKBENCH_REGISTRAR_FUNCTION "robot_qt_viewer::registerSprayProcessWorkbenchContribution"
+        EXPORT_PROPERTIES "SMROBOT_WORKBENCH_REGISTRAR_HEADER;SMROBOT_WORKBENCH_REGISTRAR_FUNCTION"
 )
 
 set(${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR ${CMAKE_CURRENT_BINARY_DIR}/install_headers)
-file(MAKE_DIRECTORY ${${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR})
+file(REMOVE_RECURSE ${${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR})
+file(MAKE_DIRECTORY ${${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR}/${TARGET_NAME})
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/SprayProcessWorkbenchContribution.h
+    ${${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR}/${TARGET_NAME}/SprayProcessWorkbenchContribution.h
+    COPYONLY)
 
 function_InstallTarget(
     TARGET_NAME ${TARGET_NAME}

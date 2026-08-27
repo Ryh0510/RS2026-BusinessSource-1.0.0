@@ -9,6 +9,12 @@
             "${DATA_DIR}",
             "${ENV:SMROBOT_ASSET_DIR}"
         ],
+        "assetStore": {
+            "assets": [],
+            "collisionModels": [],
+            "directory": "dec-white4600-tool.assets",
+            "libraries": []
+        },
         "attachments": {
             "assets": [
                 {
@@ -59,7 +65,9 @@
                         "yaw": 0.0,
                         "z": 0.0
                     },
-                    "name": "gun"
+                    "name": "gun",
+                    "sourceObjectFrameId": "gun_frame",
+                    "sourceObjectId": "gun"
                 }
             ],
             "mountFrames": [
@@ -85,7 +93,7 @@
             "allowedPairs": [],
             "detectors": [
                 {
-                    "contacts": true,
+                    "contacts": false,
                     "distance": true,
                     "distanceThreshold": 0.0,
                     "enabled": true,
@@ -94,6 +102,58 @@
                     "geometrySource": "",
                     "id": "default_collision",
                     "maxContacts": 32,
+                    "modelBindings": [
+                        {
+                            "attachmentId": "gun_attachment",
+                            "context": "PairGeneratorA",
+                            "linkName": "",
+                            "mode": "Current",
+                            "modelId": "",
+                            "objectId": "",
+                            "pointCloudId": "",
+                            "robotId": ""
+                        },
+                        {
+                            "attachmentId": "",
+                            "context": "PairGeneratorB",
+                            "linkName": "",
+                            "mode": "Current",
+                            "modelId": "",
+                            "objectId": "burner",
+                            "pointCloudId": "",
+                            "robotId": ""
+                        },
+                        {
+                            "attachmentId": "",
+                            "context": "PairGeneratorA",
+                            "linkName": "Link6",
+                            "mode": "Current",
+                            "modelId": "",
+                            "objectId": "",
+                            "pointCloudId": "",
+                            "robotId": "White4600"
+                        },
+                        {
+                            "attachmentId": "",
+                            "context": "PairGeneratorA",
+                            "linkName": "Link5",
+                            "mode": "Current",
+                            "modelId": "",
+                            "objectId": "",
+                            "pointCloudId": "",
+                            "robotId": "White4600"
+                        },
+                        {
+                            "attachmentId": "",
+                            "context": "PairGeneratorA",
+                            "linkName": "Link4",
+                            "mode": "Current",
+                            "modelId": "",
+                            "objectId": "",
+                            "pointCloudId": "",
+                            "robotId": "White4600"
+                        }
+                    ],
                     "name": "Default Collision",
                     "nearestPoints": true,
                     "pairFilters": [],
@@ -106,8 +166,8 @@
                             "linkA": "",
                             "linkB": "",
                             "linkName": "",
-                            "objectA": "",
-                            "objectB": "",
+                            "objectA": "gun_attachment",
+                            "objectB": "burner",
                             "objectGroupA": "",
                             "objectGroupB": "",
                             "objectGroupId": "",
@@ -115,24 +175,80 @@
                             "robotA": "",
                             "robotB": "",
                             "robotId": "",
-                            "type": "SceneAll"
+                            "type": "ObjectObject"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link6"
+                            ],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "Link6",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "burner",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "White4600",
+                            "type": "LinkObject"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link5"
+                            ],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "Link5",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "burner",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "White4600",
+                            "type": "LinkObject"
+                        },
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [
+                                "Link4"
+                            ],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "Link4",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "burner",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "White4600",
+                            "type": "LinkObject"
                         }
                     ],
                     "queryPolicy": "",
                     "selectionSetAId": "",
                     "selectionSetBId": "",
-                    "targets": [
-                        {
-                            "excludeLinks": [],
-                            "includeLinks": [],
-                            "objectGroupId": "",
-                            "objectId": "",
-                            "robotId": "White4600"
-                        }
-                    ],
-                    "type": "SceneAll"
+                    "targets": [],
+                    "type": "SelectedObjects"
                 }
             ],
+            "objectModelSelections": [],
             "objectOverrides": [],
             "query": {
                 "contacts": true,
@@ -145,7 +261,7 @@
                     {
                         "enabled": true,
                         "includeRobotLinks": [],
-                        "objectId": "gun",
+                        "objectId": "gun_attachment",
                         "robotId": "White4600"
                     },
                     {
@@ -156,12 +272,13 @@
                     }
                 ]
             },
+            "robotLinkModelSelections": [],
             "robotOverrides": [],
             "selectionSets": []
         },
         "objects": [
             {
-                "collisionEnabled": true,
+                "collisionEnabled": false,
                 "collisionScale": 1.0,
                 "id": "gun",
                 "name": "gun",
@@ -227,6 +344,7 @@
                 "id": "White4600",
                 "initialJoints": [],
                 "name": "White4600",
+                "sourceModelIndex": 0,
                 "sourcePath": "data/Spray420/WhiteABB4600/urdf/White4600.urdf",
                 "sourceType": "urdf",
                 "visible": true
@@ -243,9 +361,9 @@
                     "contactPointRadius": 0.025,
                     "normalLength": 0.12,
                     "showCollisionGeometry": true,
-                    "showContacts": true,
+                    "showContacts": false,
                     "showNearestPoints": true,
-                    "showNormals": true,
+                    "showNormals": false,
                     "showObjectHighlight": true,
                     "visible": true
                 }
@@ -265,12 +383,7 @@
         "debugVisualization": {},
         "pointCloudVisualization": {},
         "view": {
-            "backgroundColor": {
-                "a": 1.0,
-                "b": 0.08,
-                "g": 0.06,
-                "r": 0.05
-            },
+            "backgroundColorMode": "theme",
             "camera": {
                 "distance": 4.0,
                 "pitch": 0.0,

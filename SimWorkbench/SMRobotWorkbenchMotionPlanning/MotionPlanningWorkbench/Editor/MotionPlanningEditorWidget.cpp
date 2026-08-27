@@ -290,6 +290,11 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     m_cdfSeedTrackingWeight = makePoseSpinBox(cdfPage, 0.0, 2.0, 0.25, 0.05);
     cdfRepairForm->addRow(QStringLiteral("Seed tracking"), m_cdfSeedTrackingWeight);
 
+    m_cdfSegmentIntermediateSamples = new QSpinBox(cdfPage);
+    m_cdfSegmentIntermediateSamples->setRange(0, 20);
+    m_cdfSegmentIntermediateSamples->setValue(1);
+    cdfRepairForm->addRow(QStringLiteral("Intermediate samples / segment"), m_cdfSegmentIntermediateSamples);
+
     m_cdfMaxIterations = new QSpinBox(cdfPage);
     m_cdfMaxIterations->setRange(1, 1000);
     m_cdfMaxIterations->setValue(80);
@@ -459,6 +464,9 @@ MotionPlanningEditorWidget::CdfQpRepairSettings MotionPlanningEditorWidget::cdfQ
     settings.seedTrackingWeight = m_cdfSeedTrackingWeight != nullptr
         ? m_cdfSeedTrackingWeight->value()
         : settings.seedTrackingWeight;
+    settings.segmentIntermediateSamples = m_cdfSegmentIntermediateSamples != nullptr
+        ? m_cdfSegmentIntermediateSamples->value()
+        : settings.segmentIntermediateSamples;
     settings.maxIterations = m_cdfMaxIterations != nullptr ? m_cdfMaxIterations->value() : settings.maxIterations;
     settings.keepEndpoints = m_cdfKeepEndpoints != nullptr ? m_cdfKeepEndpoints->isChecked() : settings.keepEndpoints;
     return settings;
@@ -642,6 +650,9 @@ void MotionPlanningEditorWidget::updateCdfActions()
     }
     if(m_cdfTrustRegion != nullptr) {
         m_cdfTrustRegion->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfSegmentIntermediateSamples != nullptr) {
+        m_cdfSegmentIntermediateSamples->setEnabled(hasRobot && hasImportedRows);
     }
     if(m_cdfMaxIterations != nullptr) {
         m_cdfMaxIterations->setEnabled(hasRobot && hasImportedRows);

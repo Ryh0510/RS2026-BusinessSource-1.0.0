@@ -9,7 +9,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::ProjectAssembly,
             RobotQtViewerRightPanelKind::SceneSelection,
             RobotQtViewerViewportInteractionMode::Browse,
-            QStringLiteral("projectAssemblyBrowse"),
+            QStringLiteral("smrobot.mode.project-assembly"),
             QStringLiteral("Project Assembly"),
             QStringLiteral("Scene Edit Panel"),
             true,
@@ -23,7 +23,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::RobotRun,
             RobotQtViewerRightPanelKind::Motion,
             RobotQtViewerViewportInteractionMode::SelectRobot,
-            QStringLiteral("robotRun"),
+            QStringLiteral("smrobot.mode.robot-run"),
             QStringLiteral("Robot Run"),
             QStringLiteral("Motion Panel"),
             true,
@@ -37,7 +37,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::ProjectAssembly,
             RobotQtViewerRightPanelKind::ProjectAssembly,
             RobotQtViewerViewportInteractionMode::SelectMount,
-            QStringLiteral("projectAssembly"),
+            QStringLiteral("smrobot.mode.tool-setup"),
             QStringLiteral("Project Assembly"),
             QStringLiteral("Mount Frame Editor"),
             true,
@@ -51,7 +51,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::CollisionConfig,
             RobotQtViewerRightPanelKind::CollisionConfig,
             RobotQtViewerViewportInteractionMode::SelectCollisionTarget,
-            QStringLiteral("collisionConfig"),
+            QStringLiteral("smrobot.mode.collision-config"),
             QStringLiteral("Collision Config"),
             QStringLiteral("Collision Detector Configuration"),
             false,
@@ -65,7 +65,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::TrajectoryPlanning,
             RobotQtViewerRightPanelKind::MotionPlanning,
             RobotQtViewerViewportInteractionMode::Browse,
-            QStringLiteral("motionPlanning"),
+            QStringLiteral("smrobot.mode.motion-planning"),
             QStringLiteral("Motion Planning"),
             QStringLiteral("Motion Planning"),
             true,
@@ -79,7 +79,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::SprayProcess,
             RobotQtViewerRightPanelKind::Status,
             RobotQtViewerViewportInteractionMode::Browse,
-            QStringLiteral("sprayProcess"),
+            QStringLiteral("smrobot.mode.spray-process"),
             QStringLiteral("Spray Process"),
             QStringLiteral("Spray Process"),
             true,
@@ -93,7 +93,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::DigitalTwin,
             RobotQtViewerRightPanelKind::Status,
             RobotQtViewerViewportInteractionMode::Browse,
-            QStringLiteral("digitalTwin"),
+            QStringLiteral("smrobot.mode.digital-twin"),
             QStringLiteral("Digital Twin"),
             QStringLiteral("Digital Twin"),
             true,
@@ -107,7 +107,7 @@ namespace robot_qt_viewer
             RobotQtViewerWorkbenchDomain::CoatingAnalysis,
             RobotQtViewerRightPanelKind::CoatingAnalysis,
             RobotQtViewerViewportInteractionMode::Browse,
-            QStringLiteral("coatingAnalysis"),
+            QStringLiteral("smrobot.mode.coating-analysis"),
             QStringLiteral("Coating Analysis"),
             QStringLiteral("Coating Analysis"),
             true,
@@ -120,6 +120,35 @@ namespace robot_qt_viewer
     QString robotQtViewerWorkbenchName(RobotQtViewerWorkbenchKind kind)
     {
         return robotQtViewerWorkbenchDescriptor(kind).displayName;
+    }
+
+    QString robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind kind)
+    {
+        return robotQtViewerWorkbenchDescriptor(kind).id;
+    }
+
+    bool robotQtViewerWorkbenchKindFromId(
+        const QString& modeId,
+        RobotQtViewerWorkbenchKind* kind)
+    {
+        if(kind == nullptr) {
+            return false;
+        }
+        for(const RobotQtViewerWorkbenchKind candidate : {
+                RobotQtViewerWorkbenchKind::Browse,
+                RobotQtViewerWorkbenchKind::Motion,
+                RobotQtViewerWorkbenchKind::ToolSetup,
+                RobotQtViewerWorkbenchKind::Collision,
+                RobotQtViewerWorkbenchKind::TrajectoryPlanning,
+                RobotQtViewerWorkbenchKind::SprayProcess,
+                RobotQtViewerWorkbenchKind::CoatingAnalysis,
+                RobotQtViewerWorkbenchKind::DigitalTwin }) {
+            if(robotQtViewerWorkbenchId(candidate) == modeId) {
+                *kind = candidate;
+                return true;
+            }
+        }
+        return false;
     }
 
     const RobotQtViewerWorkbenchDescriptor& robotQtViewerWorkbenchDescriptor(
@@ -197,18 +226,62 @@ namespace robot_qt_viewer
             return false;
         }
 
+        commitWorkbench(kind, sourceId);
+        return true;
+    }
+
+    void RobotQtViewerWorkbenchManager::setInitialWorkbench(
+        RobotQtViewerWorkbenchKind kind)
+    {
+        m_suspendedSessions.clear();
         m_session = RobotQtViewerTaskSession{};
         const RobotQtViewerWorkbenchDescriptor& descriptor =
             robotQtViewerWorkbenchDescriptor(kind);
         m_session.workbench = kind;
-        m_session.taskId = sourceId.isEmpty() ? descriptor.id : sourceId;
+        m_session.taskId = descriptor.id;
         m_session.viewportMode = descriptor.defaultViewportMode;
-        return true;
+    }
+
+    void RobotQtViewerWorkbenchManager::commitWorkbench(
+        RobotQtViewerWorkbenchKind kind,
+        const QString& sourceId)
+    {
+        if(kind == m_session.workbench) {
+            if(!sourceId.isEmpty()) {
+                m_session.taskId = sourceId;
+            }
+            return;
+        }
+
+        m_suspendedSessions[m_session.workbench] = m_session;
+        const auto suspended = m_suspendedSessions.find(kind);
+        m_session = suspended == m_suspendedSessions.end()
+            ? RobotQtViewerTaskSession{}
+            : suspended->second;
+        const RobotQtViewerWorkbenchDescriptor& descriptor =
+            robotQtViewerWorkbenchDescriptor(kind);
+        m_session.workbench = kind;
+        m_session.taskId = sourceId.isEmpty() ? descriptor.id : sourceId;
+        if(suspended == m_suspendedSessions.end()) {
+            m_session.viewportMode = descriptor.defaultViewportMode;
+        }
     }
 
     bool RobotQtViewerWorkbenchManager::exitToBrowse(const QString& sourceId)
     {
         return enterWorkbench(RobotQtViewerWorkbenchKind::Browse, sourceId);
+    }
+
+    void RobotQtViewerWorkbenchManager::releaseProjectSessions()
+    {
+        const RobotQtViewerWorkbenchKind active = m_session.workbench;
+        m_suspendedSessions.clear();
+        m_session = RobotQtViewerTaskSession{};
+        const RobotQtViewerWorkbenchDescriptor& descriptor =
+            robotQtViewerWorkbenchDescriptor(active);
+        m_session.workbench = active;
+        m_session.taskId = descriptor.id;
+        m_session.viewportMode = descriptor.defaultViewportMode;
     }
 
     bool RobotQtViewerWorkbenchManager::canExitActiveWorkbench() const

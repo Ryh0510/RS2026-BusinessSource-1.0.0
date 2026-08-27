@@ -4,54 +4,12 @@
 
 #include <SimulationProject/ProjectDocument.h>
 
-#include <algorithm>
-#include <string>
-
-namespace
-{
-    const simulation_project::CollisionDetectorDesc* findCollisionDetector(
-        const simulation_project::ProjectDocument& document,
-        const QString& detectorId)
-    {
-        const std::string detectorIdText = detectorId.toStdString();
-        const auto it = std::find_if(
-            document.collision.detectors.begin(),
-            document.collision.detectors.end(),
-            [&](const simulation_project::CollisionDetectorDesc& detector) {
-                return detector.id == detectorIdText;
-            });
-        return it == document.collision.detectors.end() ? nullptr : &(*it);
-    }
-
-    std::string normalizedCollisionSource(const std::string& source)
-    {
-        return source.empty() ? std::string("original") : source;
-    }
-}
-
 namespace robot_qt_viewer
 {
     CollisionModelDocumentFacade::CollisionModelDocumentFacade(
         const simulation_project::ProjectDocument& document)
         : m_document(document)
     {
-    }
-
-    CollisionModelRuntimeContext CollisionModelDocumentFacade::runtimeContext(
-        const QString& activeDetectorId) const
-    {
-        CollisionModelRuntimeContext context;
-        const simulation_project::CollisionDetectorDesc* activeDetector =
-            findCollisionDetector(m_document, activeDetectorId);
-        if(activeDetector == nullptr) {
-            return context;
-        }
-
-        context.role = QString::fromStdString(activeDetector->geometryRole);
-        if(!activeDetector->geometrySource.empty()) {
-            context.source = QString::fromStdString(normalizedCollisionSource(activeDetector->geometrySource));
-        }
-        return context;
     }
 
     CollisionLinkModelsViewModel CollisionModelDocumentFacade::buildViewModel(

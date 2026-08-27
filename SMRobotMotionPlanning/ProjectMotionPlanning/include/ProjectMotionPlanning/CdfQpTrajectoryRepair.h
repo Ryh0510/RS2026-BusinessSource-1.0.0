@@ -34,6 +34,7 @@ namespace motion_planning
         double smoothWeight = 0.08;
         double seedTrackingWeight = 0.25;
         double repairGain = 0.8;
+        int segmentIntermediateSamples = 1;
         int maxIterations = 80;
         bool keepEndpoints = true;
         double validationMaxJointStep = 0.03;

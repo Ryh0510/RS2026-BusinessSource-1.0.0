@@ -51,9 +51,6 @@ namespace robot_qt_viewer
                   [this](bool canMarkLinkA, bool canCreateLinkLink) {
                       m_panel.setLinkPairActionsEnabled(canMarkLinkA, canCreateLinkLink);
                   },
-                  [this](const QString& role) {
-                      return m_panel.setCurrentDetectorRole(role);
-                  },
                   [this](const QString& message, int timeoutMs) {
                       emit statusMessageRequested(message, timeoutMs);
                   },
@@ -89,9 +86,6 @@ namespace robot_qt_viewer
                   },
                   [this](const QString& qualityMessage) {
                       refreshCollisionElementList(qualityMessage);
-                  },
-                  [this]() {
-                      emit viewportReloadRequested();
                   },
                   [this](const QString& message, int timeoutMs) {
                       emit statusMessageRequested(message, timeoutMs);
@@ -147,12 +141,6 @@ namespace robot_qt_viewer
         refreshCollisionSelectionSetList();
         refreshCollisionDetectorList();
         refreshCollisionElementList(qualityMessage);
-        refreshCollisionPairList();
-    }
-
-    void CollisionWorkbenchModuleController::refreshCollisionPairList()
-    {
-        m_detectorConfigController->refreshPairList();
     }
 
     void CollisionWorkbenchModuleController::refreshCollisionDetectorList()
@@ -188,24 +176,6 @@ namespace robot_qt_viewer
     void CollisionWorkbenchModuleController::refreshCollisionModelSummary(const QString& qualityMessage)
     {
         m_linkModelSetupController->refreshModelSummary(currentCollisionDetectorId(), qualityMessage);
-    }
-
-    bool CollisionWorkbenchModuleController::syncLegacyRobotObjectPairs()
-    {
-        return m_detectorConfigController->syncLegacyRobotObjectPairs();
-    }
-
-    void CollisionWorkbenchModuleController::autoPairAllRobotObjects()
-    {
-        m_detectorConfigController->autoPairAllRobotObjects();
-    }
-
-    void CollisionWorkbenchModuleController::handleLegacyPairEnabledChanged(
-        const QString& robotId,
-        const QString& objectId,
-        bool enabled)
-    {
-        m_detectorConfigController->setLegacyPairEnabled(robotId, objectId, enabled);
     }
 
     void CollisionWorkbenchModuleController::previewCollisionSelectionSetMember()
@@ -321,6 +291,11 @@ namespace robot_qt_viewer
     void CollisionWorkbenchModuleController::showSelectedCollisionVariantOnly()
     {
         m_linkModelSetupController->showSelectedVariantOnly();
+    }
+
+    void CollisionWorkbenchModuleController::setSelectedCollisionVariantCurrent()
+    {
+        m_linkModelSetupController->setSelectedVariantCurrent();
     }
 
     void CollisionWorkbenchModuleController::useSelectedCollisionVariantInActiveDetector()

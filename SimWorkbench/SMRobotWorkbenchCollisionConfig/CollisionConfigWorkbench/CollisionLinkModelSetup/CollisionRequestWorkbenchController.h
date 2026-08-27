@@ -25,7 +25,6 @@ namespace robot_qt_viewer
             std::function<void()> refreshDetectorList;
             std::function<void()> refreshDetectorDetails;
             std::function<void()> refreshDetectorProperties;
-            std::function<bool(const QString&)> setCurrentDetectorRole;
             std::function<bool()> isCollisionModelConfigurationActive;
         };
 

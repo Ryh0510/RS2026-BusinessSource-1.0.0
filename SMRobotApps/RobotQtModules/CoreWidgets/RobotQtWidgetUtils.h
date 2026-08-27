@@ -1,6 +1,8 @@
 #pragma once
 
+class QAbstractButton;
 class QComboBox;
+class QDialogButtonBox;
 class QFormLayout;
 class QGridLayout;
 class QLabel;
@@ -12,9 +14,20 @@ class QWidget;
 
 namespace robot_qt_viewer
 {
+    enum class UiActionRole
+    {
+        Standard,
+        Primary,
+        Accent,
+        Destructive
+    };
+
     QLabel* makePanelTitle(const QString& text, QWidget* parent);
     void makeHorizontallyCompressible(QWidget* widget);
     void configureInspectorButton(QPushButton* button);
+    void configureActionButton(QAbstractButton* button, UiActionRole role);
+    void configureInspectorToggle(QAbstractButton* button);
+    void configureDialogButtonBox(QDialogButtonBox* buttonBox);
     void configureInspectorGrid(QGridLayout* layout);
     void configureInspectorForm(QFormLayout* form);
     void configureInspectorList(QListWidget* list, bool alternatingRows = false, bool uniformItems = true);

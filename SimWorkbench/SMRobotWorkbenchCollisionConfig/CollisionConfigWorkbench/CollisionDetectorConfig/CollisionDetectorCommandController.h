@@ -35,6 +35,11 @@ public:
         const QString& detectorId,
         const CollisionDetectorPropertiesView& properties);
 
+    static CollisionDetectorCommandResult applyDetectorQueryContractValues(
+        const simulation_project::ProjectDocument& document,
+        simulation_project::CollisionDetectorDesc& detector,
+        const CollisionDetectorQueryContractView& contract);
+
     static CollisionDetectorCommandResult applyDetectorQueryContract(
         simulation_project::ProjectDocument& document,
         robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,

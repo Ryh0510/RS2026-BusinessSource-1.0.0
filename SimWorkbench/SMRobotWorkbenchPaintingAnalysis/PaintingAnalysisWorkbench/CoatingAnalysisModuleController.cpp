@@ -47,13 +47,9 @@ namespace
     simulation_project::AssetResolveContext makeResolveContext(
         const simulation_project::ProjectSession& session)
     {
-        simulation_project::AssetResolveContext context;
-        context.projectBasePath = projectBasePath(session);
-        context.sourceRootPath = simulation_project::RuntimePaths::sourceRoot();
-        context.dataRootPath = simulation_project::RuntimePaths::dataRoot();
-        context.appRootPath = simulation_project::RuntimePaths::applicationRoot();
-        context.assetSearchPaths = session.document().assetSearchPaths;
-        return context;
+        return simulation_project::AssetResolver::makeProjectContext(
+            projectBasePath(session),
+            session.document());
     }
 }
 
@@ -111,6 +107,12 @@ namespace robot_qt_viewer
             }
         }
         refreshViewModel();
+    }
+
+    void CoatingAnalysisModuleController::releaseProjectSession()
+    {
+        deactivate();
+        clearSession();
     }
 
     void CoatingAnalysisModuleController::handleEvent(const RobotQtViewerEvent& event)

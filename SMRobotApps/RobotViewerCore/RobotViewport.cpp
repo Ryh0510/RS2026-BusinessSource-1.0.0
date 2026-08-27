@@ -14,6 +14,7 @@
 #include <QWheelEvent>
 
 #include <chrono>
+#include <algorithm>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -90,7 +91,26 @@ RobotViewport::RobotViewport(QWidget* parent)
     m_updateTimer->start();
 }
 
-RobotViewport::~RobotViewport() = default;
+RobotViewport::~RobotViewport()
+{
+    releaseScene();
+}
+
+void RobotViewport::releaseScene() noexcept
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+
+    if(context() != nullptr && isValid()) {
+        makeCurrent();
+        m_scene.reset();
+        doneCurrent();
+        return;
+    }
+
+    m_scene.reset();
+}
 
 void RobotViewport::setJointPreview(int degrees)
 {
@@ -113,6 +133,7 @@ bool RobotViewport::loadProjectDocument(
     bool ok = true;
     try {
         const auto createStart = std::chrono::steady_clock::now();
+        releaseScene();
         m_scene = std::make_unique<ProjectScene>();
         m_scene->setDefaultBackgroundColor(m_defaultBackgroundColor);
         m_scene->setProjectDocument(document, basePath);
@@ -148,6 +169,8 @@ bool RobotViewport::loadProjectDocument(
         m_scene->setInteractionMode(m_interactionMode);
     }
     m_startTime = Clock::now();
+    m_firstPaintPending = true;
+    m_cameraDragFramePending = false;
     const auto repaintStart = std::chrono::steady_clock::now();
     update();
     repaint();
@@ -161,6 +184,11 @@ bool RobotViewport::loadProjectDocument(
         std::string("initializedNow=") + (!m_hasPendingProjectDocument ? "true" : "false") +
             " ok=" + (ok ? "true" : "false"));
     return ok;
+}
+
+std::filesystem::path RobotViewport::projectBasePath() const
+{
+    return m_scene ? m_scene->projectBasePath() : m_pendingProjectBasePath;
 }
 
 void RobotViewport::setDefaultBackgroundColor(const simulation_project::ColorDesc& color)
@@ -215,6 +243,7 @@ bool RobotViewport::loadToolAssetPreview(
     const simulation_project::AttachmentAssetDesc& asset,
     const std::filesystem::path& basePath)
 {
+    releaseScene();
     m_scene = std::make_unique<ProjectScene>();
     m_scene->setDefaultBackgroundColor(m_defaultBackgroundColor);
     m_scene->setToolAssetPreview(asset, basePath);
@@ -893,15 +922,10 @@ bool RobotViewport::generateMissingRobotCollisionProxies(
 }
 
 RobotCollisionRobotSummary RobotViewport::robotCollisionSummary(
-    const QString& robotId,
-    const QString& activeDetectorRole,
-    const QString& activeDetectorSource) const
+    const QString& robotId) const
 {
     return m_scene != nullptr
-        ? m_scene->robotCollisionSummary(
-            robotId.toStdString(),
-            activeDetectorRole.toStdString(),
-            activeDetectorSource.toStdString())
+        ? m_scene->robotCollisionSummary(robotId.toStdString())
         : RobotCollisionRobotSummary();
 }
 
@@ -1041,16 +1065,6 @@ bool RobotViewport::clearSurfaceScalarOverlay(const QString& objectId)
     return ok;
 }
 
-void RobotViewport::setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
-{
-    m_surfaceScalarProbeEnabled = enabled;
-    m_surfaceScalarProbeObjectId = enabled ? objectId : QString();
-    m_lastSurfaceScalarProbeTime = Clock::time_point();
-    if(!enabled) {
-        emit surfaceScalarHovered(QString(), 0.0, QPoint(), false);
-    }
-}
-
 void RobotViewport::setTrajectoryControlPointOverlay(
     const QString& trajectoryId,
     const std::vector<simulation_project::TransformDesc>& controlPoints)
@@ -1066,6 +1080,16 @@ void RobotViewport::clearTrajectoryControlPointOverlay(const QString& trajectory
     if(m_scene != nullptr) {
         m_scene->clearTrajectoryControlPointOverlay(trajectoryId.toStdString());
         update();
+    }
+}
+
+void RobotViewport::setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
+{
+    m_surfaceScalarProbeEnabled = enabled;
+    m_surfaceScalarProbeObjectId = enabled ? objectId : QString();
+    m_lastSurfaceScalarProbeTime = Clock::time_point();
+    if(!enabled) {
+        emit surfaceScalarHovered(QString(), 0.0, QPoint(), false);
     }
 }
 
@@ -1171,11 +1195,42 @@ void RobotViewport::paintGL()
         return;
     }
 
+    const auto frameStart = Clock::now();
     const auto now = Clock::now();
     const std::chrono::duration<double> elapsed = now - m_startTime;
+    const auto updateStart = Clock::now();
     m_scene->update(elapsed.count());
     emit robotStateUpdated();
+    const double updateMs = elapsedMilliseconds(updateStart);
+    const auto renderStart = Clock::now();
     m_scene->render();
+    const double renderMs = elapsedMilliseconds(renderStart);
+    const double totalMs = elapsedMilliseconds(frameStart);
+
+    if(m_firstPaintPending || m_cameraDragFramePending || totalMs > 16.0) {
+        const auto detectors = m_scene->collisionDetectors();
+        const auto active = std::find_if(detectors.begin(), detectors.end(),
+            [](const ProjectScene::CollisionDetectorInfo& detector) {
+                return detector.active;
+            });
+        const ProjectScene::CollisionDetectorInfo* info =
+            active != detectors.end() ? &*active : nullptr;
+        LOG_DEBUG("rs2026") << "RobotViewport frame profile: reason="
+            << (m_firstPaintPending ? "firstPaint" :
+                (m_cameraDragFramePending ? "cameraDrag" : "slowFrame"))
+            << ", totalMs=" << totalMs
+            << ", updateMs=" << updateMs
+            << ", renderMs=" << renderMs
+            << ", poseMs=" << (info ? info->frameRobotPoseMs : 0.0)
+            << ", collisionWorldMs=" << (info ? info->frameCollisionWorldUpdateMs : 0.0)
+            << ", queryMs=" << (info ? info->lastQueryMs : 0.0)
+            << ", overlayMs=" << (info ? info->frameOverlayMs : 0.0)
+            << ", overlayDebugBuildMs=" << (info ? info->frameOverlayDebugBuildMs : 0.0)
+            << ", overlaySubmitMs=" << (info ? info->frameOverlayDebugSubmitMs : 0.0)
+            << ", overlayGeometries=" << (info ? info->frameOverlayGeometryCount : 0);
+    }
+    m_firstPaintPending = false;
+    m_cameraDragFramePending = false;
 }
 
 void RobotViewport::mousePressEvent(QMouseEvent* event)
@@ -1238,6 +1293,21 @@ void RobotViewport::mouseReleaseEvent(QMouseEvent* event)
     update();
 }
 
+void RobotViewport::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if(m_scene != nullptr && event->button() == Qt::LeftButton) {
+        const ProjectScenePickResult result =
+            m_scene->pickScreenPoint(event->pos().x(), event->pos().y());
+        if(!result.valid()) {
+            emit backgroundDoubleClicked();
+            event->accept();
+            return;
+        }
+    }
+
+    QOpenGLWidget::mouseDoubleClickEvent(event);
+}
+
 void RobotViewport::mouseMoveEvent(QMouseEvent* event)
 {
     if(m_scene == nullptr || m_lastMousePos.isNull()) {
@@ -1254,6 +1324,7 @@ void RobotViewport::mouseMoveEvent(QMouseEvent* event)
     }
 
     if(button >= 0) {
+        m_cameraDragFramePending = true;
         if(m_surfaceScalarProbeEnabled) {
             emit surfaceScalarHovered(
                 m_surfaceScalarProbeObjectId,

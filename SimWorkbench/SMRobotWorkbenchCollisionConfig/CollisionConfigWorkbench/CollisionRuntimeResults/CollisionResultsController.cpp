@@ -382,10 +382,14 @@ namespace
 
         if(!runtimeInfo->hasResult) {
             QString message = QString("Runtime detector exists but has no query result yet: %1").arg(detectorId);
-            if(detector != nullptr && !detector->enabled) {
+            if(!runtimeInfo->valid) {
+                message = runtimeInfo->errorMessage.empty()
+                    ? QString("Detector model binding is invalid: %1").arg(detectorId)
+                    : QString::fromStdString(runtimeInfo->errorMessage);
+            } else if(detector != nullptr && !detector->enabled) {
                 message = QString("Detector is disabled: %1").arg(detectorId);
             } else if(runtimeInfo->effectiveIncludePairCount == 0 && runtimeInfo->includePairCount > 0) {
-                message = QString("Runtime detector has zero effective pairs after role/filter checks: %1").arg(detectorId);
+                message = QString("Runtime detector has zero effective endpoint model pairs: %1").arg(detectorId);
             }
             viewModel.contacts.rows << messageRow(message);
             viewModel.nearest.rows << messageRow(message);
@@ -599,9 +603,8 @@ CollisionResultsViewModel CollisionResultsController::buildViewModel(
     debugLines << QString("nearest state: %1").arg(nearestState);
     debugLines << QString("distance threshold: %1").arg(detector->distanceThreshold, 0, 'g', 5);
     debugLines << QString("state: %1").arg(runtimeState);
-    debugLines << QString("role: %1").arg(QString::fromStdString(detector->geometryRole));
-    debugLines << QString("source: %1").arg(QString::fromStdString(detector->geometrySource.empty() ? std::string("any") : detector->geometrySource));
-    debugLines << QString("role policy: robot %1, environment own role").arg(QString::fromStdString(detector->geometryRole));
+    debugLines << QString("model bindings: %1").arg(detector->modelBindings.size());
+    debugLines << "model policy: per target Current or explicit stable modelId";
     debugLines << QString("result summary: %1").arg(resultSummary);
     debugLines << QString("max contacts: %1").arg(detector->maxContacts);
     debugLines << QString("targets: %1 robots, %2 objects, %3 groups").arg(robotTargets).arg(objectTargets).arg(groupTargets);

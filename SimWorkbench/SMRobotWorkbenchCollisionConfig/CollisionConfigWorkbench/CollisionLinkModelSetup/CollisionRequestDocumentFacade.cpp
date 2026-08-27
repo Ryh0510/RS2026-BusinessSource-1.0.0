@@ -19,8 +19,10 @@ namespace robot_qt_viewer
     CollisionLinkModelVariantCommandResult CollisionRequestDocumentFacade::useVariantInDetector(
         RobotQtViewerViewportServices* viewportServices,
         const QString& detectorId,
-        const QString& role,
-        const QString& source)
+        const QString& robotId,
+        const QString& linkName,
+        const QString& objectId,
+        const QString& variantId)
     {
         CollisionLinkModelVariantCommandResult result;
         m_appServices.mutateProject(
@@ -28,11 +30,13 @@ namespace robot_qt_viewer
             ProjectDirtyPolicy::UserEdit,
             [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
                 result = CollisionLinkModelVariantCommandController::useVariantInDetector(
-                    service.document(),
+                    service,
                     viewportServices,
                     detectorId,
-                    role,
-                    source);
+                    robotId,
+                    linkName,
+                    objectId,
+                    variantId);
                 changed = result.projectChanged;
                 return result.success;
             });

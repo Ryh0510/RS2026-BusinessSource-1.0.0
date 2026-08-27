@@ -24,8 +24,10 @@ namespace robot_qt_viewer
         CollisionLinkModelVariantCommandResult useVariantInDetector(
             RobotQtViewerViewportServices* viewportServices,
             const QString& detectorId,
-            const QString& role,
-            const QString& source);
+            const QString& robotId,
+            const QString& linkName,
+            const QString& objectId,
+            const QString& variantId);
 
         CollisionLinkModelVariantCommandResult setCurrentLinkCollisionModel(
             const QString& robotId,

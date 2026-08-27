@@ -12,8 +12,6 @@
 #include <RobotRuntime/RobotRunService.h>
 #include <MotionPlanningCore/MotionPlanning.h>
 
-#include <QTimer>
-
 #include <algorithm>
 #include <cstddef>
 #include <vector>
@@ -21,10 +19,6 @@
 namespace
 {
     constexpr double kPi = 3.14159265358979323846;
-    constexpr int kTrajectoryPlaybackIntervalMs = 33;
-    constexpr double kTrajectoryPlaybackStepSeconds =
-        static_cast<double>(kTrajectoryPlaybackIntervalMs) / 1000.0;
-    constexpr double kManualTrajectoryStepSeconds = 0.1;
 
     bool isRevoluteJointType(const QString& jointType)
     {
@@ -81,6 +75,8 @@ namespace robot_qt_viewer
     {
         connect(&m_widget, &MotionControlWidget::jointDisplayValueChanged,
             this, &MotionControlModuleController::handleJointDisplayValueChanged);
+        connect(&m_widget, &MotionControlWidget::robotSelectionChanged,
+            this, &MotionControlModuleController::handleRobotSelectionChanged);
         connect(&m_widget, &MotionControlWidget::autoMotionChanged,
             this, &MotionControlModuleController::handleAutoMotionChanged);
         connect(&m_widget, &MotionControlWidget::applyInitialPoseRequested,
@@ -101,12 +97,6 @@ namespace robot_qt_viewer
             this, &MotionControlModuleController::stopTrajectory);
         connect(&m_widget, &MotionControlWidget::trajectoryStepRequested,
             this, &MotionControlModuleController::stepTrajectory);
-
-        m_trajectoryPlaybackTimer = new QTimer(this);
-        m_trajectoryPlaybackTimer->setTimerType(Qt::PreciseTimer);
-        m_trajectoryPlaybackTimer->setInterval(kTrajectoryPlaybackIntervalMs);
-        connect(m_trajectoryPlaybackTimer, &QTimer::timeout,
-            this, &MotionControlModuleController::advanceTrajectoryPlayback);
     }
 
     bool MotionControlModuleController::isUpdating() const
@@ -121,6 +111,11 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::setAutoMotionChecked(bool checked)
     {
+        if(!m_selectedRobotId.isEmpty()) {
+            AutoMotionState state = m_autoMotionStates.value(m_selectedRobotId);
+            state.enabled = checked;
+            m_autoMotionStates[m_selectedRobotId] = state;
+        }
         m_widget.setAutoMotionChecked(checked);
     }
 
@@ -131,8 +126,15 @@ namespace robot_qt_viewer
     {
         m_robotMovableJoints[robotId] = movableJoints;
         m_robotMovableJointTypes[robotId] = movableJointTypes;
-        if(robotId == m_selectedRobotId) {
-            selectRobot(robotId);
+        if(!m_autoMotionStates.contains(robotId)) {
+            m_autoMotionStates.insert(robotId, AutoMotionState{});
+        }
+        refreshRobotSelection();
+        const QString targetRobotId = m_selectedRobotId.isEmpty()
+            ? firstAvailableRobotId()
+            : m_selectedRobotId;
+        if(!targetRobotId.isEmpty()) {
+            selectRobot(targetRobotId);
         }
     }
 
@@ -144,28 +146,38 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::clearRuntime()
     {
-        stopTrajectoryPlaybackTimer();
+        stopAllAutoMotion();
         m_robotMovableJoints.clear();
         m_robotMovableJointTypes.clear();
+        m_autoMotionStates.clear();
+        refreshRobotSelection();
         selectRobot(QString());
+    }
+
+    void MotionControlModuleController::stopAllAutoMotion()
+    {
+        for(auto it = m_autoMotionStates.begin(); it != m_autoMotionStates.end(); ++it) {
+            if(it.value().enabled) {
+                m_runService.setAutoMotion(it.key().toStdString(), false, 0.0, 0.0);
+                it.value().enabled = false;
+            }
+        }
+        if(!m_selectedRobotId.isEmpty()) {
+            const AutoMotionState state = m_autoMotionStates.value(m_selectedRobotId);
+            m_widget.setAutoMotionControls(false, state.amplitude, state.speed);
+        }
     }
 
     void MotionControlModuleController::selectRobot(const QString& robotId)
     {
-        if(robotId != m_selectedRobotId) {
-            stopTrajectoryPlaybackTimer();
-        }
-        if(robotId != m_selectedRobotId && !m_selectedRobotId.isEmpty()) {
-            m_runService.setAutoMotion(
-                m_selectedRobotId.toStdString(), false, 0.0, 0.0);
-        }
-
-        m_selectedRobotId = robotId;
+        m_selectedRobotId = m_robotMovableJoints.contains(robotId) ? robotId : QString();
         m_updating = true;
         m_widget.setRobotId(m_selectedRobotId);
         m_widget.setJoints(
             m_robotMovableJoints.value(m_selectedRobotId),
             m_robotMovableJointTypes.value(m_selectedRobotId));
+        const AutoMotionState state = m_autoMotionStates.value(m_selectedRobotId);
+        m_widget.setAutoMotionControls(state.enabled, state.amplitude, state.speed);
         m_updating = false;
         updateRowsFromScene();
         refreshTrajectories();
@@ -237,9 +249,6 @@ namespace robot_qt_viewer
         QVector<MotionControlWidget::TrajectoryItem> items;
         for(const motion_planning::StoredMotionPlan& plan :
             motion_planning::MotionPlanningProjectStore::plans(m_context.document())) {
-            if(plan.trajectory.empty()) {
-                continue;
-            }
             if(!m_selectedRobotId.isEmpty() && plan.robotId != m_selectedRobotId.toStdString()) {
                 continue;
             }
@@ -254,7 +263,7 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::handleRobotStateUpdated()
     {
-        if(m_widget.autoMotionChecked()) {
+        if(m_autoMotionStates.value(m_selectedRobotId).enabled) {
             updateRowsFromScene();
         }
         refreshCollisionResults(m_widget.currentCollisionDetectorId());
@@ -264,7 +273,6 @@ namespace robot_qt_viewer
     {
         switch(event.kind) {
         case RobotQtViewerEventKind::SelectionChanged:
-            selectRobot(event.selection.robotId);
             break;
         case RobotQtViewerEventKind::RobotRuntimeChanged:
             updateRowsFromScene();
@@ -281,6 +289,14 @@ namespace robot_qt_viewer
         default:
             break;
         }
+    }
+
+    void MotionControlModuleController::handleRobotSelectionChanged(const QString& robotId)
+    {
+        if(m_updating) {
+            return;
+        }
+        selectRobot(robotId);
     }
 
     void MotionControlModuleController::loadTrajectory(const QString& trajectoryId)
@@ -300,28 +316,6 @@ namespace robot_qt_viewer
             emit statusMessageRequested(QStringLiteral("Motion plan was not found."), 4000);
             return;
         }
-        const QString planRobotId = QString::fromStdString(planIt->robotId);
-        const QStringList knownJoints = m_robotMovableJoints.value(planRobotId);
-        QStringList unknownJoints;
-        if(!knownJoints.empty()) {
-            for(const std::string& jointName : planIt->jointNames) {
-                const QString displayName = QString::fromStdString(jointName);
-                if(!knownJoints.contains(displayName)) {
-                    unknownJoints.push_back(displayName);
-                }
-            }
-        }
-        if(!unknownJoints.empty()) {
-            const QString message = QStringLiteral("Trajectory uses unknown joints for %1: %2. Available joints: %3")
-                .arg(planRobotId)
-                .arg(unknownJoints.join(QStringLiteral(", ")))
-                .arg(knownJoints.join(QStringLiteral(", ")));
-            m_widget.setTrajectoryStatus(message);
-            emit statusMessageRequested(message, 6000);
-            return;
-        }
-
-        stopTrajectoryPlaybackTimer();
         const robotruntime::RobotRunCommandResult result = m_runService.loadTrajectory(
             planIt->robotId,
             planIt->id,
@@ -336,13 +330,6 @@ namespace robot_qt_viewer
         const robotruntime::RobotRunCommandResult result = m_runService.startTrajectory();
         m_widget.setTrajectoryStatus(QString::fromStdString(result.message));
         emit statusMessageRequested(QString::fromStdString(result.message), result.success ? 3000 : 5000);
-        if(result.success) {
-            updateRowsFromScene();
-            m_context.documentController().publishRobotRuntimeChanged(QStringLiteral("trajectoryStart"));
-            if(m_trajectoryPlaybackTimer != nullptr) {
-                m_trajectoryPlaybackTimer->start();
-            }
-        }
     }
 
     void MotionControlModuleController::pauseTrajectory()
@@ -350,10 +337,6 @@ namespace robot_qt_viewer
         const robotruntime::RobotRunCommandResult result = m_runService.pauseTrajectory();
         m_widget.setTrajectoryStatus(QString::fromStdString(result.message));
         emit statusMessageRequested(QString::fromStdString(result.message), result.success ? 3000 : 5000);
-        if(result.success) {
-            stopTrajectoryPlaybackTimer();
-            updateTrajectoryStatus();
-        }
     }
 
     void MotionControlModuleController::stopTrajectory()
@@ -362,60 +345,18 @@ namespace robot_qt_viewer
         m_widget.setTrajectoryStatus(QString::fromStdString(result.message));
         emit statusMessageRequested(QString::fromStdString(result.message), result.success ? 3000 : 5000);
         if(result.success) {
-            stopTrajectoryPlaybackTimer();
             updateRowsFromScene();
         }
     }
 
     void MotionControlModuleController::stepTrajectory()
     {
-        stepTrajectoryBy(kManualTrajectoryStepSeconds, true);
-    }
-
-    void MotionControlModuleController::advanceTrajectoryPlayback()
-    {
-        stepTrajectoryBy(kTrajectoryPlaybackStepSeconds, false);
-    }
-
-    bool MotionControlModuleController::stepTrajectoryBy(double timeStep, bool announce)
-    {
-        const robotruntime::RobotRunCommandResult result = m_runService.stepTrajectory(timeStep);
-        if(!result.success) {
-            stopTrajectoryPlaybackTimer();
-            m_widget.setTrajectoryStatus(QString::fromStdString(result.message));
-            emit statusMessageRequested(QString::fromStdString(result.message), 5000);
-            return false;
-        }
-
+        const robotruntime::RobotRunCommandResult result = m_runService.stepTrajectory(0.1);
+        m_widget.setTrajectoryStatus(QString::fromStdString(result.message));
+        emit statusMessageRequested(QString::fromStdString(result.message), result.success ? 2000 : 5000);
         if(result.success) {
             updateRowsFromScene();
-        }
-        updateTrajectoryStatus();
-
-        const robotruntime::RobotRunExecutionSnapshot snapshot = m_runService.trajectorySnapshot();
-        if(snapshot.state == robotruntime::RobotRunExecutionState::Completed ||
-            snapshot.state == robotruntime::RobotRunExecutionState::Idle ||
-            snapshot.state == robotruntime::RobotRunExecutionState::Paused) {
-            stopTrajectoryPlaybackTimer();
-            if(snapshot.state == robotruntime::RobotRunExecutionState::Completed) {
-                const QString message = QStringLiteral("Trajectory completed.");
-                m_widget.setTrajectoryStatus(message);
-                emit statusMessageRequested(message, 3000);
-            }
-        } else if(announce) {
-            emit statusMessageRequested(QString::fromStdString(result.message), 2000);
-        }
-
-        if(announce) {
             m_context.documentController().publishRobotRuntimeChanged(QStringLiteral("trajectoryStep"));
-        }
-        return true;
-    }
-
-    void MotionControlModuleController::stopTrajectoryPlaybackTimer()
-    {
-        if(m_trajectoryPlaybackTimer != nullptr && m_trajectoryPlaybackTimer->isActive()) {
-            m_trajectoryPlaybackTimer->stop();
         }
     }
 
@@ -447,6 +388,9 @@ namespace robot_qt_viewer
 
         if(m_widget.autoMotionChecked()) {
             m_widget.setAutoMotionChecked(false);
+            AutoMotionState state = m_autoMotionStates.value(m_selectedRobotId);
+            state.enabled = false;
+            m_autoMotionStates[m_selectedRobotId] = state;
             m_runService.setAutoMotion(
                 m_selectedRobotId.toStdString(), false, 0.0, 0.0);
         }
@@ -469,6 +413,7 @@ namespace robot_qt_viewer
         const bool enabled = m_widget.autoMotionChecked();
         double amplitude = m_widget.autoAmplitude();
         const double speed = m_widget.autoSpeed();
+        const AutoMotionState previousState = m_autoMotionStates.value(m_selectedRobotId);
 
         if(m_widget.hasRevoluteJoint()) {
             amplitude = toRadians(amplitude);
@@ -477,8 +422,19 @@ namespace robot_qt_viewer
         const robotruntime::RobotRunCommandResult result = m_runService.setAutoMotion(
             m_selectedRobotId.toStdString(), enabled, amplitude, speed);
         if(!result.success) {
+            m_widget.setAutoMotionControls(
+                previousState.enabled,
+                previousState.amplitude,
+                previousState.speed);
             emit statusMessageRequested(QString::fromStdString(result.message), 5000);
+            return;
         }
+
+        AutoMotionState state;
+        state.enabled = enabled;
+        state.amplitude = m_widget.autoAmplitude();
+        state.speed = speed;
+        m_autoMotionStates[m_selectedRobotId] = state;
     }
 
     void MotionControlModuleController::applyCurrentPoseAsInitial()
@@ -610,6 +566,62 @@ namespace robot_qt_viewer
 
         viewportServices->setCollisionGeometryVisible(visible);
         emit collisionGeometryVisibleChanged(visible);
+    }
+
+    void MotionControlModuleController::refreshRobotSelection()
+    {
+        QVector<MotionControlWidget::RobotItem> items;
+        QStringList appendedIds;
+
+        for(const simulation_project::RobotDesc& robot : m_context.document().robots) {
+            const QString robotId = QString::fromStdString(robot.id);
+            if(robotId.isEmpty() || !m_robotMovableJoints.contains(robotId)) {
+                continue;
+            }
+
+            MotionControlWidget::RobotItem item;
+            item.id = robotId;
+            const QString robotName = QString::fromStdString(robot.name);
+            item.label = robotName.isEmpty() || robotName == robotId
+                ? robotId
+                : QStringLiteral("%1 (%2)").arg(robotName, robotId);
+            items.push_back(item);
+            appendedIds.push_back(robotId);
+        }
+
+        QStringList remainingIds = m_robotMovableJoints.keys();
+        remainingIds.erase(
+            std::remove_if(
+                remainingIds.begin(),
+                remainingIds.end(),
+                [&](const QString& robotId) {
+                    return appendedIds.contains(robotId);
+                }),
+            remainingIds.end());
+        std::sort(remainingIds.begin(), remainingIds.end());
+
+        for(const QString& robotId : remainingIds) {
+            MotionControlWidget::RobotItem item;
+            item.id = robotId;
+            item.label = robotId;
+            items.push_back(item);
+        }
+
+        m_widget.setRobots(items, m_selectedRobotId);
+    }
+
+    QString MotionControlModuleController::firstAvailableRobotId() const
+    {
+        for(const simulation_project::RobotDesc& robot : m_context.document().robots) {
+            const QString robotId = QString::fromStdString(robot.id);
+            if(m_robotMovableJoints.contains(robotId)) {
+                return robotId;
+            }
+        }
+
+        QStringList ids = m_robotMovableJoints.keys();
+        std::sort(ids.begin(), ids.end());
+        return ids.isEmpty() ? QString() : ids.front();
     }
 
     void MotionControlModuleController::refreshCollisionResults(const QString& detectorId)

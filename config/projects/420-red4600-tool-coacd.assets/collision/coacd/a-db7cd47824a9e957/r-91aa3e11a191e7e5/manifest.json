@@ -1,0 +1,17 @@
+{
+  "generator": "RS2026 CoACD",
+  "source": "coacdVisual",
+  "layout": "smrobot.coacd.v2",
+  "assetKey": "a-db7cd47824a9e957",
+  "revision": "r-91aa3e11a191e7e5",
+  "sourceKeyFingerprint": "fnv1a64:49f23a23e5564fec",
+  "targetKey": "420_tool_attachment",
+  "role": "CoACD",
+  "inputFingerprint": "fnv1a64:91aa3e11a191e7e5",
+  "partCount": 14,
+  "parts": ["p-000001.obj", "p-000002.obj", "p-000003.obj", "p-000004.obj", "p-000005.obj", "p-000006.obj", "p-000007.obj", "p-000008.obj", "p-000009.obj", "p-000010.obj", "p-000011.obj", "p-000012.obj", "p-000013.obj", "p-000014.obj"],
+  "inputVertexCount": 438994,
+  "inputTriangleCount": 163754,
+  "outputTriangleCount": 7884,
+  "elapsedMs": 32188.8
+}

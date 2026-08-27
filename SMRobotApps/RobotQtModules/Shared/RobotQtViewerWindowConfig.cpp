@@ -170,7 +170,10 @@ namespace robot_qt_viewer
             RobotQtViewerDockArea::Right,
             {
                 makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::SelectionChanged),
-                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ProjectOpened)
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ProjectOpened),
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ProjectDocumentChanged),
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::RobotRuntimeChanged),
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ViewportReloaded)
             }));
 
         config.modules.push_back(makeModule(
@@ -215,6 +218,7 @@ namespace robot_qt_viewer
             {
                 makeSubscription(QStringLiteral("status"), RobotQtViewerEventKind::ProjectOpened),
                 makeSubscription(QStringLiteral("status"), RobotQtViewerEventKind::ProjectSaved),
+                makeSubscription(QStringLiteral("status"), RobotQtViewerEventKind::OperationStatusChanged),
                 makeSubscription(QStringLiteral("status"), RobotQtViewerEventKind::StatusMessageRequested)
             }));
 

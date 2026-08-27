@@ -1,0 +1,28 @@
+{
+  "schema": "smrobot.platform-profile",
+  "version": 1,
+  "id": "mobile-robot",
+  "displayName": "Mobile Robot Simulation Platform",
+  "requiredFeatures": [
+    "smrobot.feature.project-assembly",
+    "smrobot.feature.robot-run",
+    "smrobot.feature.motion-planning"
+  ],
+  "requiredModes": [],
+  "optionalModes": [
+    "smrobot.mode.collision-config",
+    "smrobot.mode.digital-twin"
+  ],
+  "defaultEnabledOptionalModes": [
+    "smrobot.mode.collision-config"
+  ],
+  "defaultMode": "smrobot.mode.project-assembly",
+  "modeOrder": [
+    "smrobot.mode.project-assembly",
+    "smrobot.mode.robot-run",
+    "smrobot.mode.collision-config",
+    "smrobot.mode.motion-planning",
+    "smrobot.mode.digital-twin"
+  ],
+  "allowUserOverrides": true
+}

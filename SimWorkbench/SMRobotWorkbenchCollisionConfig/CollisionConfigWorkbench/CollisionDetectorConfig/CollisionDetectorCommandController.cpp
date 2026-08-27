@@ -10,6 +10,22 @@
 
 namespace
 {
+    bool sameModelBinding(
+        const simulation_project::CollisionDetectorModelBindingDesc& a,
+        const simulation_project::CollisionDetectorModelBindingDesc& b)
+    {
+        return a.context == b.context && a.robotId == b.robotId && a.linkName == b.linkName &&
+            a.objectId == b.objectId && a.attachmentId == b.attachmentId &&
+            a.pointCloudId == b.pointCloudId && a.mode == b.mode && a.modelId == b.modelId;
+    }
+
+    bool sameModelBindings(
+        const std::vector<simulation_project::CollisionDetectorModelBindingDesc>& a,
+        const std::vector<simulation_project::CollisionDetectorModelBindingDesc>& b)
+    {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), sameModelBinding);
+    }
+
     bool shouldRequestDetectorContacts(const simulation_project::CollisionVisualizationDesc& visualization)
     {
         return visualization.showContacts ||
@@ -28,7 +44,8 @@ namespace
             previous.targets.size() != current.targets.size() ||
             previous.pairGenerators.size() != current.pairGenerators.size() ||
             previous.pairFilters.size() != current.pairFilters.size() ||
-            previous.excludePairs.size() != current.excludePairs.size();
+            previous.excludePairs.size() != current.excludePairs.size() ||
+            !sameModelBindings(previous.modelBindings, current.modelBindings);
     }
 
     bool detectorRuntimeOptionsChanged(
@@ -36,8 +53,6 @@ namespace
         const simulation_project::CollisionDetectorDesc& current)
     {
         return previous.name != current.name ||
-            previous.geometryRole != current.geometryRole ||
-            previous.geometrySource != current.geometrySource ||
             previous.contacts != current.contacts ||
             previous.nearestPoints != current.nearestPoints ||
             previous.distance != current.distance ||
@@ -329,12 +344,6 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetector
     detector->maxContacts = static_cast<int>(std::lround(properties.maxContacts));
     detector->distanceThreshold = properties.distanceThreshold;
 
-    const std::string selectedRole = properties.role.toStdString();
-    if(detector->geometryRole != selectedRole) {
-        detector->geometryRole = selectedRole;
-        detector->geometrySource.clear();
-    }
-
     if(policy == "AllEnabled") {
         detector->type = "SceneAll";
         detector->queryPolicy = "AllEnabled";
@@ -402,6 +411,57 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetector
     return result;
 }
 
+CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetectorQueryContractValues(
+    const simulation_project::ProjectDocument& document,
+    simulation_project::CollisionDetectorDesc& detector,
+    const CollisionDetectorQueryContractView& contract)
+{
+    const QString trimmedName = contract.name.trimmed();
+    const std::string effectiveName = trimmedName.isEmpty()
+        ? detector.id
+        : trimmedName.toStdString();
+    if(hasDuplicateDetectorName(document, detector.id, effectiveName)) {
+        return makeFailure(QString("Collision detector name is already used: %1")
+            .arg(QString::fromStdString(effectiveName)));
+    }
+
+    const bool requestContacts = contract.contacts || contract.normals;
+    detector.name = effectiveName;
+    detector.contacts = requestContacts;
+    detector.visualization.showContacts = requestContacts;
+    detector.visualization.showNormals = contract.normals;
+    detector.nearestPoints = contract.nearest;
+    detector.distance = contract.nearest;
+    detector.visualization.showNearestPoints = contract.nearest;
+    detector.maxContacts = static_cast<int>(std::lround(std::max(0.0, contract.maxContacts)));
+    detector.distanceThreshold = std::max(0.0, contract.distanceThreshold);
+
+    detector.modelBindings.clear();
+    detector.modelBindings.reserve(static_cast<std::size_t>(contract.modelBindings.size()));
+    for(const CollisionDetectorModelBindingView& bindingView : contract.modelBindings) {
+        simulation_project::CollisionDetectorModelBindingDesc binding;
+        binding.context = bindingView.context.toStdString();
+        binding.robotId = bindingView.robotId.toStdString();
+        binding.linkName = bindingView.linkName.toStdString();
+        binding.objectId = bindingView.objectId.toStdString();
+        binding.attachmentId = bindingView.attachmentId.toStdString();
+        binding.pointCloudId = bindingView.pointCloudId.toStdString();
+        binding.mode = bindingView.mode.toStdString();
+        binding.modelId = binding.mode == "ExplicitModel"
+            ? bindingView.modelId.toStdString()
+            : std::string();
+        if(binding.mode == "ExplicitModel" && binding.modelId.empty()) {
+            return makeFailure(QString("Explicit model binding requires modelId: %1")
+                .arg(bindingView.targetLabel));
+        }
+        detector.modelBindings.push_back(std::move(binding));
+    }
+
+    CollisionDetectorCommandResult result;
+    result.success = true;
+    return result;
+}
+
 CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetectorQueryContract(
     simulation_project::ProjectDocument& document,
     robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
@@ -419,38 +479,20 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetector
         return makeFailure("Selected collision detector is not in the project.");
     }
 
-    const QString trimmedName = contract.name.trimmed();
-    const std::string effectiveName = trimmedName.isEmpty()
-        ? detector->id
-        : trimmedName.toStdString();
-    if(hasDuplicateDetectorName(document, detector->id, effectiveName)) {
-        return makeFailure(QString("Collision detector name is already used: %1")
-            .arg(QString::fromStdString(effectiveName)));
-    }
-
     const simulation_project::CollisionDetectorDesc previousDetector = *detector;
-    const bool requestContacts = contract.contacts || contract.normals;
-
-    detector->name = effectiveName;
-    detector->contacts = requestContacts;
-    detector->visualization.showContacts = requestContacts;
-    detector->visualization.showNormals = contract.normals;
-    detector->nearestPoints = contract.nearest;
-    detector->distance = contract.nearest;
-    detector->visualization.showNearestPoints = contract.nearest;
-    detector->maxContacts = static_cast<int>(std::lround(contract.maxContacts));
-    detector->distanceThreshold = contract.distanceThreshold;
-
-    const std::string selectedRole = contract.role.toStdString();
-    if(detector->geometryRole != selectedRole) {
-        detector->geometryRole = selectedRole;
-        detector->geometrySource.clear();
+    const CollisionDetectorCommandResult applyResult =
+        applyDetectorQueryContractValues(document, *detector, contract);
+    if(!applyResult.success) {
+        return applyResult;
     }
 
+    const bool pairCompileChanged = detectorPairCompileChanged(previousDetector, *detector);
     const bool runtimeOptionsChanged = detectorRuntimeOptionsChanged(previousDetector, *detector);
     bool updatedRuntime = viewportServices == nullptr;
     if(viewportServices != nullptr) {
-        if(runtimeOptionsChanged) {
+        if(pairCompileChanged) {
+            updatedRuntime = viewportServices->rebuildCollisionDetectorsFromDocument(document);
+        } else if(runtimeOptionsChanged) {
             updatedRuntime = viewportServices->updateCollisionDetectorRuntimeOptions(*detector);
         } else {
             updatedRuntime = true;
