@@ -38,6 +38,14 @@ namespace robot_qt_viewer
             return QStringLiteral("Workbench lifecycle %1 threw an exception: %2")
                 .arg(QString::fromLatin1(phase), QString::fromUtf8(exception.what()));
         }
+
+        QString workbenchDisplayName(
+            const RobotQtViewerWorkbenchPackageRegistry& registry,
+            const QString& workbenchId)
+        {
+            const RobotQtViewerWorkbenchDesc* mode = registry.registeredWorkbench(workbenchId);
+            return mode == nullptr ? workbenchId : mode->descriptor.displayName;
+        }
     }
 
     RobotQtViewerWorkbenchTransitionCoordinator::RobotQtViewerWorkbenchTransitionCoordinator(
@@ -48,8 +56,8 @@ namespace robot_qt_viewer
         , m_manager(manager)
         , m_eventHub(eventHub)
     {
-        for(const RobotQtViewerWorkbenchModeDesc& mode : m_registry.modes()) {
-            m_states[mode.descriptor.kind] = RobotQtViewerWorkbenchLifecycleState::Inactive;
+        for(const RobotQtViewerWorkbenchDesc& mode : m_registry.workbenches()) {
+            m_states[mode.descriptor.id] = RobotQtViewerWorkbenchLifecycleState::Inactive;
         }
     }
 
@@ -70,6 +78,17 @@ namespace robot_qt_viewer
         QWidget* promptParent,
         RobotQtViewerWorkbenchTransitionCause cause)
     {
+        return requestTransition(
+            robotQtViewerWorkbenchId(target), sourceId, promptParent, cause);
+    }
+
+    RobotQtViewerWorkbenchTransitionResult
+    RobotQtViewerWorkbenchTransitionCoordinator::requestTransition(
+        const QString& target,
+        const QString& sourceId,
+        QWidget* promptParent,
+        RobotQtViewerWorkbenchTransitionCause cause)
+    {
         if(m_shutdownComplete) {
             return workbenchTransitionRejected(
                 QStringLiteral("Workbench system is shutting down."),
@@ -85,14 +104,14 @@ namespace robot_qt_viewer
                 QStringLiteral("A prepared workbench deactivation is still pending."),
                 QStringLiteral("workbench.transition.prepared"));
         }
-        if(!m_registry.isModeReady(target)) {
+        if(!m_registry.isWorkbenchReady(target)) {
             return workbenchTransitionFailed(
-                QStringLiteral("Workbench mode is not ready: %1")
-                    .arg(robotQtViewerWorkbenchName(target)),
+                QStringLiteral("Workbench is not ready: %1")
+                    .arg(workbenchDisplayName(m_registry, target)),
                 QStringLiteral("workbench.lifecycle.missing"));
         }
 
-        const RobotQtViewerWorkbenchKind previous = m_manager.activeWorkbench();
+        const QString previous = m_manager.activeWorkbenchId();
         if(lifecycleState(previous) != RobotQtViewerWorkbenchLifecycleState::Active) {
             return workbenchTransitionFailed(
                 QStringLiteral("The active workbench is not in an operational state."),
@@ -132,7 +151,7 @@ namespace robot_qt_viewer
             if(!rollbackWorkbench(previous, context)) {
                 return workbenchTransitionFailed(
                     QStringLiteral("%1 Rollback of %2 also failed.")
-                        .arg(result.message, robotQtViewerWorkbenchName(previous)),
+                        .arg(result.message, workbenchDisplayName(m_registry, previous)),
                     QStringLiteral("workbench.rollback.failed"));
             }
             return result;
@@ -159,7 +178,7 @@ namespace robot_qt_viewer
             if(!rollbackWorkbench(previous, context)) {
                 return workbenchTransitionFailed(
                     QStringLiteral("%1 Rollback of %2 also failed.")
-                        .arg(result.message, robotQtViewerWorkbenchName(previous)),
+                        .arg(result.message, workbenchDisplayName(m_registry, previous)),
                     QStringLiteral("workbench.rollback.failed"));
             }
             if(!cleanupResult.succeeded()) {
@@ -172,13 +191,20 @@ namespace robot_qt_viewer
         }
 
         m_states[target] = RobotQtViewerWorkbenchLifecycleState::Active;
-        m_manager.commitWorkbench(target, sourceId);
+        const RobotQtViewerWorkbenchDescriptor* targetDescriptor =
+            m_registry.descriptor(target);
+        if(targetDescriptor == nullptr) {
+            return workbenchTransitionFailed(
+                QStringLiteral("Workbench descriptor is missing: %1").arg(target),
+                QStringLiteral("workbench.descriptor.missing"));
+        }
+        m_manager.commitWorkbench(target, *targetDescriptor, sourceId);
         publishCommitted(previous, target, context.transitionId, sourceId);
         m_hasPreparedDeactivation = false;
 
         LOG_DEBUG("rs2026") << "Workbench transition committed: id=" << context.transitionId
-            << ", previous=" << robotQtViewerWorkbenchName(previous).toStdString()
-            << ", target=" << robotQtViewerWorkbenchName(target).toStdString()
+            << ", previous=" << workbenchDisplayName(m_registry, previous).toStdString()
+            << ", target=" << workbenchDisplayName(m_registry, target).toStdString()
             << ", elapsedMs=" << elapsed.elapsed();
         return workbenchTransitionSucceeded();
     }
@@ -199,7 +225,7 @@ namespace robot_qt_viewer
                 QStringLiteral("A prepared workbench deactivation is already pending."),
                 QStringLiteral("workbench.transition.prepared"));
         }
-        const RobotQtViewerWorkbenchKind active = m_manager.activeWorkbench();
+        const QString active = m_manager.activeWorkbenchId();
         IRobotQtViewerWorkbenchLifecycle* lifecycle = m_registry.lifecycle(active);
         if(lifecycle == nullptr) {
             return workbenchTransitionFailed(
@@ -230,7 +256,7 @@ namespace robot_qt_viewer
                 QStringLiteral("Workbench transition is not available."),
                 QStringLiteral("workbench.transition.busy"));
         }
-        const RobotQtViewerWorkbenchKind active = m_manager.activeWorkbench();
+        const QString active = m_manager.activeWorkbenchId();
         IRobotQtViewerWorkbenchLifecycle* lifecycle = m_registry.lifecycle(active);
         if(lifecycle == nullptr) {
             return workbenchTransitionFailed(
@@ -238,8 +264,8 @@ namespace robot_qt_viewer
                 QStringLiteral("workbench.lifecycle.missing"));
         }
         if(alreadyPrepared && (!m_hasPreparedDeactivation ||
-            m_preparedContext.previousWorkbench != active ||
-            m_preparedContext.targetWorkbench != active ||
+            m_preparedContext.previousWorkbenchId != active ||
+            m_preparedContext.targetWorkbenchId != active ||
             m_preparedContext.cause != cause ||
             m_preparedContext.sourceId != sourceId ||
             m_preparedContext.projectGeneration != m_projectGeneration)) {
@@ -287,7 +313,7 @@ namespace robot_qt_viewer
                 QStringLiteral("Workbench activation is not available."),
                 QStringLiteral("workbench.transition.busy"));
         }
-        const RobotQtViewerWorkbenchKind active = m_manager.activeWorkbench();
+        const QString active = m_manager.activeWorkbenchId();
         IRobotQtViewerWorkbenchLifecycle* lifecycle = m_registry.lifecycle(active);
         if(lifecycle == nullptr) {
             return workbenchTransitionFailed(
@@ -319,14 +345,14 @@ namespace robot_qt_viewer
         context.sourceId = sourceId;
 
         std::set<IRobotQtViewerWorkbenchLifecycle*> released;
-        for(const RobotQtViewerWorkbenchModeDesc& mode : m_registry.modes()) {
+        for(const RobotQtViewerWorkbenchDesc& mode : m_registry.workbenches()) {
             if(mode.lifecycle == nullptr || !released.insert(mode.lifecycle).second) {
                 continue;
             }
             mode.lifecycle->releaseProject(context);
         }
-        for(const RobotQtViewerWorkbenchModeDesc& mode : m_registry.modes()) {
-            m_states[mode.descriptor.kind] = RobotQtViewerWorkbenchLifecycleState::Inactive;
+        for(const RobotQtViewerWorkbenchDesc& mode : m_registry.workbenches()) {
+            m_states[mode.descriptor.id] = RobotQtViewerWorkbenchLifecycleState::Inactive;
         }
         m_manager.releaseProjectSessions();
         m_hasPreparedDeactivation = false;
@@ -345,14 +371,14 @@ namespace robot_qt_viewer
         context.projectGeneration = m_projectGeneration;
         context.sourceId = sourceId;
         std::set<IRobotQtViewerWorkbenchLifecycle*> shutdown;
-        for(const RobotQtViewerWorkbenchModeDesc& mode : m_registry.modes()) {
+        for(const RobotQtViewerWorkbenchDesc& mode : m_registry.workbenches()) {
             if(mode.lifecycle == nullptr || !shutdown.insert(mode.lifecycle).second) {
                 continue;
             }
             mode.lifecycle->shutdown(context);
         }
-        for(const RobotQtViewerWorkbenchModeDesc& mode : m_registry.modes()) {
-            m_states[mode.descriptor.kind] = RobotQtViewerWorkbenchLifecycleState::Inactive;
+        for(const RobotQtViewerWorkbenchDesc& mode : m_registry.workbenches()) {
+            m_states[mode.descriptor.id] = RobotQtViewerWorkbenchLifecycleState::Inactive;
         }
     }
 
@@ -375,7 +401,14 @@ namespace robot_qt_viewer
     RobotQtViewerWorkbenchTransitionCoordinator::lifecycleState(
         RobotQtViewerWorkbenchKind kind) const
     {
-        const auto it = m_states.find(kind);
+        return lifecycleState(robotQtViewerWorkbenchId(kind));
+    }
+
+    RobotQtViewerWorkbenchLifecycleState
+    RobotQtViewerWorkbenchTransitionCoordinator::lifecycleState(
+        const QString& workbenchId) const
+    {
+        const auto it = m_states.find(workbenchId);
         return it == m_states.end()
             ? RobotQtViewerWorkbenchLifecycleState::Inactive
             : it->second;
@@ -383,8 +416,8 @@ namespace robot_qt_viewer
 
     RobotQtViewerWorkbenchTransitionContext
     RobotQtViewerWorkbenchTransitionCoordinator::makeTransitionContext(
-        RobotQtViewerWorkbenchKind previous,
-        RobotQtViewerWorkbenchKind target,
+        const QString& previous,
+        const QString& target,
         RobotQtViewerWorkbenchTransitionCause cause,
         const QString& sourceId,
         QWidget* promptParent)
@@ -392,8 +425,10 @@ namespace robot_qt_viewer
         RobotQtViewerWorkbenchTransitionContext context;
         context.transitionId = ++m_transitionSequence;
         context.projectGeneration = m_projectGeneration;
-        context.previousWorkbench = previous;
-        context.targetWorkbench = target;
+        context.previousWorkbenchId = previous;
+        context.targetWorkbenchId = target;
+        robotQtViewerWorkbenchKindFromId(previous, &context.previousWorkbench);
+        robotQtViewerWorkbenchKindFromId(target, &context.targetWorkbench);
         context.cause = cause;
         context.sourceId = sourceId;
         context.promptParent = promptParent;
@@ -455,7 +490,7 @@ namespace robot_qt_viewer
     }
 
     bool RobotQtViewerWorkbenchTransitionCoordinator::rollbackWorkbench(
-        RobotQtViewerWorkbenchKind kind,
+        const QString& kind,
         const RobotQtViewerWorkbenchTransitionContext& transition)
     {
         IRobotQtViewerWorkbenchLifecycle* lifecycle = m_registry.lifecycle(kind);
@@ -475,16 +510,18 @@ namespace robot_qt_viewer
     }
 
     void RobotQtViewerWorkbenchTransitionCoordinator::publishCommitted(
-        RobotQtViewerWorkbenchKind previous,
-        RobotQtViewerWorkbenchKind active,
+        const QString& previous,
+        const QString& active,
         std::uint64_t transitionId,
         const QString& sourceId)
     {
         RobotQtViewerEvent event;
         event.kind = RobotQtViewerEventKind::WorkbenchTransitionCommitted;
         event.sourceId = sourceId;
-        event.workbench.previousWorkbench = previous;
-        event.workbench.activeWorkbench = active;
+        event.workbench.previousWorkbenchId = previous;
+        event.workbench.activeWorkbenchId = active;
+        robotQtViewerWorkbenchKindFromId(previous, &event.workbench.previousWorkbench);
+        robotQtViewerWorkbenchKindFromId(active, &event.workbench.activeWorkbench);
         event.workbench.transitionId = transitionId;
         m_eventHub.publish(event);
     }

@@ -64,6 +64,7 @@ namespace robot_qt_viewer
     class RobotQtViewerCollisionWorkbenchServicesAdapter;
     class RobotQtViewerSceneExplorerActionRouter;
     class RobotQtViewerToolbarController;
+    class RobotQtViewerWorkbenchPluginLoader;
     class RobotQtViewerToolSetupAppServicesAdapter;
     class RobotQtViewerViewportEventController;
     class RobotQtViewerViewportPresentationController;
@@ -91,10 +92,10 @@ public:
     MainWindow(
         robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry workbenchCatalog,
         robot_qt_viewer::RobotQtViewerPlatformProfile platformProfile,
-        robot_qt_viewer::RobotQtViewerPlatformUserOverlay platformOverlay,
         robot_qt_viewer::RobotQtViewerResolvedPlatformComposition platformComposition,
         std::filesystem::path platformProfilesDirectory,
-        std::filesystem::path platformOverlaysDirectory,
+        std::filesystem::path platformSelectionPath,
+        robot_qt_viewer::RobotQtViewerWorkbenchPluginLoader* workbenchPluginLoader = nullptr,
         const QString& startupLanguageId = QString(),
         QWidget* parent = nullptr);
     ~MainWindow() override;
@@ -132,8 +133,11 @@ private:
     void createPanels();
     void initializeWorkbenchLifecycles();
     void configureSimulationPlatform();
+    void restartWithPlatformConfiguration(const QString& profileId);
+    bool persistPlatformConfiguration(const QString& profileId);
     void applyInitialPanelLayout();
     void enterWorkbench(robot_qt_viewer::RobotQtViewerWorkbenchKind kind, const QString& sourceId);
+    void enterWorkbench(const QString& workbenchId, const QString& sourceId);
     void showWorkbenchTransitionResult(
         const robot_qt_viewer::RobotQtViewerWorkbenchTransitionResult& result,
         const QString& fallbackMessage = QString());
@@ -238,6 +242,8 @@ private:
     QHash<QString, QAction*> m_themeActions;
     QHash<QString, QAction*> m_languageActions;
     QHash<QString, QAction*> m_cameraViewActions;
+    QHash<QString, QAction*> m_dynamicWorkbenchActions;
+    QHash<QString, QWidget*> m_dynamicWorkbenchPanels;
     QWidget* m_cameraViewOverlay = nullptr;
     robot_qt_viewer::ThicknessLegendWidget* m_thicknessLegendOverlay = nullptr;
     QAction* m_loadRobotAction = nullptr;
@@ -313,9 +319,10 @@ private:
     robot_qt_viewer::RobotQtViewerPlatformUserOverlay m_platformOverlay;
     robot_qt_viewer::RobotQtViewerResolvedPlatformComposition m_platformComposition;
     std::filesystem::path m_platformProfilesDirectory;
-    std::filesystem::path m_platformOverlaysDirectory;
+    std::filesystem::path m_platformSelectionPath;
     robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry m_workbenchPackageRegistry;
     robot_qt_viewer::RobotQtViewerWorkbenchManager m_workbenchManager;
+    robot_qt_viewer::RobotQtViewerWorkbenchPluginLoader* m_workbenchPluginLoader = nullptr;
     robot_qt_viewer::RobotQtViewerDocumentContext m_documentContext;
     robot_qt_viewer::RobotQtViewerAppController m_appController;
     std::vector<std::unique_ptr<robot_qt_viewer::IRobotQtViewerWorkbenchLifecycle>>

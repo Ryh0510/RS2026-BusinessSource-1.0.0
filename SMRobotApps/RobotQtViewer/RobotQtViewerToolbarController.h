@@ -39,6 +39,7 @@ namespace robot_qt_viewer
         QAction* sprayProcessWorkbench = nullptr;
         QAction* coatingAnalysisWorkbench = nullptr;
         QAction* digitalTwinWorkbench = nullptr;
+        QHash<QString, QAction*> dynamicWorkbenchActions;
     };
 
     using RobotQtViewerToolbarTexts = RobotQtViewerRibbonTexts;

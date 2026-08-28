@@ -25,7 +25,13 @@ namespace robot_qt_viewer
             const QString& sourceId,
             QWidget* promptParent = nullptr,
             RobotQtViewerWorkbenchTransitionCause cause =
-                RobotQtViewerWorkbenchTransitionCause::UserModeSwitch);
+                RobotQtViewerWorkbenchTransitionCause::UserWorkbenchSwitch);
+        RobotQtViewerWorkbenchTransitionResult requestTransition(
+            const QString& targetWorkbenchId,
+            const QString& sourceId,
+            QWidget* promptParent = nullptr,
+            RobotQtViewerWorkbenchTransitionCause cause =
+                RobotQtViewerWorkbenchTransitionCause::UserWorkbenchSwitch);
 
         RobotQtViewerWorkbenchTransitionResult prepareActiveDeactivation(
             RobotQtViewerWorkbenchTransitionCause cause,
@@ -49,11 +55,13 @@ namespace robot_qt_viewer
         std::uint64_t projectGeneration() const;
         RobotQtViewerWorkbenchLifecycleState lifecycleState(
             RobotQtViewerWorkbenchKind kind) const;
+        RobotQtViewerWorkbenchLifecycleState lifecycleState(
+            const QString& workbenchId) const;
 
     private:
         RobotQtViewerWorkbenchTransitionContext makeTransitionContext(
-            RobotQtViewerWorkbenchKind previous,
-            RobotQtViewerWorkbenchKind target,
+            const QString& previousWorkbenchId,
+            const QString& targetWorkbenchId,
             RobotQtViewerWorkbenchTransitionCause cause,
             const QString& sourceId,
             QWidget* promptParent);
@@ -67,18 +75,18 @@ namespace robot_qt_viewer
             IRobotQtViewerWorkbenchLifecycle& lifecycle,
             const RobotQtViewerWorkbenchActivationContext& context);
         bool rollbackWorkbench(
-            RobotQtViewerWorkbenchKind kind,
+            const QString& workbenchId,
             const RobotQtViewerWorkbenchTransitionContext& transition);
         void publishCommitted(
-            RobotQtViewerWorkbenchKind previous,
-            RobotQtViewerWorkbenchKind active,
+            const QString& previousWorkbenchId,
+            const QString& activeWorkbenchId,
             std::uint64_t transitionId,
             const QString& sourceId);
 
         RobotQtViewerWorkbenchPackageRegistry& m_registry;
         RobotQtViewerWorkbenchManager& m_manager;
         RobotQtViewerEventHub& m_eventHub;
-        std::map<RobotQtViewerWorkbenchKind, RobotQtViewerWorkbenchLifecycleState> m_states;
+        std::map<QString, RobotQtViewerWorkbenchLifecycleState> m_states;
         std::uint64_t m_transitionSequence = 0;
         std::uint64_t m_projectGeneration = 1;
         RobotQtViewerWorkbenchTransitionContext m_preparedContext;

@@ -1,0 +1,20 @@
+if(NOT INPUT OR NOT EXISTS ${INPUT})
+    message(FATAL_ERROR "Workbench manifest template is missing: ${INPUT}")
+endif()
+if(NOT BINARY OR NOT EXISTS ${BINARY})
+    message(FATAL_ERROR "Workbench plugin binary is missing: ${BINARY}")
+endif()
+if(NOT OUTPUT)
+    message(FATAL_ERROR "Workbench manifest output path is missing.")
+endif()
+
+file(SHA256 ${BINARY} BINARY_SHA256)
+file(READ ${INPUT} manifest_)
+foreach(variable_ IN ITEMS
+        BINARY_FILE BINARY_SHA256 BUILD_CONFIGURATION QT_MAJOR QT_MINOR
+        POINTER_BITS MSVC_TOOLSET)
+    string(REPLACE "@${variable_}@" "${${variable_}}" manifest_ "${manifest_}")
+endforeach()
+get_filename_component(output_directory_ ${OUTPUT} DIRECTORY)
+file(MAKE_DIRECTORY ${output_directory_})
+file(WRITE ${OUTPUT} "${manifest_}")

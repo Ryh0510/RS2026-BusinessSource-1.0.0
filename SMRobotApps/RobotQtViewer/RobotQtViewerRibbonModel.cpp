@@ -92,9 +92,7 @@ namespace robot_qt_viewer
             ? defaultWorkbenchOrder
             : workbenchActionOrder;
         for(const QString& actionId : requestedOrder) {
-            if(defaultWorkbenchOrder.contains(actionId)) {
-                modeGroup.actions.push_back(workbenchAction(actionId));
-            }
+            modeGroup.actions.push_back(workbenchAction(actionId));
         }
 
         homePage.groups = { projectGroup, modeGroup, sceneEditGroup, robotEditGroup, viewGroup };

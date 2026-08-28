@@ -347,6 +347,10 @@ namespace robot_qt_viewer
         actionMap.insert(QStringLiteral("sprayProcessWorkbench"), actions.sprayProcessWorkbench);
         actionMap.insert(QStringLiteral("coatingAnalysisWorkbench"), actions.coatingAnalysisWorkbench);
         actionMap.insert(QStringLiteral("digitalTwinWorkbench"), actions.digitalTwinWorkbench);
+        for(auto it = actions.dynamicWorkbenchActions.cbegin();
+            it != actions.dynamicWorkbenchActions.cend(); ++it) {
+            actionMap.insert(it.key(), it.value());
+        }
         return actionMap;
     }
 }

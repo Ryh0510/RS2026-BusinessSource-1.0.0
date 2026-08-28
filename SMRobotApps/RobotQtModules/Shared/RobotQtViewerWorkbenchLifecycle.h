@@ -23,7 +23,8 @@ namespace robot_qt_viewer
 
     enum class RobotQtViewerWorkbenchTransitionCause
     {
-        UserModeSwitch,
+        UserWorkbenchSwitch,
+        UserModeSwitch = UserWorkbenchSwitch,
         TaskHandoff,
         ProjectReplacing,
         ProjectLoaded,
@@ -95,8 +96,10 @@ namespace robot_qt_viewer
         std::uint64_t projectGeneration = 0;
         RobotQtViewerWorkbenchKind previousWorkbench = RobotQtViewerWorkbenchKind::Browse;
         RobotQtViewerWorkbenchKind targetWorkbench = RobotQtViewerWorkbenchKind::Browse;
+        QString previousWorkbenchId = QStringLiteral("smrobot.mode.project-assembly");
+        QString targetWorkbenchId = QStringLiteral("smrobot.mode.project-assembly");
         RobotQtViewerWorkbenchTransitionCause cause =
-            RobotQtViewerWorkbenchTransitionCause::UserModeSwitch;
+            RobotQtViewerWorkbenchTransitionCause::UserWorkbenchSwitch;
         QString sourceId;
         QWidget* promptParent = nullptr;
     };

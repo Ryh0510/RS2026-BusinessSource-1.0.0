@@ -27,6 +27,8 @@ set(SOURCES
     RobotQtViewerAppController.h
     RobotQtViewerSelectionModel.cpp
     RobotQtViewerSelectionModel.h
+    RobotQtViewerProductProfile.cpp
+    RobotQtViewerProductProfile.h
     RobotQtViewerViewportPreviewState.cpp
     RobotQtViewerViewportPreviewState.h
     RobotQtViewerViewportServices.h
@@ -36,6 +38,8 @@ set(SOURCES
     RobotQtViewerWorkbenchLifecycle.h
     RobotQtViewerWorkbenchPackageRegistry.cpp
     RobotQtViewerWorkbenchPackageRegistry.h
+    RobotQtViewerWorkbenchPlugin.cpp
+    RobotQtViewerWorkbenchPlugin.h
     RobotQtViewerPlatformProfile.cpp
     RobotQtViewerPlatformProfile.h
     RobotQtViewerWorkbenchTransitionCoordinator.cpp
@@ -74,6 +78,12 @@ target_link_libraries(${TARGET_NAME}
 target_compile_features(${TARGET_NAME}
     PUBLIC
         cxx_std_17
+)
+
+target_compile_definitions(${TARGET_NAME}
+    PUBLIC
+        SMROBOT_WORKBENCH_BUILD_CONFIGURATION="$<CONFIG>"
+        SMROBOT_WORKBENCH_MSVC_TOOLSET_VERSION="${MSVC_TOOLSET_VERSION}"
 )
 
 set_target_properties(${TARGET_NAME}

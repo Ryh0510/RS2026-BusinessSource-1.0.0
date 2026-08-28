@@ -128,7 +128,7 @@ namespace robot_qt_viewer
     }
 
     bool robotQtViewerWorkbenchKindFromId(
-        const QString& modeId,
+        const QString& workbenchId,
         RobotQtViewerWorkbenchKind* kind)
     {
         if(kind == nullptr) {
@@ -143,7 +143,7 @@ namespace robot_qt_viewer
                 RobotQtViewerWorkbenchKind::SprayProcess,
                 RobotQtViewerWorkbenchKind::CoatingAnalysis,
                 RobotQtViewerWorkbenchKind::DigitalTwin }) {
-            if(robotQtViewerWorkbenchId(candidate) == modeId) {
+            if(robotQtViewerWorkbenchId(candidate) == workbenchId) {
                 *kind = candidate;
                 return true;
             }
@@ -203,9 +203,14 @@ namespace robot_qt_viewer
         return m_session.workbench;
     }
 
+    QString RobotQtViewerWorkbenchManager::activeWorkbenchId() const
+    {
+        return m_session.workbenchId;
+    }
+
     const RobotQtViewerWorkbenchDescriptor& RobotQtViewerWorkbenchManager::activeDescriptor() const
     {
-        return robotQtViewerWorkbenchDescriptor(m_session.workbench);
+        return m_session.descriptor;
     }
 
     RobotQtViewerViewportInteractionMode RobotQtViewerWorkbenchManager::viewportMode() const
@@ -230,15 +235,38 @@ namespace robot_qt_viewer
         return true;
     }
 
+    bool RobotQtViewerWorkbenchManager::enterWorkbench(
+        const QString& workbenchId,
+        const RobotQtViewerWorkbenchDescriptor& descriptor,
+        const QString& sourceId)
+    {
+        if(!canExitActiveWorkbench()) {
+            return false;
+        }
+        commitWorkbench(workbenchId, descriptor, sourceId);
+        return true;
+    }
+
     void RobotQtViewerWorkbenchManager::setInitialWorkbench(
         RobotQtViewerWorkbenchKind kind)
     {
-        m_suspendedSessions.clear();
-        m_session = RobotQtViewerTaskSession{};
         const RobotQtViewerWorkbenchDescriptor& descriptor =
             robotQtViewerWorkbenchDescriptor(kind);
-        m_session.workbench = kind;
-        m_session.taskId = descriptor.id;
+        setInitialWorkbench(descriptor.id, descriptor);
+    }
+
+    void RobotQtViewerWorkbenchManager::setInitialWorkbench(
+        const QString& workbenchId,
+        const RobotQtViewerWorkbenchDescriptor& descriptor)
+    {
+        m_suspendedSessions.clear();
+        m_session = RobotQtViewerTaskSession{};
+        RobotQtViewerWorkbenchKind compatibilityKind = RobotQtViewerWorkbenchKind::Browse;
+        robotQtViewerWorkbenchKindFromId(workbenchId, &compatibilityKind);
+        m_session.workbench = compatibilityKind;
+        m_session.workbenchId = workbenchId;
+        m_session.descriptor = descriptor;
+        m_session.taskId = workbenchId;
         m_session.viewportMode = descriptor.defaultViewportMode;
     }
 
@@ -246,22 +274,34 @@ namespace robot_qt_viewer
         RobotQtViewerWorkbenchKind kind,
         const QString& sourceId)
     {
-        if(kind == m_session.workbench) {
+        const RobotQtViewerWorkbenchDescriptor& descriptor =
+            robotQtViewerWorkbenchDescriptor(kind);
+        commitWorkbench(descriptor.id, descriptor, sourceId);
+    }
+
+    void RobotQtViewerWorkbenchManager::commitWorkbench(
+        const QString& workbenchId,
+        const RobotQtViewerWorkbenchDescriptor& descriptor,
+        const QString& sourceId)
+    {
+        if(workbenchId == m_session.workbenchId) {
             if(!sourceId.isEmpty()) {
                 m_session.taskId = sourceId;
             }
             return;
         }
 
-        m_suspendedSessions[m_session.workbench] = m_session;
-        const auto suspended = m_suspendedSessions.find(kind);
+        m_suspendedSessions[m_session.workbenchId] = m_session;
+        const auto suspended = m_suspendedSessions.find(workbenchId);
         m_session = suspended == m_suspendedSessions.end()
             ? RobotQtViewerTaskSession{}
             : suspended->second;
-        const RobotQtViewerWorkbenchDescriptor& descriptor =
-            robotQtViewerWorkbenchDescriptor(kind);
-        m_session.workbench = kind;
-        m_session.taskId = sourceId.isEmpty() ? descriptor.id : sourceId;
+        RobotQtViewerWorkbenchKind compatibilityKind = RobotQtViewerWorkbenchKind::Browse;
+        robotQtViewerWorkbenchKindFromId(workbenchId, &compatibilityKind);
+        m_session.workbench = compatibilityKind;
+        m_session.workbenchId = workbenchId;
+        m_session.descriptor = descriptor;
+        m_session.taskId = sourceId.isEmpty() ? workbenchId : sourceId;
         if(suspended == m_suspendedSessions.end()) {
             m_session.viewportMode = descriptor.defaultViewportMode;
         }
@@ -274,14 +314,10 @@ namespace robot_qt_viewer
 
     void RobotQtViewerWorkbenchManager::releaseProjectSessions()
     {
-        const RobotQtViewerWorkbenchKind active = m_session.workbench;
+        const QString activeId = m_session.workbenchId;
+        const RobotQtViewerWorkbenchDescriptor activeDescriptor = m_session.descriptor;
         m_suspendedSessions.clear();
-        m_session = RobotQtViewerTaskSession{};
-        const RobotQtViewerWorkbenchDescriptor& descriptor =
-            robotQtViewerWorkbenchDescriptor(active);
-        m_session.workbench = active;
-        m_session.taskId = descriptor.id;
-        m_session.viewportMode = descriptor.defaultViewportMode;
+        setInitialWorkbench(activeId, activeDescriptor);
     }
 
     bool RobotQtViewerWorkbenchManager::canExitActiveWorkbench() const

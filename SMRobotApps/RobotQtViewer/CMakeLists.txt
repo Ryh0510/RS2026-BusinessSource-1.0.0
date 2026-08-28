@@ -96,6 +96,8 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
     ${ROBOT_QT_VIEWER_GENERATED_DIR}/RobotQtViewerBuiltWorkbenchCatalog.cpp
     RobotQtViewerPlatformConfigurationDialog.cpp
     RobotQtViewerPlatformConfigurationDialog.h
+    RobotQtViewerProductProfileConfigurationDialog.cpp
+    RobotQtViewerProductProfileConfigurationDialog.h
     RobotQtViewerRibbonModel.cpp
     RobotQtViewerRibbonModel.h
     RobotQtViewerResources.qrc

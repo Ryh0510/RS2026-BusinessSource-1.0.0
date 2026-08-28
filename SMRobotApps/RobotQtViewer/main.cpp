@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "RobotQtViewerBuiltWorkbenchCatalog.h"
 #include "RobotQtViewerTheme.h"
+#include "RobotQtViewerWorkbenchPlugin.h"
 
 #include <CustomLog/CustomLog.h>
 #include <SimulationProject/RuntimePaths.h>
@@ -9,8 +10,6 @@
 #include <QByteArray>
 #include <QIcon>
 #include <QMessageBox>
-#include <QSettings>
-#include <QStandardPaths>
 #include <QSurfaceFormat>
 #include <QTimer>
 
@@ -25,6 +24,7 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -35,10 +35,10 @@ namespace
     {
         robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry catalog;
         robot_qt_viewer::RobotQtViewerPlatformProfile profile;
-        robot_qt_viewer::RobotQtViewerPlatformUserOverlay overlay;
         robot_qt_viewer::RobotQtViewerResolvedPlatformComposition composition;
         std::filesystem::path profilesDirectory;
-        std::filesystem::path overlaysDirectory;
+        std::filesystem::path selectionPath;
+        std::unique_ptr<robot_qt_viewer::RobotQtViewerWorkbenchPluginLoader> pluginLoader;
     };
 
     void initializeLogging()
@@ -106,20 +106,39 @@ namespace
             throw std::runtime_error(catalogError.toStdString());
         }
 
+        context.pluginLoader =
+            std::make_unique<robot_qt_viewer::RobotQtViewerWorkbenchPluginLoader>();
+        QStringList pluginDiagnostics;
+        context.pluginLoader->discover(
+            simulation_project::RuntimePaths::applicationRoot() / "workbenches",
+            context.catalog,
+            &pluginDiagnostics);
+        for(const QString& diagnostic : pluginDiagnostics) {
+            LOG_WARNING("rs2026") << diagnostic.toStdString();
+        }
+
         context.profilesDirectory =
             simulation_project::RuntimePaths::configRoot() / "platforms";
-        context.overlaysDirectory = utf8Path(
-            QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)) /
-            "platform-overrides";
+        context.selectionPath =
+            simulation_project::RuntimePaths::configRoot() / "simulation-platform.json";
 
-        QSettings settings;
         const std::string requestedArgument =
             argumentValue(argc, argv, "--platform-profile");
         const bool hasExplicitProfile = !requestedArgument.empty();
-        const QString requested = requestedArgument.empty()
-            ? settings.value(QStringLiteral("platform/lastProfileId"),
-                  QStringLiteral("base-robot")).toString()
-            : QString::fromUtf8(requestedArgument.c_str());
+        QString requested = QString::fromUtf8(requestedArgument.c_str());
+        if(!hasExplicitProfile) {
+            robot_qt_viewer::RobotQtViewerPlatformSelection selection;
+            QString selectionError;
+            if(robot_qt_viewer::RobotQtViewerPlatformProfileIo::loadSelection(
+                   context.selectionPath, &selection, &selectionError)) {
+                requested = selection.profileId;
+            } else {
+                requested = QStringLiteral("base-robot");
+                LOG_WARNING("rs2026")
+                    << "Simulation platform selection is unavailable; using base-robot. "
+                    << selectionError.toStdString();
+            }
+        }
         const auto resolveProfilePath = [&](const QString& profileReference) {
             if(profileReference.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive) ||
                 profileReference.contains(QLatin1Char('/')) ||
@@ -138,39 +157,68 @@ namespace
         QString profileError;
         if(!robot_qt_viewer::RobotQtViewerPlatformProfileIo::loadProfile(
                profilePath, &context.profile, &profileError)) {
-            if(hasExplicitProfile || requested == QStringLiteral("base-robot")) {
+            if(hasExplicitProfile) {
                 throw std::runtime_error(profileError.toStdString());
             }
-            LOG_WARNING("rs2026") << "Saved platform profile is unavailable; falling back to base-robot. "
+            LOG_WARNING("rs2026") << "Selected Product Profile is unavailable; falling back to base-robot. "
                 << profileError.toStdString();
-            profilePath = resolveProfilePath(QStringLiteral("base-robot"));
-            if(!robot_qt_viewer::RobotQtViewerPlatformProfileIo::loadProfile(
-                   profilePath, &context.profile, &profileError)) {
-                throw std::runtime_error(profileError.toStdString());
+            if(requested != QStringLiteral("base-robot")) {
+                profilePath = resolveProfilePath(QStringLiteral("base-robot"));
+                robot_qt_viewer::RobotQtViewerPlatformProfileIo::loadProfile(
+                    profilePath, &context.profile, &profileError);
             }
-        }
-        const std::filesystem::path overlayPath = context.overlaysDirectory /
-            std::filesystem::u8path((context.profile.id + QStringLiteral(".overlay.json"))
-                .toUtf8().constData());
-        QString overlayError;
-        if(!robot_qt_viewer::RobotQtViewerPlatformProfileIo::loadOverlay(
-               overlayPath, &context.overlay, &overlayError)) {
-            throw std::runtime_error(overlayError.toStdString());
-        }
-        if(context.overlay.profileId.isEmpty()) {
-            context.overlay.profileId = context.profile.id;
+            if(context.profile.id.isEmpty()) {
+                context.profile = robot_qt_viewer::makeRobotQtViewerBuiltInBaseProfile(
+                    context.catalog);
+                LOG_WARNING("rs2026")
+                    << "Shipped base-robot Product Profile is unavailable; using the built-in fallback. "
+                    << profileError.toStdString();
+            }
         }
         context.composition = robot_qt_viewer::RobotQtViewerPlatformProfileResolver::resolve(
-            context.catalog, context.profile, context.overlay);
+            context.catalog, context.profile);
         if(!context.composition.succeeded()) {
-            throw std::runtime_error(context.composition.diagnosticText().toStdString());
+            if(hasExplicitProfile) {
+                throw std::runtime_error(context.composition.diagnosticText().toStdString());
+            }
+            LOG_WARNING("rs2026")
+                << "Selected Product Profile cannot be composed; using the built-in fallback. "
+                << context.composition.diagnosticText().toStdString();
+            context.profile =
+                robot_qt_viewer::makeRobotQtViewerBuiltInBaseProfile(context.catalog);
+            context.composition = robot_qt_viewer::RobotQtViewerPlatformProfileResolver::resolve(
+                context.catalog, context.profile);
+            if(!context.composition.succeeded()) {
+                throw std::runtime_error(context.composition.diagnosticText().toStdString());
+            }
         }
         QString applyError;
-        if(!context.catalog.setEnabledModeIds(
-               context.composition.enabledModeIds, &applyError)) {
+        if(!context.catalog.setEnabledWorkbenchIds(
+               context.composition.enabledWorkbenchIds, &applyError)) {
             throw std::runtime_error(applyError.toStdString());
         }
-        settings.setValue(QStringLiteral("platform/lastProfileId"), context.profile.id);
+        QString pluginError;
+        if(!context.pluginLoader->loadEnabled(
+               context.composition.enabledWorkbenchIds, context.catalog, &pluginError)) {
+            if(hasExplicitProfile) {
+                throw std::runtime_error(pluginError.toStdString());
+            }
+            LOG_WARNING("rs2026")
+                << "Selected Product Profile plugin load failed; using the built-in fallback. "
+                << pluginError.toStdString();
+            context.profile =
+                robot_qt_viewer::makeRobotQtViewerBuiltInBaseProfile(context.catalog);
+            context.composition = robot_qt_viewer::RobotQtViewerPlatformProfileResolver::resolve(
+                context.catalog, context.profile);
+            if(!context.composition.succeeded() ||
+                !context.catalog.setEnabledWorkbenchIds(
+                    context.composition.enabledWorkbenchIds, &applyError)) {
+                throw std::runtime_error(
+                    context.composition.succeeded()
+                        ? applyError.toStdString()
+                        : context.composition.diagnosticText().toStdString());
+            }
+        }
         return context;
     }
 
@@ -268,14 +316,14 @@ int main(int argc, char* argv[])
         PlatformStartupContext platform = loadPlatformStartupContext(argc, argv);
         LOG_INFO("rs2026") << "Simulation platform profile: id="
             << platform.profile.id.toStdString()
-            << ", modes=" << platform.composition.enabledModeIds.join(',').toStdString();
+            << ", workbenches=" << platform.composition.enabledWorkbenchIds.join(',').toStdString();
         MainWindow window(
             std::move(platform.catalog),
             std::move(platform.profile),
-            std::move(platform.overlay),
             std::move(platform.composition),
             std::move(platform.profilesDirectory),
-            std::move(platform.overlaysDirectory),
+            std::move(platform.selectionPath),
+            platform.pluginLoader.get(),
             QString::fromUtf8(argumentValue(argc, argv, "--language").c_str()));
         window.resize(1760, 920);
         window.setWindowIcon(QApplication::windowIcon());

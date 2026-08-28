@@ -85,6 +85,8 @@ namespace robot_qt_viewer
     {
         RobotQtViewerWorkbenchKind previousWorkbench = RobotQtViewerWorkbenchKind::Browse;
         RobotQtViewerWorkbenchKind activeWorkbench = RobotQtViewerWorkbenchKind::Browse;
+        QString previousWorkbenchId;
+        QString activeWorkbenchId;
         std::uint64_t transitionId = 0;
     };
 

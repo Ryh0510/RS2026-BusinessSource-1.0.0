@@ -38,6 +38,15 @@ namespace robot_qt_viewer
         QString defaultModeId;
         QStringList modeOrder;
         bool allowUserOverrides = true;
+        QStringList workbenchIds;
+        QString defaultWorkbenchId;
+    };
+
+    struct RobotQtViewerPlatformSelection
+    {
+        QString schema = QStringLiteral("smrobot.platform-selection");
+        int version = 1;
+        QString profileId = QStringLiteral("base-robot");
     };
 
     struct RobotQtViewerPlatformUserOverlay
@@ -54,13 +63,17 @@ namespace robot_qt_viewer
         QString profileId;
         QString displayName;
         QString defaultModeId;
+        QString defaultWorkbenchId;
         QStringList enabledModeIds;
+        QStringList enabledWorkbenchIds;
         QStringList requiredModeIds;
         QVector<RobotQtViewerPlatformDiagnostic> diagnostics;
 
         bool succeeded() const;
         bool containsMode(const QString& modeId) const;
         bool containsMode(RobotQtViewerWorkbenchKind kind) const;
+        bool containsWorkbench(const QString& workbenchId) const;
+        bool containsWorkbench(RobotQtViewerWorkbenchKind kind) const;
         QString diagnosticText() const;
     };
 
@@ -73,12 +86,23 @@ namespace robot_qt_viewer
             const RobotQtViewerPlatformUserOverlay& overlay = {});
     };
 
+    RobotQtViewerPlatformProfile makeRobotQtViewerBuiltInBaseProfile(
+        const RobotQtViewerWorkbenchPackageRegistry& catalog);
+
     class RobotQtViewerPlatformProfileIo final
     {
     public:
         static bool loadProfile(
             const std::filesystem::path& path,
             RobotQtViewerPlatformProfile* profile,
+            QString* errorMessage = nullptr);
+        static bool loadSelection(
+            const std::filesystem::path& path,
+            RobotQtViewerPlatformSelection* selection,
+            QString* errorMessage = nullptr);
+        static bool saveSelection(
+            const std::filesystem::path& path,
+            const RobotQtViewerPlatformSelection& selection,
             QString* errorMessage = nullptr);
         static bool loadOverlay(
             const std::filesystem::path& path,

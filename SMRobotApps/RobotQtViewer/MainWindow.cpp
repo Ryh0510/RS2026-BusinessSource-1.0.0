@@ -13,10 +13,11 @@
 #include "MotionPlanningModuleController.h"
 #include "MotionPlanningWorkbenchLifecycle.h"
 #include "RobotRunWorkbenchLifecycle.h"
-#include "RobotQtViewerPlatformConfigurationDialog.h"
+#include "RobotQtViewerProductProfileConfigurationDialog.h"
 #include "RobotQtViewerSceneExplorerActionRouter.h"
 #include "RobotQtViewerTheme.h"
 #include "RobotQtViewerToolbarController.h"
+#include "RobotQtViewerWorkbenchPlugin.h"
 #include "RobotQtViewerCollisionWorkbenchServicesAdapter.h"
 #include "RobotQtViewerToolSetupAppServicesAdapter.h"
 #include "RobotQtViewerViewportEventController.h"
@@ -57,6 +58,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QCursor>
 #include <QDockWidget>
 #include <QEvent>
@@ -79,6 +81,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QProgressBar>
+#include <QProcess>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QStackedWidget>
@@ -109,7 +112,7 @@
 #include <vector>
 
 #ifndef ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH
-#define ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH "projects/420.v3.scene.json"
+#define ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH "projects/ABB4600-burnner.sys.json"
 #endif
 
 namespace
@@ -475,10 +478,10 @@ namespace
 MainWindow::MainWindow(
     robot_qt_viewer::RobotQtViewerWorkbenchPackageRegistry workbenchCatalog,
     robot_qt_viewer::RobotQtViewerPlatformProfile platformProfile,
-    robot_qt_viewer::RobotQtViewerPlatformUserOverlay platformOverlay,
     robot_qt_viewer::RobotQtViewerResolvedPlatformComposition platformComposition,
     std::filesystem::path platformProfilesDirectory,
-    std::filesystem::path platformOverlaysDirectory,
+    std::filesystem::path platformSelectionPath,
+    robot_qt_viewer::RobotQtViewerWorkbenchPluginLoader* workbenchPluginLoader,
     const QString& startupLanguageId,
     QWidget* parent)
     : QMainWindow(parent)
@@ -490,11 +493,11 @@ MainWindow::MainWindow(
     , m_selectionModel(m_eventHub)
     , m_viewportPreviewState(m_eventHub)
     , m_platformProfile(std::move(platformProfile))
-    , m_platformOverlay(std::move(platformOverlay))
     , m_platformComposition(std::move(platformComposition))
     , m_platformProfilesDirectory(std::move(platformProfilesDirectory))
-    , m_platformOverlaysDirectory(std::move(platformOverlaysDirectory))
+    , m_platformSelectionPath(std::move(platformSelectionPath))
     , m_workbenchPackageRegistry(std::move(workbenchCatalog))
+    , m_workbenchPluginLoader(workbenchPluginLoader)
     , m_documentContext(
           m_projectSession,
           m_documentController,
@@ -505,15 +508,18 @@ MainWindow::MainWindow(
     , m_appController(m_documentContext)
     , m_projectPath(m_projectSession.path())
 {
-    robot_qt_viewer::RobotQtViewerWorkbenchKind initialWorkbench;
-    if(!robot_qt_viewer::robotQtViewerWorkbenchKindFromId(
-           m_platformComposition.defaultModeId, &initialWorkbench)) {
+    const QString initialWorkbenchId = !m_platformComposition.defaultWorkbenchId.isEmpty()
+        ? m_platformComposition.defaultWorkbenchId
+        : m_platformComposition.defaultModeId;
+    const robot_qt_viewer::RobotQtViewerWorkbenchDescriptor* initialDescriptor =
+        m_workbenchPackageRegistry.descriptor(initialWorkbenchId);
+    if(initialDescriptor == nullptr) {
         throw std::runtime_error(
-            QStringLiteral("Platform default mode is not supported by this Viewer: %1")
-                .arg(m_platformComposition.defaultModeId)
+            QStringLiteral("Platform default Workbench is not supported by this Viewer: %1")
+                .arg(initialWorkbenchId)
                 .toStdString());
     }
-    m_workbenchManager.setInitialWorkbench(initialWorkbench);
+    m_workbenchManager.setInitialWorkbench(initialWorkbenchId, *initialDescriptor);
     m_localization = std::make_unique<robot_qt_viewer::RobotQtViewerLocalizationService>(
         QString::fromStdWString(
             (simulation_project::RuntimePaths::configRoot() / "translations").wstring()),
@@ -1221,6 +1227,31 @@ void MainWindow::createActions()
             QStringLiteral("digitalTwinAction"));
     });
 
+    m_dynamicWorkbenchActions.clear();
+    if(m_workbenchPluginLoader != nullptr) {
+        for(const QString& workbenchId : m_workbenchPluginLoader->loadedWorkbenchIds()) {
+            if(!m_platformComposition.enabledModeIds.contains(workbenchId)) {
+                continue;
+            }
+            const robot_qt_viewer::RobotQtViewerWorkbenchDesc* workbench =
+                m_workbenchPackageRegistry.workbench(workbenchId);
+            if(workbench == nullptr) {
+                continue;
+            }
+            const QString actionId = workbench->toolbarActionId.isEmpty()
+                ? workbenchId
+                : workbench->toolbarActionId;
+            auto* action = new QAction(workbench->descriptor.displayName, this);
+            action->setObjectName(actionId);
+            action->setCheckable(true);
+            action->setActionGroup(workbenchGroup);
+            connect(action, &QAction::triggered, this, [this, workbenchId]() {
+                enterWorkbench(workbenchId, QStringLiteral("pluginWorkbenchAction"));
+            });
+            m_dynamicWorkbenchActions.insert(workbenchId, action);
+        }
+    }
+
     m_fileMenu->addAction(m_newProjectAction);
     m_fileMenu->addAction(m_openProjectAction);
     m_fileMenu->addAction(m_saveProjectAction);
@@ -1247,6 +1278,14 @@ void MainWindow::createActions()
     m_viewMenu->addMenu(m_cameraViewMenu);
     m_viewMenu->addAction(m_collisionGeometryAction);
     m_viewMenu->addAction(m_collisionQueriesAction);
+    if(!m_dynamicWorkbenchActions.isEmpty()) {
+        m_viewMenu->addSeparator();
+        for(const QString& workbenchId : m_platformComposition.enabledModeIds) {
+            if(QAction* action = m_dynamicWorkbenchActions.value(workbenchId, nullptr)) {
+                m_viewMenu->addAction(action);
+            }
+        }
+    }
     m_viewMenu->addSeparator();
     m_viewMenu->addAction(m_configurePlatformAction);
 
@@ -1287,12 +1326,38 @@ void MainWindow::createActions()
         ? m_digitalTwinWorkbenchAction : nullptr;
     QStringList workbenchActionOrder;
     for(const QString& modeId : m_platformComposition.enabledModeIds) {
-        const robot_qt_viewer::RobotQtViewerWorkbenchModeDesc* modeDesc =
-            m_workbenchPackageRegistry.registeredMode(modeId);
-        if(modeDesc != nullptr &&
-            modeDesc->toolbarActionId != QStringLiteral("toolSetupWorkbench") &&
-            !modeDesc->toolbarActionId.isEmpty()) {
-            workbenchActionOrder.push_back(modeDesc->toolbarActionId);
+        const robot_qt_viewer::RobotQtViewerWorkbenchDesc* workbenchDesc =
+            m_workbenchPackageRegistry.registeredWorkbench(modeId);
+        if(workbenchDesc != nullptr) {
+            const QString actionId = workbenchDesc->toolbarActionId.isEmpty()
+                ? modeId
+                : workbenchDesc->toolbarActionId;
+            if(actionId != QStringLiteral("toolSetupWorkbench")) {
+                workbenchActionOrder.push_back(actionId);
+                if(QAction* dynamicAction = m_dynamicWorkbenchActions.value(modeId, nullptr)) {
+                    toolbarActions.dynamicWorkbenchActions.insert(actionId, dynamicAction);
+                }
+            }
+        }
+    }
+    if(m_workbenchPluginLoader != nullptr) {
+        for(const QString& workbenchId : m_workbenchPluginLoader->loadedWorkbenchIds()) {
+            const robot_qt_viewer::RobotQtViewerWorkbenchDesc* workbenchDesc =
+                m_workbenchPackageRegistry.registeredWorkbench(workbenchId);
+            if(workbenchDesc == nullptr) {
+                continue;
+            }
+            const QString actionId = workbenchDesc->toolbarActionId.isEmpty()
+                ? workbenchId
+                : workbenchDesc->toolbarActionId;
+            if(!toolbarActions.dynamicWorkbenchActions.contains(actionId)) {
+                if(QAction* dynamicAction = m_dynamicWorkbenchActions.value(workbenchId, nullptr)) {
+                    toolbarActions.dynamicWorkbenchActions.insert(actionId, dynamicAction);
+                    if(!workbenchActionOrder.contains(actionId)) {
+                        workbenchActionOrder.push_back(actionId);
+                    }
+                }
+            }
         }
     }
     m_toolbarController->build(toolbarActions, workbenchActionOrder);
@@ -1304,19 +1369,144 @@ void MainWindow::createActions()
 
 void MainWindow::configureSimulationPlatform()
 {
-    robot_qt_viewer::RobotQtViewerPlatformConfigurationDialog dialog(
+    robot_qt_viewer::RobotQtViewerProductProfileConfigurationDialog dialog(
         m_workbenchPackageRegistry,
         m_platformProfilesDirectory,
-        m_platformOverlaysDirectory,
         m_platformProfile.id,
         this);
     if(dialog.exec() != QDialog::Accepted) {
         return;
     }
-    QMessageBox::information(
-        this,
-        QStringLiteral("Simulation Platform"),
-        QStringLiteral("The platform configuration was saved. Restart RobotQtViewer to apply it."));
+    const QString targetProfileId = dialog.selectedProfileId();
+    if(targetProfileId.isEmpty()) {
+        return;
+    }
+    const bool restartRequired =
+        targetProfileId != m_platformProfile.id || dialog.configurationChanged();
+    if(!restartRequired) {
+        persistPlatformConfiguration(targetProfileId);
+        return;
+    }
+    restartWithPlatformConfiguration(targetProfileId);
+}
+
+void MainWindow::restartWithPlatformConfiguration(const QString& profileId)
+{
+    if(profileId.isEmpty()) {
+        return;
+    }
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        const auto prepare = m_workbenchTransitionCoordinator->prepareActiveDeactivation(
+            robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ApplicationShutdown,
+            QStringLiteral("platformConfigurationRestart"),
+            this);
+        if(!prepare.succeeded()) {
+            showWorkbenchTransitionResult(prepare);
+            return;
+        }
+    }
+
+    if(m_projectSession.isDirty()) {
+        const QMessageBox::StandardButton choice = QMessageBox::warning(
+            this,
+            QStringLiteral("Apply Product Profile"),
+            QStringLiteral("The current project has unsaved changes. Save them before restarting?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+        if(choice == QMessageBox::Cancel) {
+            if(m_workbenchTransitionCoordinator != nullptr) {
+                m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+            }
+            return;
+        }
+        if(choice == QMessageBox::Save) {
+            saveProject();
+            if(m_projectSession.isDirty()) {
+                if(m_workbenchTransitionCoordinator != nullptr) {
+                    m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+                }
+                return;
+            }
+        }
+    }
+
+    if(!persistPlatformConfiguration(profileId)) {
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            m_workbenchTransitionCoordinator->cancelPreparedDeactivation();
+        }
+        return;
+    }
+
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        const auto deactivate = m_workbenchTransitionCoordinator->deactivateActive(
+            robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::ApplicationShutdown,
+            QStringLiteral("platformConfigurationRestart"),
+            this,
+            true);
+        if(!deactivate.succeeded()) {
+            showWorkbenchTransitionResult(
+                deactivate,
+                QStringLiteral("The Product Profile was saved and will be used on the next restart."));
+            return;
+        }
+    }
+
+    QStringList restartArguments = QCoreApplication::arguments();
+    if(!restartArguments.isEmpty()) {
+        restartArguments.removeFirst();
+    }
+    for(int index = 0; index < restartArguments.size();) {
+        if(restartArguments[index] == QStringLiteral("--platform-profile")) {
+            restartArguments.removeAt(index);
+            if(index < restartArguments.size()) {
+                restartArguments.removeAt(index);
+            }
+            continue;
+        }
+        ++index;
+    }
+    restartArguments.push_back(QStringLiteral("--platform-profile"));
+    restartArguments.push_back(profileId);
+    const bool started = QProcess::startDetached(
+        QCoreApplication::applicationFilePath(),
+        restartArguments,
+        QCoreApplication::applicationDirPath());
+    if(!started) {
+        if(m_workbenchTransitionCoordinator != nullptr) {
+            showWorkbenchTransitionResult(
+                m_workbenchTransitionCoordinator->activateCommittedWorkbench(
+                    robot_qt_viewer::RobotQtViewerWorkbenchActivationKind::Rollback,
+                    robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::Rollback,
+                    QStringLiteral("platformConfigurationRestartFailed")));
+        }
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Product Profile"),
+            QStringLiteral("The Product Profile was saved, but RobotQtViewer could not restart. Restart it manually to apply the change."));
+        return;
+    }
+
+    if(m_workbenchTransitionCoordinator != nullptr) {
+        m_workbenchTransitionCoordinator->shutdownAll(
+            QStringLiteral("platformConfigurationRestart"));
+    }
+    QCoreApplication::quit();
+}
+
+bool MainWindow::persistPlatformConfiguration(const QString& profileId)
+{
+    QString saveError;
+    robot_qt_viewer::RobotQtViewerPlatformSelection selection;
+    selection.profileId = profileId;
+    if(!robot_qt_viewer::RobotQtViewerPlatformProfileIo::saveSelection(
+           m_platformSelectionPath, selection, &saveError)) {
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Product Profile"),
+            saveError);
+        return false;
+    }
+    return true;
 }
 
 void MainWindow::showCameraViewPalette()
@@ -1451,18 +1641,27 @@ void MainWindow::enterWorkbench(
     robot_qt_viewer::RobotQtViewerWorkbenchKind kind,
     const QString& sourceId)
 {
+    enterWorkbench(robot_qt_viewer::robotQtViewerWorkbenchId(kind), sourceId);
+}
+
+void MainWindow::enterWorkbench(
+    const QString& workbenchId,
+    const QString& sourceId)
+{
+    const robot_qt_viewer::RobotQtViewerWorkbenchDescriptor* descriptor =
+        m_workbenchPackageRegistry.descriptor(workbenchId);
     if(m_workbenchTransitionCoordinator == nullptr ||
-        !m_workbenchPackageRegistry.isModeReady(kind)) {
+        descriptor == nullptr || !m_workbenchPackageRegistry.isWorkbenchReady(workbenchId)) {
         statusBar()->showMessage(
             QString("Workbench package is not available: %1")
-                .arg(robot_qt_viewer::robotQtViewerWorkbenchName(kind)),
+                .arg(descriptor == nullptr ? workbenchId : descriptor->displayName),
             3000);
         updateWorkbenchActions();
         return;
     }
 
     const robot_qt_viewer::RobotQtViewerWorkbenchTransitionResult transition =
-        m_workbenchTransitionCoordinator->requestTransition(kind, sourceId, this);
+        m_workbenchTransitionCoordinator->requestTransition(workbenchId, sourceId, this);
     if(!transition.succeeded()) {
         showWorkbenchTransitionResult(
             transition,
@@ -1489,7 +1688,7 @@ void MainWindow::enterWorkbench(
     robot_qt_viewer::RobotQtViewerEvent event;
     event.kind = robot_qt_viewer::RobotQtViewerEventKind::StatusMessageRequested;
     event.sourceId = sourceId;
-    event.message = QString("Workbench: %1").arg(robot_qt_viewer::robotQtViewerWorkbenchName(kind));
+    event.message = QString("Workbench: %1").arg(descriptor->displayName);
     m_eventHub.publish(event);
 }
 
@@ -1515,9 +1714,10 @@ void MainWindow::showWorkbenchTransitionResult(
 void MainWindow::updateWorkbenchActions()
 {
     const robot_qt_viewer::RobotQtViewerWorkbenchKind kind = m_workbenchManager.activeWorkbench();
+    const QString activeWorkbenchId = m_workbenchManager.activeWorkbenchId();
     const bool transitionAvailable = m_workbenchTransitionCoordinator == nullptr ||
         (!m_workbenchTransitionCoordinator->transitionInProgress() &&
-            m_workbenchTransitionCoordinator->lifecycleState(kind) ==
+            m_workbenchTransitionCoordinator->lifecycleState(activeWorkbenchId) ==
                 robot_qt_viewer::RobotQtViewerWorkbenchLifecycleState::Active);
     const auto modeAvailable = [this, transitionAvailable](
                                    robot_qt_viewer::RobotQtViewerWorkbenchKind candidate) {
@@ -1530,12 +1730,16 @@ void MainWindow::updateWorkbenchActions()
     if(m_browseWorkbenchAction != nullptr) {
         m_browseWorkbenchAction->setEnabled(modeAvailable(
             robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse));
-        m_browseWorkbenchAction->setChecked(kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse);
+        m_browseWorkbenchAction->setChecked(
+            activeWorkbenchId == robot_qt_viewer::robotQtViewerWorkbenchId(
+                robot_qt_viewer::RobotQtViewerWorkbenchKind::Browse));
     }
     if(m_motionWorkbenchAction != nullptr) {
         m_motionWorkbenchAction->setEnabled(modeAvailable(
             robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion));
-        m_motionWorkbenchAction->setChecked(kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion);
+        m_motionWorkbenchAction->setChecked(
+            activeWorkbenchId == robot_qt_viewer::robotQtViewerWorkbenchId(
+                robot_qt_viewer::RobotQtViewerWorkbenchKind::Motion));
     }
     if(m_toolSetupWorkbenchAction != nullptr) {
         m_toolSetupWorkbenchAction->setEnabled(
@@ -1569,7 +1773,21 @@ void MainWindow::updateWorkbenchActions()
         m_digitalTwinWorkbenchAction->setEnabled(modeAvailable(
             robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin));
         m_digitalTwinWorkbenchAction->setChecked(
-            kind == robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin);
+            activeWorkbenchId == robot_qt_viewer::robotQtViewerWorkbenchId(
+                robot_qt_viewer::RobotQtViewerWorkbenchKind::DigitalTwin));
+    }
+    for(auto it = m_dynamicWorkbenchActions.begin(); it != m_dynamicWorkbenchActions.end(); ++it) {
+        QAction* action = it.value();
+        if(action == nullptr) {
+            continue;
+        }
+        const QString workbenchId = it.key();
+        const bool ready = m_workbenchPackageRegistry.isWorkbenchReady(workbenchId) &&
+            (m_workbenchTransitionCoordinator == nullptr ||
+                m_workbenchTransitionCoordinator->lifecycleState(workbenchId) !=
+                    robot_qt_viewer::RobotQtViewerWorkbenchLifecycleState::Failed);
+        action->setEnabled(transitionAvailable && ready);
+        action->setChecked(activeWorkbenchId == workbenchId);
     }
 }
 
@@ -1608,6 +1826,14 @@ void MainWindow::updateTaskPanel()
 
     const robot_qt_viewer::RobotQtViewerWorkbenchDescriptor& descriptor =
         m_workbenchManager.activeDescriptor();
+    const QString activeWorkbenchId = m_workbenchManager.activeWorkbenchId();
+    if(QWidget* pluginPanel = m_dynamicWorkbenchPanels.value(activeWorkbenchId, nullptr)) {
+        m_taskPanelStack->setCurrentWidget(pluginPanel);
+        if(m_taskPanelDock != nullptr) {
+            m_taskPanelDock->setWindowTitle(descriptor.rightPanelTitle);
+        }
+        return;
+    }
     QString panelTitle = descriptor.rightPanelTitle;
     switch(descriptor.rightPanel) {
     case robot_qt_viewer::RobotQtViewerRightPanelKind::SceneSelection:
@@ -2889,6 +3115,21 @@ void MainWindow::createPanels()
             static_cast<QWidget*>(coatingAnalysisScrollArea) }) {
         if(optionalPanel != nullptr) {
             m_taskPanelStack->addWidget(optionalPanel);
+        }
+    }
+
+    if(m_workbenchPluginLoader != nullptr) {
+        for(const QString& workbenchId : m_workbenchPluginLoader->loadedWorkbenchIds()) {
+            if(!m_platformComposition.enabledModeIds.contains(workbenchId)) {
+                continue;
+            }
+            QWidget* panel = m_workbenchPluginLoader->createPanel(workbenchId, m_taskPanelStack);
+            if(panel == nullptr) {
+                throw std::runtime_error(
+                    QStringLiteral("Workbench panel creation failed: %1").arg(workbenchId).toStdString());
+            }
+            m_dynamicWorkbenchPanels.insert(workbenchId, panel);
+            m_taskPanelStack->addWidget(panel);
         }
     }
 
