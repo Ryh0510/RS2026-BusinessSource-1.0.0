@@ -26,6 +26,9 @@
 
 namespace
 {
+    constexpr int kOriginalPointIndexRole = Qt::UserRole + 101;
+    constexpr int kLargeTrajectoryTablePreviewLimit = 1000;
+
     void configureTrajectoryTable(
         QTableWidget* table,
         const QStringList& headers,
@@ -71,6 +74,83 @@ namespace
         return item;
     }
 
+    QTableWidgetItem* makeNoticeItem(const QString& text)
+    {
+        QTableWidgetItem* item = makeReadOnlyItem(text);
+        item->setFlags((item->flags() & ~Qt::ItemIsSelectable) | Qt::ItemIsEnabled);
+        return item;
+    }
+
+    void setOriginalPointIndex(QTableWidgetItem* item, int pointIndex)
+    {
+        if(item != nullptr) {
+            item->setData(kOriginalPointIndexRole, pointIndex);
+        }
+    }
+
+    int originalPointIndexAt(const QTableWidget* table, int row)
+    {
+        if(table == nullptr || row < 0 || row >= table->rowCount()) {
+            return -1;
+        }
+        const QTableWidgetItem* item = table->item(row, 0);
+        if(item == nullptr) {
+            return -1;
+        }
+        bool ok = false;
+        const int pointIndex = item->data(kOriginalPointIndexRole).toInt(&ok);
+        return ok ? pointIndex : -1;
+    }
+
+    int selectedOriginalPointIndex(const QTableWidget* table)
+    {
+        return table == nullptr ? -1 : originalPointIndexAt(table, table->currentRow());
+    }
+
+    bool hasAnyOriginalPointRow(const QTableWidget* table)
+    {
+        if(table == nullptr) {
+            return false;
+        }
+        for(int row = 0; row < table->rowCount(); ++row) {
+            if(originalPointIndexAt(table, row) >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    QVector<int> sampledSourceRows(int pointCount)
+    {
+        QVector<int> rows;
+        if(pointCount <= 0) {
+            return rows;
+        }
+        if(pointCount <= kLargeTrajectoryTablePreviewLimit) {
+            rows.reserve(pointCount);
+            for(int index = 0; index < pointCount; ++index) {
+                rows.push_back(index);
+            }
+            return rows;
+        }
+
+        rows.reserve(kLargeTrajectoryTablePreviewLimit);
+        const int previewCount = kLargeTrajectoryTablePreviewLimit;
+        for(int displayRow = 0; displayRow < previewCount; ++displayRow) {
+            const long long numerator =
+                static_cast<long long>(displayRow) * static_cast<long long>(pointCount - 1);
+            const int sourceRow = static_cast<int>(
+                (numerator + (previewCount - 1) / 2) / static_cast<long long>(previewCount - 1));
+            if(rows.empty() || rows.back() != sourceRow) {
+                rows.push_back(sourceRow);
+            }
+        }
+        if(!rows.empty()) {
+            rows.back() = pointCount - 1;
+        }
+        return rows;
+    }
+
     QDoubleSpinBox* makePoseSpinBox(
         QWidget* parent,
         double minimum,
@@ -97,17 +177,37 @@ namespace
             return;
         }
 
+        const QVector<int> sourceRows = sampledSourceRows(points.size());
+        const bool isPreview = sourceRows.size() < points.size();
+        const int noticeRowCount = isPreview ? 1 : 0;
+        const QSignalBlocker blocker(table);
+        table->setUpdatesEnabled(false);
+        table->clearContents();
         table->clearSpans();
-        table->setRowCount(points.size());
         const int columnCount = table->columnCount();
-        for(int row = 0; row < points.size(); ++row) {
-            const MotionPlanningEditorWidget::TrajectoryPointRow& point = points[row];
-            table->setItem(row, 0, makeReadOnlyItem(QString::number(point.index)));
+        table->setRowCount(sourceRows.size() + noticeRowCount);
+        for(int row = 0; row < sourceRows.size(); ++row) {
+            const int sourceRow = sourceRows[row];
+            const MotionPlanningEditorWidget::TrajectoryPointRow& point = points[sourceRow];
+            QTableWidgetItem* indexItem = makeReadOnlyItem(QString::number(point.index));
+            setOriginalPointIndex(indexItem, sourceRow);
+            table->setItem(row, 0, indexItem);
             table->setItem(row, 1, makeReadOnlyItem(point.timeText));
             table->setItem(row, 2, makeReadOnlyItem(point.valueText));
             if(columnCount > 3) {
                 table->setItem(row, 3, makeReadOnlyItem(point.orientationText));
             }
+        }
+
+        if(isPreview) {
+            const int noticeRow = sourceRows.size();
+            table->setSpan(noticeRow, 0, 1, columnCount);
+            table->setItem(
+                noticeRow,
+                0,
+                makeNoticeItem(QStringLiteral("Showing %1 sampled rows from %2 total points. Playback and CDF/QP use all points.")
+                    .arg(sourceRows.size())
+                    .arg(points.size())));
         }
 
         if(points.empty()) {
@@ -120,6 +220,7 @@ namespace
         if(columnCount > 3) {
             table->resizeColumnToContents(3);
         }
+        table->setUpdatesEnabled(true);
     }
 }
 
@@ -284,10 +385,13 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
     m_cdfDistanceThreshold = makePoseSpinBox(cdfPage, 0.001, 100.0, 5.0, 0.01, QStringLiteral(" m"));
     cdfRepairForm->addRow(QStringLiteral("Distance horizon"), m_cdfDistanceThreshold);
 
-    m_cdfTrustRegion = makePoseSpinBox(cdfPage, 0.001, 1.0, 0.03, 0.005, QStringLiteral(" rad"));
+    m_cdfTrustRegion = makePoseSpinBox(cdfPage, 0.001, 1.0, 0.02, 0.005, QStringLiteral(" rad"));
     cdfRepairForm->addRow(QStringLiteral("Trust region"), m_cdfTrustRegion);
 
-    m_cdfSeedTrackingWeight = makePoseSpinBox(cdfPage, 0.0, 2.0, 0.25, 0.05);
+    m_cdfSeedCorridor = makePoseSpinBox(cdfPage, 0.001, 2.0, 0.10, 0.01, QStringLiteral(" rad"));
+    cdfRepairForm->addRow(QStringLiteral("Seed corridor"), m_cdfSeedCorridor);
+
+    m_cdfSeedTrackingWeight = makePoseSpinBox(cdfPage, 0.0, 2.0, 0.40, 0.05);
     cdfRepairForm->addRow(QStringLiteral("Seed tracking"), m_cdfSeedTrackingWeight);
 
     m_cdfSegmentIntermediateSamples = new QSpinBox(cdfPage);
@@ -297,7 +401,7 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
 
     m_cdfMaxIterations = new QSpinBox(cdfPage);
     m_cdfMaxIterations->setRange(1, 1000);
-    m_cdfMaxIterations->setValue(80);
+    m_cdfMaxIterations->setValue(5);
     cdfRepairForm->addRow(QStringLiteral("Max iterations"), m_cdfMaxIterations);
 
     m_cdfKeepEndpoints = new QCheckBox(QStringLiteral("Lock endpoints"), cdfPage);
@@ -332,7 +436,7 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
         emit inverseKinematicsRequested(useToolTransform);
     });
     connect(m_applyJointPointButton, &QPushButton::clicked, this, [this]() {
-        emit applySelectedJointPointRequested(m_jointTable != nullptr ? m_jointTable->currentRow() : -1);
+        emit applySelectedJointPointRequested(selectedOriginalPointIndex(m_jointTable));
     });
     connect(m_playbackButton, &QPushButton::clicked, this, [this]() {
         if(m_playbackActive) {
@@ -342,7 +446,7 @@ MotionPlanningEditorWidget::MotionPlanningEditorWidget(QWidget* parent)
         }
     });
     connect(m_applyCdfJointButton, &QPushButton::clicked, this, [this]() {
-        emit applySelectedCdfJointAnglesRequested(m_cdfJointTable != nullptr ? m_cdfJointTable->currentRow() : -1);
+        emit applySelectedCdfJointAnglesRequested(selectedOriginalPointIndex(m_cdfJointTable));
     });
     connect(m_repairCdfTrajectoryButton, &QPushButton::clicked, this, [this]() {
         emit repairImportedCdfTrajectoryRequested();
@@ -461,6 +565,7 @@ MotionPlanningEditorWidget::CdfQpRepairSettings MotionPlanningEditorWidget::cdfQ
         ? m_cdfDistanceThreshold->value()
         : settings.distanceThreshold;
     settings.trustRegion = m_cdfTrustRegion != nullptr ? m_cdfTrustRegion->value() : settings.trustRegion;
+    settings.seedCorridor = m_cdfSeedCorridor != nullptr ? m_cdfSeedCorridor->value() : settings.seedCorridor;
     settings.seedTrackingWeight = m_cdfSeedTrackingWeight != nullptr
         ? m_cdfSeedTrackingWeight->value()
         : settings.seedTrackingWeight;
@@ -551,15 +656,35 @@ void MotionPlanningEditorWidget::setCdfJointAngleView(
     }
     configureTrajectoryTable(m_cdfJointTable, headers, 320);
 
+    const QVector<int> sourceRows = sampledSourceRows(jointRows.size());
+    const bool isPreview = sourceRows.size() < jointRows.size();
+    const int noticeRowCount = isPreview ? 1 : 0;
+    const QSignalBlocker blocker(m_cdfJointTable);
+    m_cdfJointTable->setUpdatesEnabled(false);
+    m_cdfJointTable->clearContents();
     m_cdfJointTable->clearSpans();
-    m_cdfJointTable->setRowCount(jointRows.size());
-    for(int row = 0; row < jointRows.size(); ++row) {
-        const CdfJointAngleRow& point = jointRows[row];
-        m_cdfJointTable->setItem(row, 0, makeReadOnlyItem(QString::number(point.index)));
+    m_cdfJointTable->setRowCount(sourceRows.size() + noticeRowCount);
+    for(int row = 0; row < sourceRows.size(); ++row) {
+        const int sourceRow = sourceRows[row];
+        const CdfJointAngleRow& point = jointRows[sourceRow];
+        QTableWidgetItem* indexItem = makeReadOnlyItem(QString::number(point.index));
+        setOriginalPointIndex(indexItem, sourceRow);
+        m_cdfJointTable->setItem(row, 0, indexItem);
         m_cdfJointTable->setItem(row, 1, makeReadOnlyItem(point.timeText));
         for(int jointIndex = 0; jointIndex < point.jointAngleTexts.size(); ++jointIndex) {
             m_cdfJointTable->setItem(row, jointIndex + 2, makeReadOnlyItem(point.jointAngleTexts[jointIndex]));
         }
+    }
+
+    if(isPreview) {
+        const int noticeRow = sourceRows.size();
+        m_cdfJointTable->setSpan(noticeRow, 0, 1, m_cdfJointTable->columnCount());
+        m_cdfJointTable->setItem(
+            noticeRow,
+            0,
+            makeNoticeItem(QStringLiteral("Showing %1 sampled rows from %2 total points. Apply selected row maps to the original point.")
+                .arg(sourceRows.size())
+                .arg(jointRows.size())));
     }
 
     if(jointRows.empty()) {
@@ -569,6 +694,7 @@ void MotionPlanningEditorWidget::setCdfJointAngleView(
     }
     m_cdfJointTable->resizeColumnToContents(0);
     m_cdfJointTable->resizeColumnToContents(1);
+    m_cdfJointTable->setUpdatesEnabled(true);
     updateCdfActions();
 }
 
@@ -593,13 +719,8 @@ void MotionPlanningEditorWidget::updateTrajectoryActions()
     }
     const bool hasCartesian = kind.contains(QStringLiteral("cartesian"));
     const bool hasJoint = kind.contains(QStringLiteral("joint"));
-    const bool hasValidJointRow = m_jointTable != nullptr &&
-        m_jointTable->currentRow() >= 0 &&
-        m_jointTable->rowCount() > 0 &&
-        !(m_jointTable->rowCount() == 1 && m_jointTable->columnSpan(0, 0) > 1);
-    const bool hasAnyJointRow = m_jointTable != nullptr &&
-        m_jointTable->rowCount() > 0 &&
-        !(m_jointTable->rowCount() == 1 && m_jointTable->columnSpan(0, 0) > 1);
+    const bool hasValidJointRow = selectedOriginalPointIndex(m_jointTable) >= 0;
+    const bool hasAnyJointRow = hasAnyOriginalPointRow(m_jointTable);
 
     if(m_ikToolMode != nullptr) {
         m_ikToolMode->setEnabled(hasRobot && hasCartesian);
@@ -622,13 +743,8 @@ void MotionPlanningEditorWidget::updateCdfActions()
 {
     const bool hasRobot = m_robotValue != nullptr &&
         m_robotValue->text() != QStringLiteral("No robot selected");
-    const bool hasValidRow = m_cdfJointTable != nullptr &&
-        m_cdfJointTable->currentRow() >= 0 &&
-        m_cdfJointTable->rowCount() > 0 &&
-        !(m_cdfJointTable->rowCount() == 1 && m_cdfJointTable->columnSpan(0, 0) > 1);
-    const bool hasImportedRows = m_cdfJointTable != nullptr &&
-        m_cdfJointTable->rowCount() > 0 &&
-        !(m_cdfJointTable->rowCount() == 1 && m_cdfJointTable->columnSpan(0, 0) > 1);
+    const bool hasValidRow = selectedOriginalPointIndex(m_cdfJointTable) >= 0;
+    const bool hasImportedRows = hasAnyOriginalPointRow(m_cdfJointTable);
 
     if(m_importCdfButton != nullptr) {
         m_importCdfButton->setEnabled(hasRobot);
@@ -650,6 +766,9 @@ void MotionPlanningEditorWidget::updateCdfActions()
     }
     if(m_cdfTrustRegion != nullptr) {
         m_cdfTrustRegion->setEnabled(hasRobot && hasImportedRows);
+    }
+    if(m_cdfSeedCorridor != nullptr) {
+        m_cdfSeedCorridor->setEnabled(hasRobot && hasImportedRows);
     }
     if(m_cdfSegmentIntermediateSamples != nullptr) {
         m_cdfSegmentIntermediateSamples->setEnabled(hasRobot && hasImportedRows);
@@ -677,6 +796,10 @@ void MotionPlanningEditorWidget::showControlPointContextMenu(const QPoint& pos)
     }
 
     const int row = item->row();
+    const int pointIndex = originalPointIndexAt(m_poseTable, row);
+    if(pointIndex < 0) {
+        return;
+    }
     m_poseTable->setCurrentCell(row, item->column());
 
     QMenu menu(this);
@@ -688,12 +811,12 @@ void MotionPlanningEditorWidget::showControlPointContextMenu(const QPoint& pos)
 
     QAction* selectedAction = menu.exec(m_poseTable->viewport()->mapToGlobal(pos));
     if(selectedAction == insertBefore) {
-        emit insertControlPointBeforeRequested(row);
+        emit insertControlPointBeforeRequested(pointIndex);
     } else if(selectedAction == insertAfter) {
-        emit insertControlPointAfterRequested(row);
+        emit insertControlPointAfterRequested(pointIndex);
     } else if(selectedAction == edit) {
-        emit editControlPointRequested(row);
+        emit editControlPointRequested(pointIndex);
     } else if(selectedAction == remove) {
-        emit deleteControlPointRequested(row);
+        emit deleteControlPointRequested(pointIndex);
     }
 }

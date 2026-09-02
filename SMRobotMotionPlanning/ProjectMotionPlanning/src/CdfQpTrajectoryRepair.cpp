@@ -147,6 +147,12 @@ namespace motion_planning
             simulation_project::CollisionDetectorTargetDesc obstacleTarget;
             obstacleTarget.robotId = obstacleRobotId;
             detector.targets.push_back(std::move(obstacleTarget));
+
+            simulation_project::CollisionPairGeneratorDesc generator;
+            generator.type = "RobotRobot";
+            generator.robotA = planningRobotId;
+            generator.robotB = obstacleRobotId;
+            detector.pairGenerators.push_back(std::move(generator));
             return detector;
         }
 
@@ -175,6 +181,12 @@ namespace motion_planning
             simulation_project::CollisionDetectorTargetDesc obstacleTarget;
             obstacleTarget.objectId = obstacleObjectId;
             detector.targets.push_back(std::move(obstacleTarget));
+
+            simulation_project::CollisionPairGeneratorDesc generator;
+            generator.type = "RobotObject";
+            generator.robotId = planningRobotId;
+            generator.objectId = obstacleObjectId;
+            detector.pairGenerators.push_back(std::move(generator));
             return detector;
         }
 
@@ -235,19 +247,19 @@ namespace motion_planning
 
         std::vector<robottrajectory::TimedJointPoint> densifyTrajectory(
             const robottrajectory::JointTrajectory& trajectory,
-            int intermediateSamples)
+            const std::vector<JointBound>& bounds,
+            int minimumIntermediateSamples,
+            double maxJointStep)
         {
             std::vector<robottrajectory::TimedJointPoint> densePoints;
             if(trajectory.points.empty()) {
                 return densePoints;
             }
 
-            const int samplesPerSegment = std::max(0, intermediateSamples);
-            densePoints.reserve(
-                trajectory.points.size() +
-                (trajectory.points.size() > 1
-                    ? (trajectory.points.size() - 1) * static_cast<std::size_t>(samplesPerSegment)
-                    : 0));
+            const int minimumSamples = std::max(0, minimumIntermediateSamples);
+            const double effectiveJointStep = std::isfinite(maxJointStep) && maxJointStep > 0.0
+                ? maxJointStep
+                : 0.0;
             densePoints.push_back(trajectory.points.front());
 
             if(trajectory.points.size() == 1) {
@@ -257,6 +269,24 @@ namespace motion_planning
             for(std::size_t index = 0; index + 1 < trajectory.points.size(); ++index) {
                 const robottrajectory::TimedJointPoint& start = trajectory.points[index];
                 const robottrajectory::TimedJointPoint& end = trajectory.points[index + 1];
+                int samplesPerSegment = minimumSamples;
+                if(effectiveJointStep > 0.0) {
+                    double maxDelta = 0.0;
+                    const std::size_t count = std::min(start.q.size(), end.q.size());
+                    for(std::size_t jointIndex = 0; jointIndex < count; ++jointIndex) {
+                        double delta = end.q[jointIndex] - start.q[jointIndex];
+                        const bool isContinuous = !bounds.empty() &&
+                            (jointIndex < bounds.size() ? bounds[jointIndex] : bounds.back()).continuous;
+                        if(isContinuous) {
+                            delta = wrapContinuousAngle(delta);
+                        }
+                        maxDelta = std::max(maxDelta, std::abs(delta));
+                    }
+                    const int adaptiveSamples = static_cast<int>(
+                        std::ceil(std::max(0.0, maxDelta / effectiveJointStep) - 1.0));
+                    samplesPerSegment = std::max(samplesPerSegment, adaptiveSamples);
+                }
+
                 for(int sampleIndex = 1; sampleIndex <= samplesPerSegment; ++sampleIndex) {
                     const double fraction = static_cast<double>(sampleIndex) /
                         static_cast<double>(samplesPerSegment + 1);
@@ -266,7 +296,16 @@ namespace motion_planning
                     for(std::size_t jointIndex = 0; jointIndex < start.q.size(); ++jointIndex) {
                         const double startValue = jointIndex < start.q.size() ? start.q[jointIndex] : 0.0;
                         const double endValue = jointIndex < end.q.size() ? end.q[jointIndex] : startValue;
-                        sample.q[jointIndex] = startValue + (endValue - startValue) * fraction;
+                        double delta = endValue - startValue;
+                        const bool isContinuous = !bounds.empty() &&
+                            (jointIndex < bounds.size() ? bounds[jointIndex] : bounds.back()).continuous;
+                        if(isContinuous) {
+                            delta = wrapContinuousAngle(delta);
+                        }
+                        const double interpolated = startValue + delta * fraction;
+                        sample.q[jointIndex] = isContinuous
+                            ? wrapContinuousAngle(interpolated)
+                            : interpolated;
                     }
                     sample.qd.clear();
                     sample.qdd.clear();
@@ -541,7 +580,7 @@ namespace motion_planning
             const std::size_t configVariableCount = waypointCount * jointCount;
             const std::size_t slackVariableCount = waypointCount;
             const std::size_t variableCount = configVariableCount + slackVariableCount;
-            const std::size_t constraintCount = waypointCount + variableCount;
+            const std::size_t constraintCount = (2 * waypointCount) + variableCount;
 
             const double seedTrackingWeight = options.seedTrackingWeight > 0.0 && std::isfinite(options.seedTrackingWeight)
                 ? options.seedTrackingWeight
@@ -553,6 +592,9 @@ namespace motion_planning
             const double trustRegion = options.trustRegion > 0.0 && std::isfinite(options.trustRegion)
                 ? options.trustRegion
                 : 0.03;
+            const double seedCorridor = options.seedCorridor > 0.0 && std::isfinite(options.seedCorridor)
+                ? options.seedCorridor
+                : 0.15;
             const double targetPhi = options.targetClearance;
 
             const auto variableIndex = [jointCount](std::size_t waypoint, std::size_t joint) -> std::size_t {
@@ -571,18 +613,24 @@ namespace motion_planning
             }
 
             std::vector<SparseTripletEntry> aEntries;
-            aEntries.reserve(waypointCount * (jointCount + 1) + variableCount);
+            aEntries.reserve(waypointCount * (jointCount + 1) + variableCount + waypointCount);
             std::vector<c_float> lowerBounds(constraintCount, -OSQP_INFTY);
             std::vector<c_float> upperBounds(constraintCount, OSQP_INFTY);
 
             for(std::size_t waypoint = 0; waypoint < waypointCount; ++waypoint) {
                 const CdfLinearization& linearization = linearizations[waypoint];
+                double gradientNorm = vectorNorm(linearization.gradient);
+                if(!std::isfinite(gradientNorm) || gradientNorm <= 1.0e-9) {
+                    gradientNorm = 1.0;
+                }
+                const double rowScale = 1.0 / gradientNorm;
                 const double rhs = dot(linearization.gradient, currentPath[waypoint]) +
                     repairGain * (targetPhi - linearization.sample.phi);
                 if(!std::isfinite(rhs)) {
                     result.message = "QP linearized CDF constraint has a non-finite right-hand side.";
                     return result;
                 }
+                const double scaledRhs = rhs * rowScale;
 
                 const c_int row = static_cast<c_int>(waypoint);
                 for(std::size_t joint = 0; joint < jointCount; ++joint) {
@@ -595,14 +643,14 @@ namespace motion_planning
                     aEntries.push_back({
                         row,
                         static_cast<c_int>(index),
-                        static_cast<c_float>(linearization.gradient[joint])});
+                        static_cast<c_float>(linearization.gradient[joint] * rowScale)});
                 }
                 aEntries.push_back({
                     row,
                     static_cast<c_int>(configVariableCount + waypoint),
-                    static_cast<c_float>(1.0)});
+                    static_cast<c_float>(rowScale)});
 
-                lowerBounds[waypoint] = static_cast<c_float>(rhs);
+                lowerBounds[waypoint] = static_cast<c_float>(scaledRhs);
                 upperBounds[waypoint] = OSQP_INFTY;
             }
 
@@ -622,6 +670,16 @@ namespace motion_planning
                     const double upperLimit = jointBound.upper;
                     double lower = std::max(lowerLimit, value - trustRegion);
                     double upper = std::min(upperLimit, value + trustRegion);
+                    double seedValue = waypoint < seedPath.size() && joint < seedPath[waypoint].size()
+                        ? seedPath[waypoint][joint]
+                        : value;
+                    if(jointBound.continuous) {
+                        seedValue = wrapContinuousAngle(seedValue);
+                    }
+                    const double seedLower = std::max(lowerLimit, seedValue - seedCorridor);
+                    const double seedUpper = std::min(upperLimit, seedValue + seedCorridor);
+                    lower = std::max(lower, seedLower);
+                    upper = std::min(upper, seedUpper);
                     if(options.keepEndpoints && (waypoint == 0 || waypoint + 1 == waypointCount)) {
                         lower = upper = value;
                     } else if(lower > upper) {
@@ -722,9 +780,9 @@ namespace motion_planning
             };
 
             const std::vector<QpNumericsAttempt> attempts = {
-                { 1.0e-5, 1.0e3, 1.0, "regularized" },
-                { 1.0e-4, 1.0e3, 0.5, "strong_regularized" },
-                { 1.0e-3, 1.0e2, 0.0, "diagonal_fallback" }
+                { 1.0e-4, 1.0e3, 0.0, "diagonal_regularized" },
+                { 1.0e-3, 1.0e3, 0.0, "strong_diagonal_regularized" },
+                { 1.0e-2, 1.0e2, 0.0, "very_strong_diagonal_regularized" }
             };
 
             std::string lastFailure;
@@ -851,6 +909,302 @@ namespace motion_planning
             }
             return stream.str();
         }
+
+        struct InvalidSegmentRun
+        {
+            std::size_t beginSegment = 0;
+            std::size_t endSegment = 0;
+        };
+
+        struct RepairWindow
+        {
+            std::size_t beginIndex = 0;
+            std::size_t endIndex = 0;
+        };
+
+        template<typename ValidationRequest>
+        std::vector<InvalidSegmentRun> collectInvalidSegmentRuns(
+            ProjectPlanningSceneSnapshot& scene,
+            const std::vector<std::vector<double>>& path,
+            const ValidationRequest& validation)
+        {
+            std::vector<InvalidSegmentRun> runs;
+            std::size_t index = 0;
+            while(index + 1 < path.size()) {
+                const StateValidationResult segmentValidation =
+                    scene.validateMotion(path[index], path[index + 1], validation);
+                if(segmentValidation.valid) {
+                    ++index;
+                    continue;
+                }
+
+                InvalidSegmentRun run;
+                run.beginSegment = index;
+                run.endSegment = index;
+                while(run.endSegment + 1 < path.size() - 1) {
+                    const std::size_t nextIndex = run.endSegment + 1;
+                    const StateValidationResult nextValidation =
+                        scene.validateMotion(path[nextIndex], path[nextIndex + 1], validation);
+                    if(nextValidation.valid) {
+                        break;
+                    }
+                    run.endSegment = nextIndex;
+                }
+                runs.push_back(run);
+                index = run.endSegment + 1;
+            }
+            return runs;
+        }
+
+        std::vector<RepairWindow> buildRepairWindows(
+            const std::vector<InvalidSegmentRun>& runs,
+            std::size_t pathSize,
+            std::size_t basePadding,
+            std::size_t maxWindowPoints,
+            std::size_t overlap,
+            std::size_t riskPaddingBoost)
+        {
+            std::vector<RepairWindow> windows;
+            if(pathSize < 2 || runs.empty()) {
+                return windows;
+            }
+
+            std::vector<RepairWindow> paddedWindows;
+            paddedWindows.reserve(runs.size());
+            for(const InvalidSegmentRun& run : runs) {
+                const std::size_t runLength = run.endSegment >= run.beginSegment
+                    ? (run.endSegment - run.beginSegment + 1)
+                    : 0;
+                const std::size_t dynamicPadding =
+                    basePadding + std::min(riskPaddingBoost, runLength / 4);
+                RepairWindow window;
+                window.beginIndex =
+                    run.beginSegment > dynamicPadding ? run.beginSegment - dynamicPadding : 0;
+                window.endIndex = std::min(pathSize - 1, run.endSegment + 1 + dynamicPadding);
+                if(window.beginIndex < window.endIndex) {
+                    paddedWindows.push_back(window);
+                }
+            }
+
+            if(paddedWindows.empty()) {
+                return windows;
+            }
+
+            std::sort(
+                paddedWindows.begin(),
+                paddedWindows.end(),
+                [](const RepairWindow& lhs, const RepairWindow& rhs) {
+                    if(lhs.beginIndex != rhs.beginIndex) {
+                        return lhs.beginIndex < rhs.beginIndex;
+                    }
+                    return lhs.endIndex < rhs.endIndex;
+                });
+
+            std::vector<RepairWindow> mergedWindows;
+            mergedWindows.push_back(paddedWindows.front());
+            for(std::size_t index = 1; index < paddedWindows.size(); ++index) {
+                RepairWindow& current = mergedWindows.back();
+                const RepairWindow& next = paddedWindows[index];
+                if(next.beginIndex <= current.endIndex + 1) {
+                    current.endIndex = std::max(current.endIndex, next.endIndex);
+                } else {
+                    mergedWindows.push_back(next);
+                }
+            }
+
+            const std::size_t effectiveOverlap = std::min(overlap, maxWindowPoints > 1 ? maxWindowPoints - 1 : 0);
+            for(const RepairWindow& merged : mergedWindows) {
+                std::size_t start = merged.beginIndex;
+                while(start < merged.endIndex) {
+                    const std::size_t chunkEnd = std::min(
+                        merged.endIndex,
+                        start + maxWindowPoints - 1);
+                    windows.push_back({ start, chunkEnd });
+                    if(chunkEnd >= merged.endIndex) {
+                        break;
+                    }
+
+                    std::size_t nextStart = chunkEnd + 1;
+                    if(effectiveOverlap > 0) {
+                        nextStart = chunkEnd + 1 > effectiveOverlap
+                            ? chunkEnd + 1 - effectiveOverlap
+                            : 0;
+                    }
+                    if(nextStart <= start) {
+                        nextStart = start + 1;
+                    }
+                    start = nextStart;
+                }
+            }
+
+            return windows;
+        }
+
+        template<typename ValidationRequest>
+        bool runCdfQpRepairIterations(
+            ProjectPlanningSceneSnapshot& scene,
+            const std::vector<std::vector<double>>& startPath,
+            const std::vector<std::vector<double>>& seedPath,
+            const std::vector<JointBound>& bounds,
+            const ValidationRequest& validation,
+            const ProjectCdfQpRepairOptions& options,
+            ProjectCdfQpRepairStatistics* statistics,
+            std::vector<MotionPlanningDiagnostic>* diagnostics,
+            std::vector<std::vector<double>>* repairedPath)
+        {
+            if(repairedPath == nullptr || statistics == nullptr) {
+                return false;
+            }
+            if(startPath.size() < 2 || startPath.front().empty()) {
+                return false;
+            }
+
+            std::vector<std::vector<double>> path = startPath;
+            auto countInvalidSegments = [&](const std::vector<std::vector<double>>& candidate) {
+                int invalidCount = 0;
+                for(std::size_t index = 0; index + 1 < candidate.size(); ++index) {
+                    const StateValidationResult segmentValidation =
+                        scene.validateMotion(candidate[index], candidate[index + 1], validation);
+                    if(!segmentValidation.valid) {
+                        ++invalidCount;
+                    }
+                }
+                return invalidCount;
+            };
+
+            auto evaluatePathMinimum = [&](const std::vector<std::vector<double>>& candidate) {
+                double minimumPhi = std::numeric_limits<double>::max();
+                for(const std::vector<double>& q : candidate) {
+                    const SignedDistanceSample sample =
+                        evaluateSignedPhi(
+                            scene,
+                            q,
+                            options.safetyMargin,
+                            options.distanceThreshold,
+                            *statistics);
+                    if(!sample.valid) {
+                        addDiagnostic(diagnostics, "cdf_distance_failed", sample.message);
+                        return -std::numeric_limits<double>::max();
+                    }
+                    minimumPhi = std::min(minimumPhi, sample.phi);
+                }
+                return minimumPhi;
+            };
+
+            auto blendPath = [&](const std::vector<std::vector<double>>& from,
+                                 const std::vector<std::vector<double>>& to,
+                                 double alpha) {
+                std::vector<std::vector<double>> blended = from;
+                const std::size_t waypointCount = std::min(from.size(), to.size());
+                for(std::size_t waypoint = 0; waypoint < waypointCount; ++waypoint) {
+                    const std::size_t jointCount = std::min(from[waypoint].size(), to[waypoint].size());
+                    blended[waypoint].resize(jointCount);
+                    for(std::size_t joint = 0; joint < jointCount; ++joint) {
+                        double delta = to[waypoint][joint] - from[waypoint][joint];
+                        if(joint < bounds.size() && bounds[joint].continuous) {
+                            delta = std::remainder(delta, kTwoPi);
+                        }
+                        blended[waypoint][joint] = from[waypoint][joint] + delta * alpha;
+                        if(joint < bounds.size() && bounds[joint].continuous) {
+                            blended[waypoint][joint] = wrapContinuousAngle(blended[waypoint][joint]);
+                        }
+                    }
+                    blended[waypoint] = clampToBounds(blended[waypoint], bounds, nullptr);
+                }
+                return blended;
+            };
+
+            const double targetPhi = options.targetClearance;
+            const int maxIterations = std::max(1, options.maxIterations);
+
+            for(int iteration = 0; iteration < maxIterations; ++iteration) {
+                std::vector<CdfLinearization> linearizations;
+                linearizations.reserve(path.size());
+
+                double currentPhi = std::numeric_limits<double>::max();
+                bool allSamplesValid = true;
+                for(const std::vector<double>& q : path) {
+                    CdfLinearization linearization = linearizeSignedPhi(
+                        scene,
+                        q,
+                        bounds,
+                        options.safetyMargin,
+                        options.distanceThreshold,
+                        options.finiteDifferenceStep,
+                        *statistics);
+                    if(!linearization.sample.valid) {
+                        addDiagnostic(diagnostics, "cdf_linearization_failed", linearization.sample.message);
+                        allSamplesValid = false;
+                        break;
+                    }
+                    currentPhi = std::min(currentPhi, linearization.sample.phi);
+                    linearizations.push_back(std::move(linearization));
+                }
+                if(!allSamplesValid) {
+                    return false;
+                }
+
+                QpSolveResult qpResult = solveTrajectoryWithOsqp(
+                    path,
+                    seedPath,
+                    linearizations,
+                    bounds,
+                    options);
+                if(!qpResult.success) {
+                    addDiagnostic(
+                        diagnostics,
+                        "cdf_qp_solver_failed",
+                        qpResult.message.empty()
+                            ? "OSQP failed to solve the CDF/QP subproblem."
+                            : qpResult.message);
+                    return false;
+                }
+
+                statistics->iterations += 1;
+                statistics->qpIterations += qpResult.solverIterations;
+                statistics->maximumCorrection =
+                    std::max(statistics->maximumCorrection, qpResult.maximumCorrection);
+                statistics->maximumSlack =
+                    std::max(statistics->maximumSlack, qpResult.maximumSlack);
+
+                const int currentInvalidSegments = countInvalidSegments(path);
+                std::vector<std::vector<double>> candidatePath = qpResult.path;
+                double candidatePhi = evaluatePathMinimum(candidatePath);
+                int candidateInvalidSegments = countInvalidSegments(candidatePath);
+
+                if(candidateInvalidSegments == 0 &&
+                    (currentInvalidSegments > 0 || candidatePhi >= currentPhi - 1.0e-9))
+                {
+                    path = std::move(candidatePath);
+                    currentPhi = candidatePhi;
+                } else {
+                    double alpha = 0.5;
+                    for(int backtrack = 0; backtrack < 5; ++backtrack) {
+                        std::vector<std::vector<double>> blended = blendPath(path, qpResult.path, alpha);
+                        const double blendedPhi = evaluatePathMinimum(blended);
+                        const int blendedInvalidSegments = countInvalidSegments(blended);
+                        if(blendedInvalidSegments == 0 &&
+                            (currentInvalidSegments > 0 || blendedPhi >= currentPhi - 1.0e-9))
+                        {
+                            path = std::move(blended);
+                            currentPhi = blendedPhi;
+                            break;
+                        }
+                        alpha *= 0.5;
+                    }
+                }
+
+                if(currentPhi >= targetPhi &&
+                    qpResult.maximumCorrection < 1.0e-5 &&
+                    qpResult.maximumSlack < 1.0e-5)
+                {
+                    break;
+                }
+            }
+
+            *repairedPath = std::move(path);
+            return countInvalidSegments(*repairedPath) == 0;
+        }
     }
 
     bool ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(
@@ -962,21 +1316,18 @@ namespace motion_planning
             }
         }
 
-        simulation_project::ProjectDocument planningDocument = document;
-        std::string detectorId;
-        if(!ensureCollisionSetup(
-               planningDocument,
-               robotId,
-               options,
-               &detectorId,
-               &result.diagnostics)) {
+        const std::string detectorId = options.detectorId.empty()
+            ? std::string("cdf_abb4600_burnner_detector")
+            : options.detectorId;
+        if(!hasDetector(document, detectorId)) {
+            addDiagnostic(
+                &result.diagnostics,
+                "cdf_detector_missing",
+                "CDF/QP collision detector is not configured in the project: " + detectorId);
             return result;
         }
 
-        const std::vector<robottrajectory::TimedJointPoint> denseSeedTrajectory =
-            densifyTrajectory(seedTrajectory, options.segmentIntermediateSamples);
-        result.statistics.inputWaypointCount = static_cast<int>(denseSeedTrajectory.size());
-
+        simulation_project::ProjectDocument planningDocument = document;
         planningDocument.collision.detectors.erase(
             std::remove_if(
                 planningDocument.collision.detectors.begin(),
@@ -1006,6 +1357,14 @@ namespace motion_planning
             return result;
         }
 
+        const std::vector<robottrajectory::TimedJointPoint> denseSeedTrajectory =
+            densifyTrajectory(
+                seedTrajectory,
+                scene->jointBounds(),
+                options.segmentIntermediateSamples,
+                options.validationMaxJointStep);
+        result.statistics.inputWaypointCount = static_cast<int>(denseSeedTrajectory.size());
+
         std::vector<std::vector<double>> path;
         path.reserve(denseSeedTrajectory.size());
         for(const robottrajectory::TimedJointPoint& point : denseSeedTrajectory) {
@@ -1015,9 +1374,9 @@ namespace motion_planning
                 &result.statistics.clampedSeedValues));
         }
 
-        auto evaluatePathMinimum = [&]() {
+        auto evaluatePathMinimum = [&](const std::vector<std::vector<double>>& candidate) {
             double minimumPhi = std::numeric_limits<double>::max();
-            for(const std::vector<double>& q : path) {
+            for(const std::vector<double>& q : candidate) {
                 const SignedDistanceSample sample =
                     evaluateSignedPhi(
                         *scene,
@@ -1034,7 +1393,42 @@ namespace motion_planning
             return minimumPhi;
         };
 
-        result.statistics.initialMinimumPhi = evaluatePathMinimum();
+        auto countInvalidSegments = [&](const std::vector<std::vector<double>>& candidate) {
+            int invalidCount = 0;
+            for(std::size_t index = 0; index + 1 < candidate.size(); ++index) {
+                const StateValidationResult validation =
+                    scene->validateMotion(candidate[index], candidate[index + 1], request.validation);
+                if(!validation.valid) {
+                    ++invalidCount;
+                }
+            }
+            return invalidCount;
+        };
+
+        auto blendPath = [&](const std::vector<std::vector<double>>& from,
+                             const std::vector<std::vector<double>>& to,
+                             double alpha) {
+            std::vector<std::vector<double>> blended = from;
+            const std::size_t waypointCount = std::min(from.size(), to.size());
+            for(std::size_t waypoint = 0; waypoint < waypointCount; ++waypoint) {
+                const std::size_t jointCount = std::min(from[waypoint].size(), to[waypoint].size());
+                blended[waypoint].resize(jointCount);
+                for(std::size_t joint = 0; joint < jointCount; ++joint) {
+                    double delta = to[waypoint][joint] - from[waypoint][joint];
+                    if(joint < scene->jointBounds().size() && scene->jointBounds()[joint].continuous) {
+                        delta = std::remainder(delta, kTwoPi);
+                    }
+                    blended[waypoint][joint] = from[waypoint][joint] + delta * alpha;
+                    if(joint < scene->jointBounds().size() && scene->jointBounds()[joint].continuous) {
+                        blended[waypoint][joint] = wrapContinuousAngle(blended[waypoint][joint]);
+                    }
+                }
+                blended[waypoint] = clampToBounds(blended[waypoint], scene->jointBounds(), nullptr);
+            }
+            return blended;
+        };
+
+        result.statistics.initialMinimumPhi = evaluatePathMinimum(path);
         if(result.statistics.initialMinimumPhi <= -std::numeric_limits<double>::max() * 0.25) {
             return result;
         }
@@ -1093,7 +1487,34 @@ namespace motion_planning
                 std::max(result.statistics.maximumCorrection, qpResult.maximumCorrection);
             result.statistics.maximumSlack =
                 std::max(result.statistics.maximumSlack, qpResult.maximumSlack);
-            path = std::move(qpResult.path);
+
+            const int currentInvalidSegments = countInvalidSegments(path);
+            const double currentPhi = minimumPhi;
+            std::vector<std::vector<double>> candidatePath = qpResult.path;
+            double candidatePhi = evaluatePathMinimum(candidatePath);
+            int candidateInvalidSegments = countInvalidSegments(candidatePath);
+
+            if(candidateInvalidSegments == 0 &&
+                (currentInvalidSegments > 0 || candidatePhi >= currentPhi - 1.0e-9))
+            {
+                path = std::move(candidatePath);
+                result.statistics.finalMinimumPhi = candidatePhi;
+            } else {
+                double alpha = 0.5;
+                for(int backtrack = 0; backtrack < 5; ++backtrack) {
+                    std::vector<std::vector<double>> candidate = blendPath(path, qpResult.path, alpha);
+                    const double blendedPhi = evaluatePathMinimum(candidate);
+                    const int blendedInvalidSegments = countInvalidSegments(candidate);
+                    if(blendedInvalidSegments == 0 &&
+                        (currentInvalidSegments > 0 || blendedPhi >= currentPhi - 1.0e-9))
+                    {
+                        path = std::move(candidate);
+                        result.statistics.finalMinimumPhi = blendedPhi;
+                        break;
+                    }
+                    alpha *= 0.5;
+                }
+            }
 
             if(qpResult.maximumCorrection < 1.0e-5 &&
                 qpResult.maximumSlack < 1.0e-5 &&
@@ -1102,11 +1523,236 @@ namespace motion_planning
             }
         }
 
-        result.statistics.finalMinimumPhi = evaluatePathMinimum();
+        auto slicePath = [&](const std::vector<std::vector<double>>& source,
+                             std::size_t beginIndex,
+                             std::size_t endIndex) {
+            std::vector<std::vector<double>> slice;
+            if(beginIndex >= source.size() || endIndex >= source.size() || beginIndex > endIndex) {
+                return slice;
+            }
+            slice.reserve(endIndex - beginIndex + 1);
+            for(std::size_t index = beginIndex; index <= endIndex; ++index) {
+                slice.push_back(source[index]);
+            }
+            return slice;
+        };
+
+        auto repairInvalidWindows = [&]() -> bool {
+            ProjectCdfQpRepairOptions localOptions = options;
+            localOptions.trustRegion = std::max(0.003, std::min(options.trustRegion, 0.008));
+            localOptions.seedCorridor = std::max(0.02, std::min(options.seedCorridor, 0.04));
+            localOptions.repairGain = std::max(0.10, std::min(options.repairGain, 0.18));
+            localOptions.seedTrackingWeight = std::max(options.seedTrackingWeight, 0.60);
+            localOptions.smoothWeight = std::max(options.smoothWeight, 0.24);
+            localOptions.targetClearance = std::max(options.targetClearance, 0.001);
+            localOptions.maxIterations = 1;
+            localOptions.keepEndpoints = true;
+
+            MotionValidationOptions localValidation = request.validation;
+            if(localValidation.maxJointStep > 0.0 && std::isfinite(localValidation.maxJointStep)) {
+                localValidation.maxJointStep = std::min(localValidation.maxJointStep, 0.01);
+            }
+
+            const std::size_t primaryWindowPoints = 32;
+            const std::size_t secondaryWindowPoints = 20;
+            const std::size_t primaryOverlap = 2;
+            const std::size_t secondaryOverlap = 1;
+
+            auto sortWindowsByRisk = [](std::vector<RepairWindow>& windows) {
+                std::sort(
+                    windows.begin(),
+                    windows.end(),
+                    [](const RepairWindow& lhs, const RepairWindow& rhs) {
+                        const std::size_t lhsLength = lhs.endIndex >= lhs.beginIndex
+                            ? (lhs.endIndex - lhs.beginIndex + 1)
+                            : 0;
+                        const std::size_t rhsLength = rhs.endIndex >= rhs.beginIndex
+                            ? (rhs.endIndex - rhs.beginIndex + 1)
+                            : 0;
+                        if(lhsLength != rhsLength) {
+                            return lhsLength > rhsLength;
+                        }
+                        return lhs.beginIndex < rhs.beginIndex;
+                    });
+            };
+
+            auto describeRun = [](std::size_t ordinal, const InvalidSegmentRun& run) {
+                std::ostringstream stream;
+                stream << "window #" << ordinal
+                       << " [segment " << (run.beginSegment + 1)
+                       << " -> " << (run.endSegment + 2) << "]";
+                return stream.str();
+            };
+
+            auto repairWindowSet = [&](const std::vector<RepairWindow>& windows,
+                                       std::size_t extraPadding,
+                                       const char* stageTag,
+                                       std::vector<std::string>* failedWindows) -> bool {
+                bool updatedAnyWindow = false;
+                for(std::size_t ordinal = 0; ordinal < windows.size(); ++ordinal) {
+                    const RepairWindow& window = windows[ordinal];
+                    if(window.beginIndex >= window.endIndex || window.endIndex >= path.size()) {
+                        continue;
+                    }
+
+                    struct WindowRepairResult
+                    {
+                        std::size_t beginIndex = 0;
+                        std::vector<std::vector<double>> path;
+                    };
+
+                    auto attemptWindowRepair = [&](std::size_t attemptPadding) {
+                        WindowRepairResult resultWindow;
+                        const std::size_t beginIndex =
+                            window.beginIndex > attemptPadding ? window.beginIndex - attemptPadding : 0;
+                        const std::size_t endIndex = std::min(
+                            path.size() - 1,
+                            window.endIndex + attemptPadding);
+                        if(beginIndex >= endIndex) {
+                            return resultWindow;
+                        }
+
+                        std::vector<std::vector<double>> windowPath =
+                            slicePath(path, beginIndex, endIndex);
+                        std::vector<std::vector<double>> windowSeed =
+                            slicePath(seedPath, beginIndex, endIndex);
+                        if(windowPath.size() < 2) {
+                            return resultWindow;
+                        }
+                        if(windowSeed.size() != windowPath.size()) {
+                            windowSeed = windowPath;
+                        }
+
+                        std::vector<std::vector<double>> repairedWindow;
+                        const bool windowSolved = runCdfQpRepairIterations(
+                            *scene,
+                            windowPath,
+                            windowSeed,
+                            scene->jointBounds(),
+                            localValidation,
+                            localOptions,
+                            &result.statistics,
+                            &result.diagnostics,
+                            &repairedWindow);
+                        if(!windowSolved || repairedWindow.size() != windowPath.size()) {
+                            return resultWindow;
+                        }
+                        if(countInvalidSegments(repairedWindow) != 0) {
+                            return resultWindow;
+                        }
+                        resultWindow.beginIndex = beginIndex;
+                        resultWindow.path = std::move(repairedWindow);
+                        return resultWindow;
+                    };
+
+                    WindowRepairResult repairedWindow = attemptWindowRepair(0);
+                    if(repairedWindow.path.empty()) {
+                        repairedWindow = attemptWindowRepair(extraPadding);
+                    }
+                    if(repairedWindow.path.empty()) {
+                        if(failedWindows != nullptr) {
+                            std::ostringstream stream;
+                            stream << stageTag << " " << describeRun(ordinal + 1, InvalidSegmentRun{
+                                window.beginIndex,
+                                window.endIndex
+                            }) << " still invalid after local repair.";
+                            failedWindows->push_back(stream.str());
+                        }
+                        continue;
+                    }
+
+                    if(repairedWindow.beginIndex + repairedWindow.path.size() > path.size()) {
+                        if(failedWindows != nullptr) {
+                            std::ostringstream stream;
+                            stream << stageTag << " " << describeRun(ordinal + 1, InvalidSegmentRun{
+                                window.beginIndex,
+                                window.endIndex
+                            }) << " could not be written back safely.";
+                            failedWindows->push_back(stream.str());
+                        }
+                        continue;
+                    }
+                    for(std::size_t index = 0; index < repairedWindow.path.size(); ++index) {
+                        path[repairedWindow.beginIndex + index] = std::move(repairedWindow.path[index]);
+                    }
+                    updatedAnyWindow = true;
+                }
+                return updatedAnyWindow;
+            };
+
+            const std::vector<InvalidSegmentRun> initialRuns =
+                collectInvalidSegmentRuns(*scene, path, localValidation);
+            if(initialRuns.empty()) {
+                return true;
+            }
+
+            std::vector<RepairWindow> primaryWindows = buildRepairWindows(
+                initialRuns,
+                path.size(),
+                2,
+                primaryWindowPoints,
+                primaryOverlap,
+                8);
+            sortWindowsByRisk(primaryWindows);
+            std::vector<std::string> failedWindows;
+            repairWindowSet(primaryWindows, 4, "primary", &failedWindows);
+
+            std::vector<InvalidSegmentRun> remainingRuns =
+                collectInvalidSegmentRuns(*scene, path, localValidation);
+            if(remainingRuns.empty()) {
+                return true;
+            }
+
+            std::vector<RepairWindow> secondaryWindows = buildRepairWindows(
+                remainingRuns,
+                path.size(),
+                6,
+                secondaryWindowPoints,
+                secondaryOverlap,
+                12);
+            sortWindowsByRisk(secondaryWindows);
+            repairWindowSet(secondaryWindows, 8, "secondary", &failedWindows);
+
+            remainingRuns = collectInvalidSegmentRuns(*scene, path, localValidation);
+            if(!remainingRuns.empty()) {
+                for(std::size_t ordinal = 0; ordinal < remainingRuns.size(); ++ordinal) {
+                    std::ostringstream stream;
+                    stream << "Remaining collision interval #" << (ordinal + 1)
+                           << " spans segment " << (remainingRuns[ordinal].beginSegment + 1)
+                           << " -> " << (remainingRuns[ordinal].endSegment + 2)
+                           << " after primary and secondary CDF/QP repair.";
+                    addDiagnostic(&result.diagnostics, "cdf_repair_window_failed", stream.str());
+                }
+                for(const std::string& message : failedWindows) {
+                    addDiagnostic(&result.diagnostics, "cdf_repair_window_failed", message);
+                }
+                return false;
+            }
+
+            for(const std::string& message : failedWindows) {
+                addDiagnostic(&result.diagnostics, "cdf_repair_window_partial", message);
+            }
+            return true;
+        };
+
+        result.statistics.finalMinimumPhi = evaluatePathMinimum(path);
         if(result.statistics.finalMinimumPhi <= -std::numeric_limits<double>::max() * 0.25) {
             return result;
         }
 
+        if(countInvalidSegments(path) != 0 && !repairInvalidWindows()) {
+            addDiagnostic(
+                &result.diagnostics,
+                "cdf_repair_segment_window_invalid",
+                "High-risk CDF/QP windows still contain collision segments after local repair.");
+        }
+
+        result.statistics.finalMinimumPhi = evaluatePathMinimum(path);
+        if(result.statistics.finalMinimumPhi <= -std::numeric_limits<double>::max() * 0.25) {
+            return result;
+        }
+
+        result.statistics.invalidSegmentCount = 0;
         for(std::size_t index = 0; index + 1 < path.size(); ++index) {
             const StateValidationResult validation =
                 scene->validateMotion(path[index], path[index + 1], request.validation);

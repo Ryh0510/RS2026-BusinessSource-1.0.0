@@ -60,8 +60,9 @@ public:
         double finiteDifferenceStep = 5.0e-4;
         double distanceThreshold = 0.30;
         double trustRegion = 0.03;
-        double seedTrackingWeight = 0.25;
-        int segmentIntermediateSamples = 1;
+        double seedCorridor = 0.15;
+        double seedTrackingWeight = 0.40;
+        int segmentIntermediateSamples = 2;
         int maxIterations = 80;
         bool keepEndpoints = true;
     };
@@ -138,6 +139,7 @@ private:
     QDoubleSpinBox* m_cdfFiniteDifferenceStep = nullptr;
     QDoubleSpinBox* m_cdfDistanceThreshold = nullptr;
     QDoubleSpinBox* m_cdfTrustRegion = nullptr;
+    QDoubleSpinBox* m_cdfSeedCorridor = nullptr;
     QDoubleSpinBox* m_cdfSeedTrackingWeight = nullptr;
     QSpinBox* m_cdfSegmentIntermediateSamples = nullptr;
     QSpinBox* m_cdfMaxIterations = nullptr;

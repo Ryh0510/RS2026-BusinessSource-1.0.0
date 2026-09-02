@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QString>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ class QTimer;
 namespace motion_planning
 {
     struct StoredMotionPlan;
+    class ProjectPlanningSceneSnapshot;
 }
 
 namespace robot_qt_viewer
@@ -29,6 +31,7 @@ namespace robot_qt_viewer
             MotionPlanningEditorWidget& widget,
             RobotQtViewerDocumentContext& context,
             QObject* parent = nullptr);
+        ~MotionPlanningModuleController() override;
 
         void handleEvent(const RobotQtViewerEvent& event);
 
@@ -58,6 +61,7 @@ namespace robot_qt_viewer
         void advanceJointPlayback();
         void setSelectedTrajectory(const QString& trajectoryId);
         void setSelectedRobot(const QString& robotId);
+        void ensurePersistentCdfCollisionSetup();
         void refreshTrajectoryView();
         void refreshCdfJointAngleView();
         bool commitMotionPlanUpdate(
@@ -71,6 +75,7 @@ namespace robot_qt_viewer
             const std::vector<std::string>& jointNames,
             const std::vector<double>& jointValues,
             const QString& sourceId);
+        QString playbackCollisionSummary() const;
 
         MotionPlanningEditorWidget& m_widget;
         RobotQtViewerDocumentContext& m_context;
@@ -86,5 +91,10 @@ namespace robot_qt_viewer
         std::vector<ImportedCdfJointPoint> m_cdfJointPoints;
         QTimer* m_playbackTimer = nullptr;
         int m_playbackPointIndex = 0;
+        int m_playbackCollisionSamples = 0;
+        int m_playbackCollisionHits = 0;
+        int m_playbackInvalidSamples = 0;
+        bool m_playbackFinishedNaturally = false;
+        std::unique_ptr<motion_planning::ProjectPlanningSceneSnapshot> m_playbackCollisionScene;
     };
 }

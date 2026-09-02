@@ -7,6 +7,7 @@
 #include "RobotQtViewerViewportServices.h"
 
 #include <MotionPlanningCore/MotionPlanning.h>
+#include <ProjectMotionPlanning/ProjectMotionPlanning.h>
 #include <ProjectMotionPlanning/CdfJointAngleImport.h>
 #include <ProjectMotionPlanning/CdfQpTrajectoryRepair.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
@@ -79,6 +80,146 @@ namespace
             names = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
         }
         return names;
+    }
+
+    QString defaultCdfPlanningRobotId(
+        const simulation_project::ProjectDocument& document,
+        const QString& selectedRobotId)
+    {
+        const auto exactIt = std::find_if(
+            document.robots.begin(),
+            document.robots.end(),
+            [](const simulation_project::RobotDesc& robot) {
+                return robot.id == "ABB4600_urdf";
+            });
+        if(exactIt != document.robots.end()) {
+            return QString::fromStdString(exactIt->id);
+        }
+
+        const auto sourceIt = std::find_if(
+            document.robots.begin(),
+            document.robots.end(),
+            [](const simulation_project::RobotDesc& robot) {
+                return robot.id.find("4600") != std::string::npos ||
+                    robot.name.find("4600") != std::string::npos ||
+                    robot.sourcePath.find("ABB4600") != std::string::npos;
+            });
+        if(sourceIt != document.robots.end()) {
+            return QString::fromStdString(sourceIt->id);
+        }
+
+        return selectedRobotId;
+    }
+
+    bool detectorTargetsRobot(
+        const simulation_project::CollisionDetectorDesc& detector,
+        const std::string& robotId)
+    {
+        return std::any_of(
+            detector.targets.begin(),
+            detector.targets.end(),
+            [&](const simulation_project::CollisionDetectorTargetDesc& target) {
+                return target.robotId == robotId;
+            });
+    }
+
+    bool detectorHasCdfPairGenerator(
+        const simulation_project::CollisionDetectorDesc& detector,
+        const std::string& robotId,
+        const std::string& obstacleId)
+    {
+        return std::any_of(
+            detector.pairGenerators.begin(),
+            detector.pairGenerators.end(),
+            [&](const simulation_project::CollisionPairGeneratorDesc& generator) {
+                if(generator.type == "RobotRobot") {
+                    return (generator.robotA == robotId && generator.robotB == obstacleId) ||
+                        (generator.robotA == obstacleId && generator.robotB == robotId);
+                }
+                if(generator.type == "RobotObject") {
+                    return generator.robotId == robotId && generator.objectId == obstacleId;
+                }
+                return false;
+            });
+    }
+
+    bool cdfDetectorIsConfigured(
+        const simulation_project::ProjectDocument& document,
+        const std::string& robotId,
+        const motion_planning::ProjectCdfQpRepairOptions& options)
+    {
+        const auto detectorIt = std::find_if(
+            document.collision.detectors.begin(),
+            document.collision.detectors.end(),
+            [&](const simulation_project::CollisionDetectorDesc& detector) {
+                return detector.id == options.detectorId;
+            });
+        if(detectorIt == document.collision.detectors.end()) {
+            return false;
+        }
+
+        return detectorIt->enabled &&
+            detectorIt->distance &&
+            detectorIt->nearestPoints &&
+            detectorTargetsRobot(*detectorIt, robotId) &&
+            detectorTargetsRobot(*detectorIt, options.obstacleId) &&
+            detectorHasCdfPairGenerator(*detectorIt, robotId, options.obstacleId);
+    }
+
+    std::vector<std::string> playbackCollisionDetectorIds(
+        const simulation_project::ProjectDocument& document,
+        const QString& robotId)
+    {
+        const motion_planning::ProjectCdfQpRepairOptions cdfOptions;
+        const std::string robotIdText = robotId.toStdString();
+        if(cdfDetectorIsConfigured(document, robotIdText, cdfOptions)) {
+            return { cdfOptions.detectorId };
+        }
+
+        const auto cdfDetectorIt = std::find_if(
+            document.collision.detectors.begin(),
+            document.collision.detectors.end(),
+            [&](const simulation_project::CollisionDetectorDesc& detector) {
+                return detector.id == cdfOptions.detectorId;
+            });
+        if(cdfDetectorIt != document.collision.detectors.end()) {
+            return {};
+        }
+
+        std::vector<std::string> detectorIds;
+        detectorIds.reserve(document.collision.detectors.size());
+
+        auto detectorUsesRobot = [&](const simulation_project::CollisionDetectorDesc& detector) {
+            for(const simulation_project::CollisionDetectorTargetDesc& target : detector.targets) {
+                if(target.robotId == robotIdText) {
+                    return true;
+                }
+            }
+            for(const simulation_project::CollisionPairGeneratorDesc& generator : detector.pairGenerators) {
+                if(generator.robotId == robotIdText ||
+                    generator.robotA == robotIdText ||
+                    generator.robotB == robotIdText) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        for(const simulation_project::CollisionDetectorDesc& detector : document.collision.detectors) {
+            if(detector.enabled && detectorUsesRobot(detector)) {
+                detectorIds.push_back(detector.id);
+            }
+        }
+
+        if(detectorIds.empty()) {
+            for(const simulation_project::CollisionDetectorDesc& detector : document.collision.detectors) {
+                if(detector.enabled) {
+                    detectorIds.push_back(detector.id);
+                }
+            }
+        }
+
+        return detectorIds;
     }
 
     bool usesIrb4600RobotSystemJointSigns(
@@ -280,7 +421,7 @@ namespace
         const QString& planId)
     {
         return QStringLiteral("%1 %2 as %3. min phi: %4 -> %5, iterations=%6, qp_iters=%7, slack=%8, queries=%9")
-            .arg(result.success ? QStringLiteral("Stored repaired CDF/QP trajectory") : QStringLiteral("Stored partial CDF/QP trajectory"))
+            .arg(result.success ? QStringLiteral("Stored repaired CDF/QP trajectory") : QStringLiteral("Stored partial CDF/QP trajectory for inspection"))
             .arg(static_cast<int>(result.plan.trajectory.points.size()))
             .arg(planId)
             .arg(formatDouble(result.statistics.initialMinimumPhi))
@@ -335,7 +476,55 @@ namespace robot_qt_viewer
         connect(m_playbackTimer, &QTimer::timeout,
             this, &MotionPlanningModuleController::advanceJointPlayback);
         setSelectedRobot(m_context.selectionModel().state().robotId);
+        ensurePersistentCdfCollisionSetup();
         refreshTrajectoryView();
+    }
+
+    MotionPlanningModuleController::~MotionPlanningModuleController() = default;
+
+    void MotionPlanningModuleController::ensurePersistentCdfCollisionSetup()
+    {
+        const motion_planning::ProjectCdfQpRepairOptions options;
+        const QString cdfRobotId =
+            defaultCdfPlanningRobotId(m_context.document(), m_selectedRobotId);
+        if(cdfRobotId.isEmpty()) {
+            return;
+        }
+
+        const std::string robotId = cdfRobotId.toStdString();
+        if(cdfDetectorIsConfigured(m_context.document(), robotId, options)) {
+            return;
+        }
+
+        std::vector<motion_planning::MotionPlanningDiagnostic> setupDiagnostics;
+        const ProjectMutationResult setupMutation = m_context.documentController().mutateProject(
+            QStringLiteral("motionPlanningPersistentCdfCollisionSetup"),
+            ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                if(cdfDetectorIsConfigured(service.document(), robotId, options)) {
+                    changed = false;
+                    return true;
+                }
+
+                std::string detectorId;
+                if(!motion_planning::ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(
+                       service.document(),
+                       robotId,
+                       options,
+                       &detectorId,
+                       &setupDiagnostics)) {
+                    error = setupDiagnostics.empty()
+                        ? std::string("Failed to configure persistent ABB4600_urdf-burnner CDF collision detector.")
+                        : setupDiagnostics.front().message;
+                    return false;
+                }
+                changed = true;
+                return true;
+            });
+
+        if(!setupMutation.success) {
+            emit statusMessageRequested(setupMutation.message, 7000);
+        }
     }
 
     void MotionPlanningModuleController::handleEvent(const RobotQtViewerEvent& event)
@@ -344,6 +533,7 @@ namespace robot_qt_viewer
             setSelectedRobot(event.selection.robotId);
         } else if(event.kind == RobotQtViewerEventKind::ProjectOpened) {
             setSelectedRobot(m_context.selectionModel().state().robotId);
+            ensurePersistentCdfCollisionSetup();
             refreshTrajectoryView();
         } else if(event.kind == RobotQtViewerEventKind::ProjectDocumentChanged) {
             refreshTrajectoryView();
@@ -791,35 +981,18 @@ namespace robot_qt_viewer
         options.finiteDifferenceStep = settings.finiteDifferenceStep;
         options.distanceThreshold = settings.distanceThreshold;
         options.trustRegion = settings.trustRegion;
+        options.seedCorridor = settings.seedCorridor;
         options.seedTrackingWeight = settings.seedTrackingWeight;
         options.segmentIntermediateSamples = settings.segmentIntermediateSamples;
         options.maxIterations = settings.maxIterations;
         options.keepEndpoints = settings.keepEndpoints;
 
-        std::string setupDetectorId;
-        std::vector<motion_planning::MotionPlanningDiagnostic> setupDiagnostics;
         const std::string robotId = m_selectedRobotId.toStdString();
-        const ProjectMutationResult setupMutation = m_context.documentController().mutateProject(
-            QStringLiteral("motionPlanningCdfCollisionSetup"),
-            ProjectDirtyPolicy::UserEdit,
-            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
-                if(!motion_planning::ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(
-                       service.document(),
-                       robotId,
-                       options,
-                       &setupDetectorId,
-                       &setupDiagnostics)) {
-                    error = setupDiagnostics.empty()
-                        ? std::string("Failed to set up ABB4600_urdf-burnner collision detector.")
-                        : setupDiagnostics.front().message;
-                    return false;
-                }
-                changed = true;
-                return true;
-            });
-        if(!setupMutation.success) {
-            m_widget.setCdfResult(setupMutation.message, false);
-            emit statusMessageRequested(setupMutation.message, 7000);
+        if(!cdfDetectorIsConfigured(m_context.document(), robotId, options)) {
+            const QString message = QStringLiteral(
+                "CDF/QP collision detector is not configured. Reopen the project or select ABB4600_urdf to initialize cdf_abb4600_burnner_detector.");
+            m_widget.setCdfResult(message, false);
+            emit statusMessageRequested(message, 7000);
             return;
         }
 
@@ -843,6 +1016,11 @@ namespace robot_qt_viewer
         }
 
         motion_planning::StoredMotionPlan storedPlan = repairResult.plan;
+        if(!repairResult.success) {
+            storedPlan.id = robotId + "_cdf_qp_partial";
+            storedPlan.name = "CDF/QP partial repaired trajectory";
+            storedPlan.trajectory.name = storedPlan.id;
+        }
         for(robottrajectory::TimedJointPoint& point : storedPlan.trajectory.points) {
             point.q = maybeMapIrb4600JointSigns(m_context.document(), m_selectedRobotId, point.q);
         }
@@ -868,12 +1046,12 @@ namespace robot_qt_viewer
         refreshTrajectoryView();
 
         const QString planId = QString::fromStdString(storedPlan.id);
-        QString summary = cdfRepairSummary(repairResult, planId);
-        if(!repairResult.success) {
-            summary += QStringLiteral(". %1").arg(firstDiagnosticMessage(
+        const QString diagnosticText = repairResult.success
+            ? QString()
+            : QStringLiteral(" %1").arg(firstDiagnosticMessage(
                 repairResult.diagnostics,
                 QStringLiteral("The repaired path still violates the requested clearance.")));
-        }
+        const QString summary = cdfRepairSummary(repairResult, planId) + diagnosticText;
         m_widget.setCdfResult(summary, repairResult.success);
         emit trajectoryPlanned(planId);
         emit statusMessageRequested(summary, repairResult.success ? 6000 : 9000);
@@ -1101,6 +1279,7 @@ namespace robot_qt_viewer
             m_widget.setResult(QStringLiteral("Select a solved joint trajectory before playback."), false);
             return;
         }
+        ensurePersistentCdfCollisionSetup();
 
         const std::vector<motion_planning::StoredMotionPlan> plans =
             motion_planning::MotionPlanningProjectStore::plans(m_context.document());
@@ -1115,6 +1294,51 @@ namespace robot_qt_viewer
         if(pointCount <= 0) {
             m_widget.setResult(QStringLiteral("Selected trajectory has no inverse kinematics joint values to play."), false);
             return;
+        }
+
+        m_playbackCollisionSamples = 0;
+        m_playbackCollisionHits = 0;
+        m_playbackInvalidSamples = 0;
+        m_playbackFinishedNaturally = false;
+        m_playbackCollisionScene.reset();
+
+        const motion_planning::ProjectCdfQpRepairOptions cdfOptions;
+        if(cdfDetectorIsConfigured(m_context.document(), m_selectedRobotId.toStdString(), cdfOptions)) {
+            if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+                viewportServices->refreshCollisionConfiguration(
+                    m_context.document(),
+                    projectBasePath(m_context.projectSession()));
+                viewportServices->setCollisionQueriesEnabled(true);
+                viewportServices->setCollisionDetectorEnabled(
+                    QString::fromStdString(cdfOptions.detectorId),
+                    true);
+                viewportServices->setActiveCollisionDetector(QString::fromStdString(cdfOptions.detectorId));
+            }
+        }
+
+        const std::vector<std::string> collisionDetectorIds =
+            playbackCollisionDetectorIds(m_context.document(), m_selectedRobotId);
+        if(!collisionDetectorIds.empty()) {
+            motion_planning::ProjectPlanningRequest validationRequest;
+            validationRequest.robotId = selectedPlan->robotId;
+            validationRequest.jointNames = selectedPlan->jointNames;
+            validationRequest.start = selectedPlan->trajectory.points.front().q;
+            validationRequest.goal = selectedPlan->trajectory.points.back().q;
+            validationRequest.collisionDetectorIds = collisionDetectorIds;
+            validationRequest.validation.maxJointStep = 0.01;
+
+            std::string validationError;
+            m_playbackCollisionScene = motion_planning::ProjectPlanningSceneBuilder::build(
+                m_context.document(),
+                projectBasePath(m_context.projectSession()),
+                validationRequest,
+                &validationError);
+            if(m_playbackCollisionScene == nullptr) {
+                emit statusMessageRequested(
+                    QStringLiteral("Playback collision checks are unavailable: %1")
+                        .arg(QString::fromStdString(validationError)),
+                    6000);
+            }
         }
 
         m_playbackPointIndex = 0;
@@ -1141,8 +1365,8 @@ namespace robot_qt_viewer
             m_playbackTimer->stop();
         }
         m_widget.setPlaybackActive(false);
-        if(wasActive) {
-            m_widget.setResult(QStringLiteral("Playback stopped."), true);
+        if(wasActive || m_playbackFinishedNaturally) {
+            m_widget.setResult(playbackCollisionSummary(), true);
         }
     }
 
@@ -1178,13 +1402,27 @@ namespace robot_qt_viewer
             return;
         }
 
+        ++m_playbackCollisionSamples;
+        if(m_playbackCollisionScene != nullptr) {
+            const std::vector<double> runtimeJointValues = maybeMapIrb4600JointSigns(
+                m_context.document(),
+                m_selectedRobotId,
+                point.q);
+            const motion_planning::StateValidationResult validation =
+                m_playbackCollisionScene->validateState(runtimeJointValues);
+            if(validation.valid) {
+                // Nothing to count.
+            } else if(validation.diagnosticCode == "state_in_collision") {
+                ++m_playbackCollisionHits;
+            } else {
+                ++m_playbackInvalidSamples;
+            }
+        }
+
         ++m_playbackPointIndex;
         if(m_playbackPointIndex >= static_cast<int>(selectedPlan->trajectory.points.size())) {
-            if(m_playbackTimer != nullptr) {
-                m_playbackTimer->stop();
-            }
-            m_widget.setPlaybackActive(false);
-            m_widget.setResult(QStringLiteral("Playback finished."), true);
+            m_playbackFinishedNaturally = true;
+            stopJointPlayback();
         }
     }
 
@@ -1367,6 +1605,26 @@ namespace robot_qt_viewer
             : m_cdfSourceName;
         const QString emptyText = QStringLiteral("No CDF joint angles imported.");
         m_widget.setCdfJointAngleView(sourceText, jointNames, jointRows, emptyText);
+    }
+
+    QString MotionPlanningModuleController::playbackCollisionSummary() const
+    {
+        const QString prefix = m_playbackFinishedNaturally
+            ? QStringLiteral("Playback finished.")
+            : QStringLiteral("Playback stopped.");
+        if(m_playbackCollisionScene == nullptr || m_playbackCollisionSamples <= 0) {
+            return prefix + QStringLiteral(" Collision statistics unavailable.");
+        }
+
+        const double collisionRate =
+            100.0 * static_cast<double>(m_playbackCollisionHits) /
+            static_cast<double>(m_playbackCollisionSamples);
+        return QStringLiteral("%1 Collision states: %2 / %3 (%4%). Invalid states: %5.")
+            .arg(prefix)
+            .arg(m_playbackCollisionHits)
+            .arg(m_playbackCollisionSamples)
+            .arg(QString::number(collisionRate, 'f', 2))
+            .arg(m_playbackInvalidSamples);
     }
 
     bool MotionPlanningModuleController::commitMotionPlanUpdate(

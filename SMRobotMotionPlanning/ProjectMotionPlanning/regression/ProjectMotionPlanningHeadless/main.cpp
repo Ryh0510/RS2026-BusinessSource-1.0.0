@@ -1,5 +1,6 @@
 #include <ProjectMotionPlanning/ProjectMotionPlanning.h>
 #include <ProjectMotionPlanning/CdfJointAngleImport.h>
+#include <ProjectMotionPlanning/CdfQpTrajectoryRepair.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
@@ -26,12 +27,17 @@
 
 namespace
 {
+    constexpr double kPi = 3.14159265358979323846;
+
     struct Options
     {
         std::filesystem::path projectPath = std::filesystem::path(PROJECT_SOURCE_PATH) /
             "config/projects/420-red4600-tool.sys.json";
+        std::filesystem::path cdfFilePath;
+        std::string robotId = "ABB4600_urdf";
         bool discover = false;
         bool importOnly = false;
+        bool cdfRepair = false;
     };
 
     bool parseOptions(int argc, char** argv, Options& options)
@@ -45,6 +51,15 @@ namespace
                 options.discover = true;
             else if (argument == "--import-only")
                 options.importOnly = true;
+            else if (argument == "--cdf-file" && index + 1 < argc)
+            {
+                options.cdfRepair = true;
+                options.cdfFilePath = std::filesystem::u8path(argv[++index]);
+            }
+            else if (argument == "--robot" && index + 1 < argc)
+            {
+                options.robotId = argv[++index];
+            }
             else
             {
                 std::cerr << "Unknown or incomplete option: " << argument << "\n";
@@ -65,6 +80,16 @@ namespace
             stream << values[index];
         }
         return stream.str();
+    }
+
+    std::vector<double> degreesToRadians(const std::vector<double>& degrees)
+    {
+        std::vector<double> radians;
+        radians.reserve(degrees.size());
+        for(const double value : degrees) {
+            radians.push_back(value * kPi / 180.0);
+        }
+        return radians;
     }
 
     struct Candidate
@@ -516,6 +541,132 @@ namespace
         std::cout << "PASS ProjectMotionPlanning import-only regression\n";
         return 0;
     }
+
+    std::vector<double> maybeMapIrb4600JointSigns(
+        const simulation_project::ProjectDocument& document,
+        const std::string& robotId,
+        const std::vector<double>& joints)
+    {
+        if(robotId.find("4600") == std::string::npos) {
+            return joints;
+        }
+
+        const auto robotIt = std::find_if(
+            document.robots.begin(),
+            document.robots.end(),
+            [&](const simulation_project::RobotDesc& robot) {
+                return robot.id == robotId;
+            });
+        if(robotIt == document.robots.end()) {
+            return joints;
+        }
+
+        if(robotIt->sourcePath.find("4600") == std::string::npos &&
+            robotIt->sourcePath.find("ABB4600") == std::string::npos &&
+            robotIt->id.find("4600") == std::string::npos)
+        {
+            return joints;
+        }
+
+        return motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(joints);
+    }
+
+    int runCdfRepair(const Options& options)
+    {
+        simulation_project::ProjectDocument document;
+        std::string errorMessage;
+        if(!simulation_project::loadProjectDocument(options.projectPath, document, &errorMessage)) {
+            return fail("Project load failed: " + errorMessage);
+        }
+        if(options.cdfFilePath.empty()) {
+            return fail("CDF repair requires --cdf-file.");
+        }
+
+        const motion_planning::CdfJointAngleImportResult importResult =
+            motion_planning::ProjectCdfJointAngleImporter::importFile(options.cdfFilePath);
+        if(!importResult.success) {
+            return fail("CDF joint angle import failed: " + importResult.message());
+        }
+        if(importResult.points.size() < 2) {
+            return fail("CDF joint angle file must contain at least two points.");
+        }
+
+        std::vector<std::string> jointNames;
+        if(options.robotId.find("4600") != std::string::npos) {
+            jointNames = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        } else {
+            jointNames = importResult.jointNames;
+        }
+        if(jointNames.empty()) {
+            jointNames = importResult.jointNames;
+        }
+
+        motion_planning::ProjectCdfQpRepairOptions repairOptions;
+        repairOptions.detectorId = "cdf_abb4600_burnner_detector";
+        repairOptions.obstacleId = "burnner";
+        repairOptions.obstacleName = "burnner";
+        repairOptions.obstacleRobotSourcePath = "data/drake_models/burnner/urdf/burnner.urdf";
+
+        const std::vector<std::string> robotJointNames = jointNames;
+        motion_planning::ProjectCdfQpTrajectoryRepairService repairService;
+
+        std::vector<robottrajectory::TimedJointPoint> seedPoints;
+        seedPoints.reserve(importResult.points.size());
+        for(const motion_planning::CdfJointAnglePoint& importedPoint : importResult.points) {
+            robottrajectory::TimedJointPoint point;
+            point.time = importedPoint.timeSeconds;
+            point.q = maybeMapIrb4600JointSigns(
+                document,
+                options.robotId,
+                degreesToRadians(importedPoint.jointAnglesDegrees));
+            seedPoints.push_back(std::move(point));
+        }
+
+        robottrajectory::JointTrajectory seedTrajectory;
+        seedTrajectory.name = "cdf_import_seed";
+        seedTrajectory.interpolation = robottrajectory::TrajectoryInterpolation::Linear;
+        seedTrajectory.points = std::move(seedPoints);
+        seedTrajectory.sortByTime();
+
+        const std::string robotId = options.robotId;
+        const std::filesystem::path projectBase = options.projectPath.parent_path();
+
+        std::string setupDetectorId;
+        std::vector<motion_planning::MotionPlanningDiagnostic> setupDiagnostics;
+        if(!motion_planning::ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(
+               document,
+               robotId,
+               repairOptions,
+               &setupDetectorId,
+               &setupDiagnostics))
+        {
+            return fail(setupDiagnostics.empty()
+                ? "Failed to set up ABB4600_urdf-burnner collision detector."
+                : setupDiagnostics.front().message);
+        }
+
+        const motion_planning::ProjectCdfQpRepairResult repairResult =
+            repairService.repair(
+                document,
+                projectBase,
+                robotId,
+                robotJointNames,
+                seedTrajectory,
+                repairOptions);
+
+        std::cout << "CDF repair points: " << repairResult.plan.trajectory.points.size() << "\n";
+        std::cout << "success: " << (repairResult.success ? "yes" : "no") << "\n";
+        std::cout << "min phi: " << repairResult.statistics.initialMinimumPhi
+                  << " -> " << repairResult.statistics.finalMinimumPhi << "\n";
+        std::cout << "invalid segments: " << repairResult.statistics.invalidSegmentCount << "\n";
+        std::cout << "max slack: " << repairResult.statistics.maximumSlack << "\n";
+        std::cout << "max correction: " << repairResult.statistics.maximumCorrection << "\n";
+        for(const motion_planning::MotionPlanningDiagnostic& diagnostic : repairResult.diagnostics) {
+            std::cout << diagnostic.code << ": " << diagnostic.message << "\n";
+        }
+
+        return repairResult.success ? 0 : 1;
+    }
 }
 
 int main(int argc, char** argv)
@@ -523,6 +674,8 @@ int main(int argc, char** argv)
     Options options;
     if (!parseOptions(argc, argv, options))
         return 2;
+    if (options.cdfRepair)
+        return runCdfRepair(options);
     if (options.importOnly)
         return runImportOnly(options);
 

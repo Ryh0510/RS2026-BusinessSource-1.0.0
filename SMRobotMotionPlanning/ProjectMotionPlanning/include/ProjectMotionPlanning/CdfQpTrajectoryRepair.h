@@ -30,12 +30,13 @@ namespace motion_planning
         double targetClearance = 0.0;
         double finiteDifferenceStep = 5.0e-4;
         double distanceThreshold = 5.0;
-        double trustRegion = 0.03;
-        double smoothWeight = 0.08;
-        double seedTrackingWeight = 0.25;
-        double repairGain = 0.8;
+        double trustRegion = 0.02;
+        double seedCorridor = 0.10;
+        double smoothWeight = 0.16;
+        double seedTrackingWeight = 0.40;
+        double repairGain = 0.25;
         int segmentIntermediateSamples = 1;
-        int maxIterations = 80;
+        int maxIterations = 5;
         bool keepEndpoints = true;
         double validationMaxJointStep = 0.03;
     };
