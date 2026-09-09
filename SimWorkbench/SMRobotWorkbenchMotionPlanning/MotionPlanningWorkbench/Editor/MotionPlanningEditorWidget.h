@@ -59,11 +59,11 @@ public:
         double targetClearance = 0.0;
         double finiteDifferenceStep = 5.0e-4;
         double distanceThreshold = 0.30;
-        double trustRegion = 0.03;
-        double seedCorridor = 0.15;
-        double seedTrackingWeight = 0.40;
+        double trustRegion = 0.012;
+        double seedCorridor = 0.06;
+        double seedTrackingWeight = 0.55;
         int segmentIntermediateSamples = 2;
-        int maxIterations = 80;
+        int maxIterations = 8;
         bool keepEndpoints = true;
     };
 

@@ -421,7 +421,9 @@ namespace
         const QString& planId)
     {
         return QStringLiteral("%1 %2 as %3. min phi: %4 -> %5, iterations=%6, qp_iters=%7, slack=%8, queries=%9")
-            .arg(result.success ? QStringLiteral("Stored repaired CDF/QP trajectory") : QStringLiteral("Stored partial CDF/QP trajectory for inspection"))
+            .arg(result.success
+                ? QStringLiteral("Stored repaired OMPL + CDF/QP trajectory")
+                : QStringLiteral("Stored partial OMPL + CDF/QP trajectory for inspection"))
             .arg(static_cast<int>(result.plan.trajectory.points.size()))
             .arg(planId)
             .arg(formatDouble(result.statistics.initialMinimumPhi))

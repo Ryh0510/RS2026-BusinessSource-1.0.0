@@ -6444,9 +6444,6 @@ void ProjectScene::update(double timeSeconds)
             if(!wantsNearest) {
                 detector.nearestState = "Disabled";
                 detector.nearestReason = "distance and nearest point output are disabled";
-            } else if(detector.lastResult.inCollision()) {
-                detector.nearestState = "SuppressedInCollision";
-                detector.nearestReason = "detector is colliding; overlapping nearest points are not meaningful";
             } else {
                 const auto distanceStart = std::chrono::steady_clock::now();
                 CollisionResult distanceResult;
@@ -6456,10 +6453,16 @@ void ProjectScene::update(double timeSeconds)
                 totalDistanceMs += distanceMs;
                 detector.lastNearestQueryFrame = m_impl->collisionQueryFrame;
                 if(detector.lastResult.hasNearestPoints) {
-                    detector.nearestState = "Valid";
+                    detector.nearestState = detector.lastResult.inCollision()
+                        ? "ValidInCollision"
+                        : "Valid";
                 } else if(!distanceResult.message.empty()) {
                     detector.nearestState = "InvalidBackendPoints";
                     detector.nearestReason = distanceResult.message;
+                } else if(detector.lastResult.inCollision()) {
+                    detector.nearestState = "CollisionNoNearest";
+                    detector.nearestReason =
+                        "distance query did not provide nearest points while detector is colliding";
                 } else {
                     detector.nearestState = "NotComputed";
                     detector.nearestReason = "distance query returned no nearest points";
