@@ -37,6 +37,9 @@ namespace motion_planning
         double repairGain = 0.12;
         int segmentIntermediateSamples = 2;
         int maxIterations = 8;
+        int postSmoothingIterations = 3;
+        double postSmoothingStep = 0.25;
+        double postSmoothingSeedWeight = 0.10;
         bool keepEndpoints = true;
         double validationMaxJointStep = 0.02;
     };

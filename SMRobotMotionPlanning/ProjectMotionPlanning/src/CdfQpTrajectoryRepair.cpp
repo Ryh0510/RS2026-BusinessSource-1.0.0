@@ -599,6 +599,136 @@ namespace motion_planning
             return false;
         }
 
+        std::vector<std::vector<double>> unwrapContinuousPath(
+            const std::vector<std::vector<double>>& source,
+            const std::vector<JointBound>& bounds)
+        {
+            std::vector<std::vector<double>> result = source;
+            if(result.empty()) {
+                return result;
+            }
+
+            for(std::size_t point = 1; point < result.size(); ++point) {
+                const std::size_t count = std::min(result[point].size(), bounds.size());
+                for(std::size_t joint = 0; joint < count; ++joint) {
+                    if(!bounds[joint].continuous) {
+                        continue;
+                    }
+                    result[point][joint] = result[point - 1][joint] +
+                        std::remainder(result[point][joint] - result[point - 1][joint], kTwoPi);
+                }
+            }
+            return result;
+        }
+
+        double localSmoothingCost(
+            const std::vector<double>& previous,
+            const std::vector<double>& current,
+            const std::vector<double>& next,
+            const std::vector<double>& reference,
+            const std::vector<JointBound>& bounds,
+            double seedWeight)
+        {
+            double cost = 0.0;
+            const std::size_t count = std::min(current.size(), std::min(previous.size(), next.size()));
+            for(std::size_t joint = 0; joint < count; ++joint) {
+                const bool continuous = joint < bounds.size() && bounds[joint].continuous;
+                const double midpoint = 0.5 * (previous[joint] + next[joint]);
+                const double curvature = current[joint] - midpoint;
+                double referenceValue = joint < reference.size() ? reference[joint] : current[joint];
+                if(continuous) {
+                    referenceValue = current[joint] +
+                        std::remainder(referenceValue - current[joint], kTwoPi);
+                }
+                const double seedError = current[joint] - referenceValue;
+                cost += curvature * curvature + seedWeight * seedError * seedError;
+            }
+            return cost;
+        }
+
+        bool smoothCollisionFreePath(
+            ProjectPlanningSceneSnapshot& scene,
+            const std::vector<JointBound>& bounds,
+            const MotionValidationOptions& validation,
+            const std::vector<std::vector<double>>& referencePath,
+            int iterationCount,
+            double smoothingStep,
+            double seedWeight,
+            bool keepEndpoints,
+            std::vector<std::vector<double>>* path)
+        {
+            if(path == nullptr || path->size() < 3) {
+                return false;
+            }
+
+            *path = unwrapContinuousPath(*path, bounds);
+            const std::vector<std::vector<double>> reference =
+                unwrapContinuousPath(referencePath, bounds);
+            const int passes = std::max(0, std::min(iterationCount, 8));
+            const double step = std::clamp(
+                std::isfinite(smoothingStep) ? smoothingStep : 0.25,
+                0.02,
+                0.50);
+            const double effectiveSeedWeight = std::clamp(
+                std::isfinite(seedWeight) ? seedWeight : 0.10,
+                0.0,
+                1.0);
+            bool changed = false;
+
+            for(int pass = 0; pass < passes; ++pass) {
+                for(std::size_t point = 1; point + 1 < path->size(); ++point) {
+                    if(keepEndpoints && (point == 0 || point + 1 == path->size())) {
+                        continue;
+                    }
+
+                    const std::vector<double>& previous = (*path)[point - 1];
+                    const std::vector<double>& current = (*path)[point];
+                    const std::vector<double>& next = (*path)[point + 1];
+                    const std::vector<double>& referencePoint = point < reference.size()
+                        ? reference[point]
+                        : current;
+                    std::vector<double> candidate = current;
+                    const std::size_t count = std::min(candidate.size(), std::min(previous.size(), next.size()));
+                    for(std::size_t joint = 0; joint < count; ++joint) {
+                        const bool continuous = joint < bounds.size() && bounds[joint].continuous;
+                        const double midpoint = 0.5 * (previous[joint] + next[joint]);
+                        double referenceValue = joint < referencePoint.size()
+                            ? referencePoint[joint]
+                            : current[joint];
+                        if(continuous) {
+                            referenceValue = current[joint] +
+                                std::remainder(referenceValue - current[joint], kTwoPi);
+                        }
+                        const double desired = (1.0 - effectiveSeedWeight) * midpoint +
+                            effectiveSeedWeight * referenceValue;
+                        candidate[joint] = current[joint] + step * (desired - current[joint]);
+                    }
+                    for(std::size_t joint = 0; joint < count && joint < bounds.size(); ++joint) {
+                        if(!bounds[joint].continuous) {
+                            candidate[joint] = std::max(
+                                bounds[joint].lower,
+                                std::min(bounds[joint].upper, candidate[joint]));
+                        }
+                    }
+
+                    const double beforeCost = localSmoothingCost(
+                        previous, current, next, referencePoint, bounds, effectiveSeedWeight);
+                    const double afterCost = localSmoothingCost(
+                        previous, candidate, next, referencePoint, bounds, effectiveSeedWeight);
+                    if(!(afterCost + 1.0e-12 < beforeCost) ||
+                        !scene.validateState(candidate).valid ||
+                        !scene.validateMotion(previous, candidate, validation).valid ||
+                        !scene.validateMotion(candidate, next, validation).valid) {
+                        continue;
+                    }
+
+                    (*path)[point] = std::move(candidate);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
         std::vector<std::vector<double>> pathSegmentFromTrajectory(
             const robottrajectory::JointTrajectory& trajectory)
         {
@@ -1917,6 +2047,7 @@ namespace motion_planning
                 scene->jointBounds(),
                 &result.statistics.clampedSeedValues));
         }
+        const std::vector<std::vector<double>> originalReferencePath = path;
 
         auto evaluatePathMinimum = [&](const std::vector<std::vector<double>>& candidate) {
             double minimumPhi = std::numeric_limits<double>::max();
@@ -2364,6 +2495,25 @@ namespace motion_planning
                 &result.diagnostics,
                 "cdf_repair_segment_window_invalid",
                 "High-risk CDF/QP windows still contain collision segments after local repair.");
+        }
+
+        if(countInvalidSegments(path) == 0) {
+            const bool smoothed = smoothCollisionFreePath(
+                *scene,
+                scene->jointBounds(),
+                request.validation,
+                originalReferencePath,
+                options.postSmoothingIterations,
+                options.postSmoothingStep,
+                options.postSmoothingSeedWeight,
+                options.keepEndpoints,
+                &path);
+            if(smoothed) {
+                addDiagnostic(
+                    &result.diagnostics,
+                    "cdf_collision_constrained_smoothing",
+                    "Applied conservative collision-validated smoothing while tracking the imported trajectory.");
+            }
         }
 
         result.statistics.finalMinimumPhi = evaluatePathMinimum(path);
