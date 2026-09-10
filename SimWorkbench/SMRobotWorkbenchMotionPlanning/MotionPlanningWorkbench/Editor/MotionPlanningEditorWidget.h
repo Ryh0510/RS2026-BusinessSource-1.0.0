@@ -84,6 +84,7 @@ public:
         const QVector<QString>& jointNames,
         const QVector<CdfJointAngleRow>& jointRows,
         const QString& emptyText);
+    void setCdfExportAvailable(bool available);
     void setCdfResult(const QString& summary, bool success);
     CdfQpRepairSettings cdfQpRepairSettings() const;
     bool editControlPointPose(ControlPointPoseEditorData& data, const QString& title);
@@ -102,6 +103,7 @@ signals:
     void importCdfJointAnglesRequested();
     void applySelectedCdfJointAnglesRequested(int pointIndex);
     void repairImportedCdfTrajectoryRequested();
+    void exportCdfTrajectoryRequested();
     void insertControlPointBeforeRequested(int pointIndex);
     void insertControlPointAfterRequested(int pointIndex);
     void deleteControlPointRequested(int pointIndex);
@@ -145,7 +147,9 @@ private:
     QSpinBox* m_cdfMaxIterations = nullptr;
     QCheckBox* m_cdfKeepEndpoints = nullptr;
     QPushButton* m_repairCdfTrajectoryButton = nullptr;
+    QPushButton* m_exportCdfTrajectoryButton = nullptr;
     QLabel* m_cdfResult = nullptr;
     QLabel* m_result = nullptr;
     bool m_playbackActive = false;
+    bool m_cdfExportAvailable = false;
 };

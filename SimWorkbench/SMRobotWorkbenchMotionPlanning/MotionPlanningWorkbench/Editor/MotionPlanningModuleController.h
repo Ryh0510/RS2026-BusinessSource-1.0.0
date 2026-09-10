@@ -52,6 +52,7 @@ namespace robot_qt_viewer
         void applySelectedJointPoint(int pointIndex);
         void applySelectedCdfJointAngles(int pointIndex);
         void repairImportedCdfTrajectory();
+        void exportCdfTrajectory();
         void insertControlPointBefore(int pointIndex);
         void insertControlPointAfter(int pointIndex);
         void deleteControlPoint(int pointIndex);
