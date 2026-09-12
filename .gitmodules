@@ -8,4 +8,11 @@
 	url = gitea@123.207.55.50:tangtang_dev/RSData.git
 	branch = main
 
-	
+[submodule "SMRobotMotionPlanning"]
+	path = SMRobotMotionPlanning
+	url = https://github.com/Ryh0510/SMRobotMotionPlanning.git
+	branch = main
+[submodule "SimWorkbench/SMRobotWorkbenchMotionPlanning"]
+	path = SimWorkbench/SMRobotWorkbenchMotionPlanning
+	url = https://github.com/Ryh0510/SMRobotWorkbenchMotionPlanning.git
+	branch = main
