@@ -11,3 +11,6 @@ build
 /archive
 /PackageBuildFromSource
 /phase1_release
+
+# Third-party dependencies and binaries
+/thirdparty/
