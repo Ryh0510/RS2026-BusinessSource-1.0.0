@@ -332,6 +332,7 @@ public:
     bool setActiveToolAttachment(const std::string& id);
     void setActiveToolFrameRobot(const std::string& robotId);
     void setToolFrameVisibility(const ToolFrameVisibility& visibility);
+    void setSprayRangeVisible(const std::string& robotId, bool visible);
     std::string activeMountedAttachmentId() const;
     std::string activeToolAttachmentId() const;
     std::vector<MountedAttachmentInfo> mountedAttachments() const;

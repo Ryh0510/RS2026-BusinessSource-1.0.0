@@ -3305,6 +3305,108 @@ namespace
         return nullptr;
     }
 
+    std::string integratedSprayNozzleLinkName(const robot::RobotModel& model)
+    {
+        for(const std::string& linkName : model.linkNames) {
+            std::string normalized = linkName;
+            std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                [](unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
+            if(normalized == "link6") {
+                return linkName;
+            }
+        }
+        for(const std::string& linkName : model.tip_links) {
+            if(model.links.find(linkName) != model.links.end()) {
+                return linkName;
+            }
+        }
+        return model.linkNames.empty() ? std::string() : model.linkNames.back();
+    }
+
+    collision::Transform3 inferIntegratedSprayNozzleLocalTransform(
+        const robot::RobotModel& model,
+        const std::string& linkName)
+    {
+        collision::Transform3 nozzle = collision::Transform3::Identity();
+        const auto linkIt = model.links.find(linkName);
+        if(linkIt == model.links.end()) {
+            return nozzle;
+        }
+
+        std::vector<collision::Vec3> points;
+        for(const robot::RobotVisual& visual : linkIt->second.visuals) {
+            if(visual.meshPath.empty()) {
+                continue;
+            }
+            std::string loadError;
+            const std::shared_ptr<assetcore::ModelDesc> modelDesc =
+                assetcore::AssetManager::instance().tryLoadModel(
+                    visual.meshPath,
+                    1.0f,
+                    &loadError);
+            if(!modelDesc) {
+                continue;
+            }
+            for(const auto& subMesh : modelDesc->subMeshes()) {
+                points.reserve(points.size() + subMesh.geometry.positions.size());
+                for(const auto& position : subMesh.geometry.positions) {
+                    const glm::vec4 corrected = modelDesc->get_local() * glm::vec4(
+                        position.x(), position.y(), position.z(), 1.0f);
+                    const collision::Vec3 meshPoint(
+                        static_cast<double>(corrected.x) * visual.meshScale,
+                        static_cast<double>(corrected.y) * visual.meshScale,
+                        static_cast<double>(corrected.z) * visual.meshScale);
+                    const collision::Vec3 linkPoint = visual.T_part * meshPoint;
+                    if(isFiniteVec(linkPoint)) {
+                        points.push_back(linkPoint);
+                    }
+                }
+            }
+        }
+        if(points.empty()) {
+            return nozzle;
+        }
+
+        double minZ = std::numeric_limits<double>::max();
+        double maxZ = std::numeric_limits<double>::lowest();
+        for(const collision::Vec3& point : points) {
+            minZ = std::min(minZ, point.z());
+            maxZ = std::max(maxZ, point.z());
+        }
+        if(!std::isfinite(minZ) || !std::isfinite(maxZ)) {
+            return nozzle;
+        }
+
+        const double axialExtent = std::max(0.0, maxZ - minZ);
+        // Use only the foremost nozzle face. A deeper slice includes the asymmetric
+        // gun guard and shifts the inferred center away from the spray outlet.
+        const double endSliceDepth = std::clamp(axialExtent * 0.001, 0.0001, 0.001);
+        double minX = std::numeric_limits<double>::max();
+        double maxX = std::numeric_limits<double>::lowest();
+        double minY = std::numeric_limits<double>::max();
+        double maxY = std::numeric_limits<double>::lowest();
+        bool foundEndSlice = false;
+        for(const collision::Vec3& point : points) {
+            if(point.z() < maxZ - endSliceDepth) {
+                continue;
+            }
+            minX = std::min(minX, point.x());
+            maxX = std::max(maxX, point.x());
+            minY = std::min(minY, point.y());
+            maxY = std::max(maxY, point.y());
+            foundEndSlice = true;
+        }
+        if(foundEndSlice) {
+            nozzle.translation() = collision::Vec3(
+                (minX + maxX) * 0.5,
+                (minY + maxY) * 0.5,
+                maxZ);
+        }
+        return nozzle;
+    }
+
     std::string activeObjectCollisionModelId(
         const simulation_project::CollisionSceneDesc& collisionDesc,
         const std::string& objectId)
@@ -3651,6 +3753,8 @@ struct ProjectScene::Impl
     RuntimeToolAssetPreview toolAssetPreview;
     std::size_t activeToolAttachmentIndex = static_cast<std::size_t>(-1);
     std::string activeToolFrameRobotId;
+    std::string sprayRangeRobotId;
+    bool sprayRangeVisible = false;
     std::string selectedJointFrameRobotId;
     std::string selectedJointFrameName;
     std::string selectedObjectFrameObjectId;
@@ -3735,6 +3839,7 @@ struct ProjectScene::Impl
     void drawPreviewRobotMountFrames();
     void drawPinnedRobotMountFrames();
     void drawActiveToolAttachmentFrames();
+    void drawSprayRange();
     void drawTrajectoryControlPointOverlay();
     void drawRobotCollisionModelVariantPreview();
     void drawObjectCollisionModelVariantPreview();
@@ -4649,6 +4754,33 @@ void ProjectScene::Impl::buildProjectRobots()
             simulation_project::AssetResolver::urdfPackageRootsForReference(
                 robotResolveContext,
                 robotDesc.sourcePath));
+        runtime.sprayNozzleLinkName = integratedSprayNozzleLinkName(runtime.model);
+        runtime.sprayNozzleLocalTransform = inferIntegratedSprayNozzleLocalTransform(
+            runtime.model,
+            runtime.sprayNozzleLinkName);
+        std::string normalizedRobotSourcePath = runtime.sourcePath;
+        std::transform(
+            normalizedRobotSourcePath.begin(),
+            normalizedRobotSourcePath.end(),
+            normalizedRobotSourcePath.begin(),
+            [](unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+        if(normalizedRobotSourcePath.find("abb4600_urdf") != std::string::npos) {
+            // Point4 expressed in the URDF Link6 frame. This includes the Point2
+            // mount offset and the SolidWorks-assembly-to-URDF axis conversion.
+            runtime.sprayNozzleLocalTransform.translation() = collision::Vec3(
+                -0.0128803,
+                -0.1101768,
+                1.2737063);
+            const collision::Vec3 nozzleNormal =
+                collision::Vec3(-0.117783, -0.993039, -0.000024).normalized();
+            runtime.sprayNozzleLocalTransform.linear() =
+                Eigen::Quaterniond::FromTwoVectors(
+                    collision::Vec3::UnitZ(),
+                    nozzleNormal)
+                    .toRotationMatrix();
+        }
         configureParallelControlIfNeeded(runtime, robotDesc, runtime.model);
         configureParallelFollowerIfNeeded(runtime, robotDesc, runtime.model);
         RobotCollisionOverrideApplier::apply(projectDocument, robotDesc, projectBasePath, runtime.model);
@@ -5553,6 +5685,116 @@ void ProjectScene::Impl::drawActiveToolAttachmentFrames()
     }
 }
 
+void ProjectScene::Impl::drawSprayRange()
+{
+    if(!sprayRangeVisible || sprayRangeRobotId.empty()) {
+        return;
+    }
+
+    const RuntimeToolAttachmentVisual* attachment = nullptr;
+    if(activeToolAttachmentIndex < toolAttachments.size()) {
+        const RuntimeToolAttachmentVisual& active = toolAttachments[activeToolAttachmentIndex];
+        if(active.robotId == sprayRangeRobotId && active.visible) {
+            attachment = &active;
+        }
+    }
+    if(attachment == nullptr) {
+        for(const RuntimeToolAttachmentVisual& candidate : toolAttachments) {
+            if(candidate.robotId == sprayRangeRobotId && candidate.visible) {
+                attachment = &candidate;
+                break;
+            }
+        }
+    }
+    collision::Transform3 tcp = collision::Transform3::Identity();
+    if(attachment != nullptr) {
+        tcp = attachment->worldTcp;
+    } else {
+        const RuntimeRobot* robot = findRuntimeRobot(robots, sprayRangeRobotId);
+        if(robot == nullptr || !robot->instance || robot->sprayNozzleLinkName.empty() ||
+            robot->model.links.find(robot->sprayNozzleLinkName) == robot->model.links.end()) {
+            return;
+        }
+        tcp = robot->instance->getLinkTransform(robot->sprayNozzleLinkName) *
+            robot->sprayNozzleLocalTransform;
+    }
+
+    const collision::Vec3 axis = tcp.linear() * collision::Vec3(0.0, 0.0, 1.0);
+    const double axisLength = axis.norm();
+    if(!std::isfinite(axisLength) || axisLength < 1.0e-9) {
+        return;
+    }
+
+    constexpr int kSegments = 24;
+    constexpr double kLength = 0.22;
+    constexpr double kRadius = 0.08;
+    const collision::Vec3 axisDirection = axis / axisLength;
+    const collision::Vec3 radialDirection =
+        tcp.linear() * collision::Vec3(1.0, 0.0, 0.0);
+    const collision::Vec3 tangentialDirection =
+        tcp.linear() * collision::Vec3(0.0, 1.0, 0.0);
+
+    std::vector<glm::vec3> vertices;
+    vertices.reserve(static_cast<std::size_t>(kSegments + 2));
+    vertices.push_back(glm::vec3(0.0f, 0.0f, 0.0f));
+    for(int index = 0; index < kSegments; ++index) {
+        const double angle = 2.0 * kPi * static_cast<double>(index) /
+            static_cast<double>(kSegments);
+        vertices.push_back(glm::vec3(
+            static_cast<float>(kRadius * std::cos(angle)),
+            static_cast<float>(kRadius * std::sin(angle)),
+            static_cast<float>(kLength)));
+    }
+    vertices.push_back(glm::vec3(0.0f, 0.0f, static_cast<float>(kLength)));
+
+    std::vector<unsigned int> indices;
+    indices.reserve(static_cast<std::size_t>(kSegments * 6));
+    const unsigned int baseCenter = static_cast<unsigned int>(vertices.size() - 1);
+    for(int index = 0; index < kSegments; ++index) {
+        const unsigned int current = static_cast<unsigned int>(index + 1);
+        const unsigned int next = static_cast<unsigned int>(index == kSegments - 1 ? 1 : index + 2);
+        indices.push_back(0);
+        indices.push_back(current);
+        indices.push_back(next);
+        indices.push_back(baseCenter);
+        indices.push_back(next);
+        indices.push_back(current);
+    }
+
+    const scenecore::RenderTag tag{
+        scenecore::RenderLayer::Gizmo,
+        scenecore::RenderCategory::Debug,
+        scenecore::RenderFeature::Gizmo };
+    const glm::vec4 surfaceColor(0.10f, 0.85f, 1.0f, 0.18f);
+    const glm::vec4 outlineColor(0.10f, 0.95f, 1.0f, 0.95f);
+    const glm::mat4 transform = math::eigenToGlm(tcp);
+    scenecore::DebugDraw& debug = renderer.debug();
+    debug.drawTriangleMesh(
+        transform,
+        vertices,
+        indices,
+        surfaceColor,
+        scenecore::DrawType::UsingUnlitShader,
+        tag);
+
+    const collision::Vec3 origin = tcp.translation();
+    const collision::Vec3 baseCenterPoint = origin + axisDirection * kLength;
+    for(int index = 0; index < kSegments; ++index) {
+        const double angle = 2.0 * kPi * static_cast<double>(index) /
+            static_cast<double>(kSegments);
+        const double nextAngle = 2.0 * kPi * static_cast<double>(index + 1) /
+            static_cast<double>(kSegments);
+        const collision::Vec3 point = baseCenterPoint +
+            radialDirection * (kRadius * std::cos(angle)) +
+            tangentialDirection * (kRadius * std::sin(angle));
+        const collision::Vec3 nextPoint = baseCenterPoint +
+            radialDirection * (kRadius * std::cos(nextAngle)) +
+            tangentialDirection * (kRadius * std::sin(nextAngle));
+        debug.drawLine(toGlmVec3(origin), toGlmVec3(point), outlineColor, tag);
+        debug.drawLine(toGlmVec3(point), toGlmVec3(nextPoint), outlineColor, tag);
+    }
+}
+
 void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
 {
     if(trajectoryControlPointOverlay.empty()) {
@@ -6194,6 +6436,8 @@ void ProjectScene::setProjectDocument(
     m_impl->visibleCollisionVariantFiltersByRuntimeLink.clear();
     m_impl->collisionQueriesEnabled = false;
     m_impl->showCollisionGeometry = false;
+    m_impl->sprayRangeRobotId.clear();
+    m_impl->sprayRangeVisible = false;
     m_impl->collisionRuntimeBuilt = false;
     m_impl->collisionRuntimeBuildInProgress = false;
     m_impl->collisionScene = CollisionScene();
@@ -6689,6 +6933,7 @@ void ProjectScene::update(double timeSeconds)
     m_impl->drawPreviewRobotMountFrames();
     m_impl->drawPinnedRobotMountFrames();
     m_impl->drawActiveToolAttachmentFrames();
+    m_impl->drawSprayRange();
     m_impl->drawTrajectoryControlPointOverlay();
     m_impl->drawRobotCollisionModelVariantPreview();
     m_impl->drawObjectCollisionModelVariantPreview();
@@ -8092,6 +8337,12 @@ void ProjectScene::setActiveToolFrameRobot(const std::string& robotId)
 void ProjectScene::setToolFrameVisibility(const ToolFrameVisibility& visibility)
 {
     m_impl->toolFrameVisibility = visibility;
+}
+
+void ProjectScene::setSprayRangeVisible(const std::string& robotId, bool visible)
+{
+    m_impl->sprayRangeRobotId = robotId;
+    m_impl->sprayRangeVisible = visible && !robotId.empty();
 }
 
 std::string ProjectScene::activeToolAttachmentId() const

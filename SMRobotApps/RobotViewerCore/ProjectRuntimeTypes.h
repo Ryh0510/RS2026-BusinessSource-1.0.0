@@ -87,6 +87,8 @@ struct RuntimeRobot
     std::string sourcePath;
     int sourceModelIndex = 0;
     collision::Transform3 baseTransform = collision::Transform3::Identity();
+    std::string sprayNozzleLinkName;
+    collision::Transform3 sprayNozzleLocalTransform = collision::Transform3::Identity();
     bool collisionEnabled = true;
     bool autoMotionEnabled = false;
     double autoMotionAmplitude = 0.5;

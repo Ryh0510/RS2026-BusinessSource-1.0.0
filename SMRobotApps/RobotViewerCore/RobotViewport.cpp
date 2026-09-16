@@ -969,6 +969,14 @@ void RobotViewport::setToolFrameVisibility(const ProjectScene::ToolFrameVisibili
     }
 }
 
+void RobotViewport::setSprayRangeVisible(const QString& robotId, bool visible)
+{
+    if(m_scene != nullptr) {
+        m_scene->setSprayRangeVisible(robotId.toStdString(), visible);
+        update();
+    }
+}
+
 std::vector<ProjectScene::RobotLinkMaterialInfo> RobotViewport::robotLinkMaterials(
     const QString& robotId,
     const QString& linkName) const

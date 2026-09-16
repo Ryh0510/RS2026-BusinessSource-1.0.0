@@ -359,6 +359,13 @@ namespace robot_qt_viewer
         m_viewport.setToolFrameVisibility(viewportVisibility);
     }
 
+    void RobotQtViewerViewportServicesAdapter::setSprayRangeVisible(
+        const QString& robotId,
+        bool visible)
+    {
+        m_viewport.setSprayRangeVisible(robotId, visible);
+    }
+
     void RobotQtViewerViewportServicesAdapter::setRobotMountFrameVisibility(
         bool selectedLinkFrameVisible,
         bool mountFrameVisible)

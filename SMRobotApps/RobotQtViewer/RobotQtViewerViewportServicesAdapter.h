@@ -60,6 +60,9 @@ namespace robot_qt_viewer
         void selectMountedAttachment(const QString& attachmentId) override;
         bool setActiveMountedAttachment(const QString& attachmentId) override;
         void setToolFrameVisibility(const RobotQtViewerToolFrameVisibility& visibility) override;
+        void setSprayRangeVisible(
+            const QString& robotId,
+            bool visible) override;
         void setRobotMountFrameVisibility(bool selectedLinkFrameVisible, bool mountFrameVisible) override;
         void setPinnedRobotMountFrames(const QStringList& robotMountIds) override;
         void focusMountFrameLink(const QString& robotId, const QString& linkName) override;

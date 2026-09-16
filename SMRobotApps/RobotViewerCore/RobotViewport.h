@@ -203,6 +203,7 @@ public:
     bool setActiveToolAttachment(const QString& id);
     void setActiveToolFrameRobot(const QString& robotId);
     void setToolFrameVisibility(const ProjectScene::ToolFrameVisibility& visibility);
+    void setSprayRangeVisible(const QString& robotId, bool visible);
     std::vector<ProjectScene::RobotLinkMaterialInfo> robotLinkMaterials(
         const QString& robotId,
         const QString& linkName) const;

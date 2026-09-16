@@ -45,6 +45,7 @@ namespace
         void selectMountedAttachment(const QString&) override {}
         bool setActiveMountedAttachment(const QString&) override { return true; }
         void setToolFrameVisibility(const robot_qt_viewer::RobotQtViewerToolFrameVisibility&) override {}
+        void setSprayRangeVisible(const QString&, bool) override {}
         void setRobotMountFrameVisibility(bool, bool) override {}
         void setPinnedRobotMountFrames(const QStringList&) override {}
         void focusMountFrameLink(const QString&, const QString&) override {}
