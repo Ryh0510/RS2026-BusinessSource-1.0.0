@@ -14,6 +14,14 @@
 
 namespace robot_qt_viewer
 {
+    struct SprayMeasurementResult
+    {
+        bool valid = false;
+        double distanceMeters = 0.0;
+        double angleDegrees = 0.0;
+        QString errorMessage;
+    };
+
     struct RobotQtViewerViewportLoadResult
     {
         bool success = false;
@@ -72,6 +80,13 @@ namespace robot_qt_viewer
         virtual void setSprayRangeVisible(
             const QString& robotId,
             bool visible) = 0;
+        virtual SprayMeasurementResult sprayMeasurement(const QString& robotId) const
+        {
+            Q_UNUSED(robotId);
+            SprayMeasurementResult result;
+            result.errorMessage = QStringLiteral("Spray measurement unavailable");
+            return result;
+        }
         virtual void setRobotMountFrameVisibility(bool selectedLinkFrameVisible, bool mountFrameVisible) = 0;
         virtual void setPinnedRobotMountFrames(const QStringList& robotMountIds) = 0;
         virtual void focusMountFrameLink(const QString& robotId, const QString& linkName) = 0;

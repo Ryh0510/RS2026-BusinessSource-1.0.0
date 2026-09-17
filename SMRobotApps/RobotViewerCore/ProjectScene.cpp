@@ -3755,6 +3755,13 @@ struct ProjectScene::Impl
     std::string activeToolFrameRobotId;
     std::string sprayRangeRobotId;
     bool sprayRangeVisible = false;
+    struct SpraySurfaceMesh
+    {
+        std::string linkName;
+        std::vector<collision::Vec3> vertices;
+        std::vector<std::uint32_t> indices;
+    };
+    std::unordered_map<std::string, std::vector<SpraySurfaceMesh>> spraySurfaceMeshes;
     std::string selectedJointFrameRobotId;
     std::string selectedJointFrameName;
     std::string selectedObjectFrameObjectId;
@@ -3840,6 +3847,9 @@ struct ProjectScene::Impl
     void drawPinnedRobotMountFrames();
     void drawActiveToolAttachmentFrames();
     void drawSprayRange();
+    bool sprayNozzleWorldTransform(
+        const std::string& robotId,
+        collision::Transform3& tcp) const;
     void drawTrajectoryControlPointOverlay();
     void drawRobotCollisionModelVariantPreview();
     void drawObjectCollisionModelVariantPreview();
@@ -5691,32 +5701,9 @@ void ProjectScene::Impl::drawSprayRange()
         return;
     }
 
-    const RuntimeToolAttachmentVisual* attachment = nullptr;
-    if(activeToolAttachmentIndex < toolAttachments.size()) {
-        const RuntimeToolAttachmentVisual& active = toolAttachments[activeToolAttachmentIndex];
-        if(active.robotId == sprayRangeRobotId && active.visible) {
-            attachment = &active;
-        }
-    }
-    if(attachment == nullptr) {
-        for(const RuntimeToolAttachmentVisual& candidate : toolAttachments) {
-            if(candidate.robotId == sprayRangeRobotId && candidate.visible) {
-                attachment = &candidate;
-                break;
-            }
-        }
-    }
     collision::Transform3 tcp = collision::Transform3::Identity();
-    if(attachment != nullptr) {
-        tcp = attachment->worldTcp;
-    } else {
-        const RuntimeRobot* robot = findRuntimeRobot(robots, sprayRangeRobotId);
-        if(robot == nullptr || !robot->instance || robot->sprayNozzleLinkName.empty() ||
-            robot->model.links.find(robot->sprayNozzleLinkName) == robot->model.links.end()) {
-            return;
-        }
-        tcp = robot->instance->getLinkTransform(robot->sprayNozzleLinkName) *
-            robot->sprayNozzleLocalTransform;
+    if(!sprayNozzleWorldTransform(sprayRangeRobotId, tcp)) {
+        return;
     }
 
     const collision::Vec3 axis = tcp.linear() * collision::Vec3(0.0, 0.0, 1.0);
@@ -5725,9 +5712,9 @@ void ProjectScene::Impl::drawSprayRange()
         return;
     }
 
-    constexpr int kSegments = 24;
-    constexpr double kLength = 0.22;
-    constexpr double kRadius = 0.08;
+    constexpr int kSegments = 64;
+    constexpr double kLength = 0.11;
+    constexpr double kRadius = 0.04;
     const collision::Vec3 axisDirection = axis / axisLength;
     const collision::Vec3 radialDirection =
         tcp.linear() * collision::Vec3(1.0, 0.0, 0.0);
@@ -5793,6 +5780,40 @@ void ProjectScene::Impl::drawSprayRange()
         debug.drawLine(toGlmVec3(origin), toGlmVec3(point), outlineColor, tag);
         debug.drawLine(toGlmVec3(point), toGlmVec3(nextPoint), outlineColor, tag);
     }
+}
+
+bool ProjectScene::Impl::sprayNozzleWorldTransform(
+    const std::string& robotId,
+    collision::Transform3& tcp) const
+{
+    const RuntimeToolAttachmentVisual* attachment = nullptr;
+    if(activeToolAttachmentIndex < toolAttachments.size()) {
+        const RuntimeToolAttachmentVisual& active = toolAttachments[activeToolAttachmentIndex];
+        if(active.robotId == robotId && active.visible) {
+            attachment = &active;
+        }
+    }
+    if(attachment == nullptr) {
+        for(const RuntimeToolAttachmentVisual& candidate : toolAttachments) {
+            if(candidate.robotId == robotId && candidate.visible) {
+                attachment = &candidate;
+                break;
+            }
+        }
+    }
+    if(attachment != nullptr) {
+        tcp = attachment->worldTcp;
+    } else {
+        const RuntimeRobot* robot = findRuntimeRobot(robots, robotId);
+        if(robot == nullptr || !robot->instance || robot->sprayNozzleLinkName.empty() ||
+            robot->model.links.find(robot->sprayNozzleLinkName) == robot->model.links.end()) {
+            return false;
+        }
+        tcp = robot->instance->getLinkTransform(robot->sprayNozzleLinkName) *
+            robot->sprayNozzleLocalTransform;
+    }
+
+    return isFiniteVec(tcp.translation());
 }
 
 void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
@@ -6438,6 +6459,7 @@ void ProjectScene::setProjectDocument(
     m_impl->showCollisionGeometry = false;
     m_impl->sprayRangeRobotId.clear();
     m_impl->sprayRangeVisible = false;
+    m_impl->spraySurfaceMeshes.clear();
     m_impl->collisionRuntimeBuilt = false;
     m_impl->collisionRuntimeBuildInProgress = false;
     m_impl->collisionScene = CollisionScene();
@@ -8343,6 +8365,112 @@ void ProjectScene::setSprayRangeVisible(const std::string& robotId, bool visible
 {
     m_impl->sprayRangeRobotId = robotId;
     m_impl->sprayRangeVisible = visible && !robotId.empty();
+}
+
+ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
+    const std::string& robotId,
+    const std::string& targetRobotId) const
+{
+    SprayMeasurement result;
+    collision::Transform3 tcp = collision::Transform3::Identity();
+    if(!m_impl->sprayNozzleWorldTransform(robotId, tcp)) {
+        result.errorMessage = "No spray nozzle pose available";
+        return result;
+    }
+    const RuntimeRobot* target = findRuntimeRobot(m_impl->robots, targetRobotId);
+    if(!target || !target->instance) {
+        result.errorMessage = "Target robot not found: " + targetRobotId;
+        return result;
+    }
+
+    auto cached = m_impl->spraySurfaceMeshes.find(targetRobotId);
+    if(cached == m_impl->spraySurfaceMeshes.end()) {
+        std::vector<Impl::SpraySurfaceMesh> meshes;
+        for(const auto& link : target->model.links) {
+            for(const auto& visual : link.second.visuals) {
+                if(visual.meshPath.empty()) {
+                    continue;
+                }
+                std::string error;
+                const auto model = assetcore::AssetManager::instance().tryLoadModel(
+                    visual.meshPath, 1.0f, &error);
+                if(!model) {
+                    result.errorMessage = "Cannot load target mesh: " + error;
+                    return result;
+                }
+                for(const auto& subMesh : model->subMeshes()) {
+                    Impl::SpraySurfaceMesh mesh;
+                    mesh.linkName = link.first;
+                    for(const auto& position : subMesh.geometry.positions) {
+                        const glm::vec4 corrected = model->get_local() * glm::vec4(
+                            position.x(), position.y(), position.z(), 1.0f);
+                        mesh.vertices.push_back(visual.T_part * collision::Vec3(
+                            corrected.x * visual.meshScale,
+                            corrected.y * visual.meshScale,
+                            corrected.z * visual.meshScale));
+                    }
+                    mesh.indices = subMesh.geometry.indices;
+                    if(mesh.indices.empty()) {
+                        for(std::size_t i = 0; i + 2 < mesh.vertices.size(); i += 3) {
+                            mesh.indices.push_back(static_cast<std::uint32_t>(i));
+                            mesh.indices.push_back(static_cast<std::uint32_t>(i + 1));
+                            mesh.indices.push_back(static_cast<std::uint32_t>(i + 2));
+                        }
+                    }
+                    meshes.push_back(std::move(mesh));
+                }
+            }
+        }
+        cached = m_impl->spraySurfaceMeshes.emplace(targetRobotId, std::move(meshes)).first;
+    }
+
+    const collision::Vec3 direction = tcp.linear().col(2).normalized();
+    const collision::Vec3 localXWorld = tcp.linear().col(0).normalized();
+    double nearest = std::numeric_limits<double>::max();
+    collision::Vec3 normal = collision::Vec3::Zero();
+    std::size_t triangleCount = 0;
+    for(const auto& mesh : cached->second) {
+        const collision::Transform3 world = target->instance->getLinkTransform(mesh.linkName);
+        const collision::Transform3 inverse = world.inverse();
+        ProjectScenePickRay ray;
+        ray.origin = inverse * tcp.translation();
+        ray.direction = inverse.linear() * direction;
+        for(std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            const auto ia = mesh.indices[i];
+            const auto ib = mesh.indices[i + 1];
+            const auto ic = mesh.indices[i + 2];
+            if(ia >= mesh.vertices.size() || ib >= mesh.vertices.size() || ic >= mesh.vertices.size()) {
+                continue;
+            }
+            ++triangleCount;
+            const auto& a = mesh.vertices[ia];
+            const auto& b = mesh.vertices[ib];
+            const auto& c = mesh.vertices[ic];
+            double distance = 0.0, u = 0.0, v = 0.0;
+            if(intersectRayTriangle(ray, a, b, c, distance, u, v) && distance < nearest) {
+                const collision::Vec3 candidate = world.linear() * (b - a).cross(c - a);
+                if(candidate.allFinite() && candidate.norm() > 1.0e-12) {
+                    nearest = distance;
+                    normal = candidate.normalized();
+                }
+            }
+        }
+    }
+    if(nearest == std::numeric_limits<double>::max()) {
+        result.errorMessage = triangleCount == 0 ? "Target has no surface triangles" : "No forward intersection with burnner";
+        return result;
+    }
+    // Orient the two-sided STL normal toward the nozzle, independent of winding.
+    if(normal.dot(direction) > 0.0) {
+        normal = -normal;
+    }
+    const double magnitude = std::acos(std::clamp(-normal.dot(direction), 0.0, 1.0)) * 180.0 / kPi;
+    const double orientation = normal.cross(direction).dot(localXWorld);
+    result.valid = true;
+    result.distanceMeters = nearest;
+    // At the sign boundary choose positive deterministically; normal incidence is zero.
+    result.angleDegrees = magnitude < 1.0e-7 ? 0.0 : (orientation < -1.0e-10 ? -magnitude : magnitude);
+    return result;
 }
 
 std::string ProjectScene::activeToolAttachmentId() const

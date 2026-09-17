@@ -1,5 +1,14 @@
 # 当前变更审计
 
+## 2026-09-17 Motion Planning 喷涂距离与角度
+
+- ViewerCore 将 ABB4600 一体喷枪/挂载工具统一解析为 TCP，圆锥和测量共用该 FK 位姿；圆锥调整为长 0.11 m、半径 0.04 m、64 段。
+- 喷涂距离取工具 +Z 射线与 `burnner` 原始 visual STL 的最近正向交点，CPU 网格按工程生命周期缓存；不依赖碰撞代理或碰撞显示状态。
+- 喷涂角度为表面法向偏角：垂直 0 度、掠射 90 度；STL 法向先朝枪口统一，正负由 `(normal cross ray) dot localX` 确定。
+- 单点轨迹/CDF 应用和动态播放均刷新测量；播放按每组关节角记录，支持提前预约或结束后直接导出 TXT，并用独立窗口上下绘制距离/角度曲线。
+- 无交点不写 0，而是显示无效原因、TXT 写 `nan` 和 `valid=0`、曲线断线。
+- 无新增第三方依赖或项目 schema。Release `RobotViewerCore`、`MotionPlanningEditor`、`RobotQtViewer` 和 Debug `RobotQtViewer` 构建通过；默认 `ABB4600-burnner` 工程隐藏启动退出码 0；`RobotQtViewerSprayMeasurementSmoke` 1/1 通过。
+
 更新时间：2026-07-20
 
 ## 变更目的

@@ -63,6 +63,7 @@ namespace robot_qt_viewer
         void setSprayRangeVisible(
             const QString& robotId,
             bool visible) override;
+        SprayMeasurementResult sprayMeasurement(const QString& robotId) const override;
         void setRobotMountFrameVisibility(bool selectedLinkFrameVisible, bool mountFrameVisible) override;
         void setPinnedRobotMountFrames(const QStringList& robotMountIds) override;
         void focusMountFrameLink(const QString& robotId, const QString& linkName) override;

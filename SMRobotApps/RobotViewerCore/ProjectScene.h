@@ -87,6 +87,14 @@ public:
         std::size_t subMeshCount = 0;
     };
 
+    struct SprayMeasurement
+    {
+        bool valid = false;
+        double distanceMeters = 0.0;
+        double angleDegrees = 0.0;
+        std::string errorMessage;
+    };
+
     struct CollisionDetectorInfo
     {
         struct Vec3Info
@@ -333,6 +341,9 @@ public:
     void setActiveToolFrameRobot(const std::string& robotId);
     void setToolFrameVisibility(const ToolFrameVisibility& visibility);
     void setSprayRangeVisible(const std::string& robotId, bool visible);
+    SprayMeasurement sprayMeasurement(
+        const std::string& robotId,
+        const std::string& targetRobotId = "burnner") const;
     std::string activeMountedAttachmentId() const;
     std::string activeToolAttachmentId() const;
     std::vector<MountedAttachmentInfo> mountedAttachments() const;

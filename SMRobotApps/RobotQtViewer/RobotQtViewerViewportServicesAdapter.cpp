@@ -366,6 +366,13 @@ namespace robot_qt_viewer
         m_viewport.setSprayRangeVisible(robotId, visible);
     }
 
+    SprayMeasurementResult RobotQtViewerViewportServicesAdapter::sprayMeasurement(const QString& robotId) const
+    {
+        const auto measurement = m_viewport.sprayMeasurement(robotId);
+        return { measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
+            QString::fromStdString(measurement.errorMessage) };
+    }
+
     void RobotQtViewerViewportServicesAdapter::setRobotMountFrameVisibility(
         bool selectedLinkFrameVisible,
         bool mountFrameVisible)

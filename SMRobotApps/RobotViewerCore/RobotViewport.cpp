@@ -977,6 +977,16 @@ void RobotViewport::setSprayRangeVisible(const QString& robotId, bool visible)
     }
 }
 
+ProjectScene::SprayMeasurement RobotViewport::sprayMeasurement(const QString& robotId) const
+{
+    if(m_scene) {
+        return m_scene->sprayMeasurement(robotId.toStdString());
+    }
+    ProjectScene::SprayMeasurement result;
+    result.errorMessage = "Scene unavailable";
+    return result;
+}
+
 std::vector<ProjectScene::RobotLinkMaterialInfo> RobotViewport::robotLinkMaterials(
     const QString& robotId,
     const QString& linkName) const
