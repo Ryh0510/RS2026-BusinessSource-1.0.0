@@ -3755,6 +3755,9 @@ struct ProjectScene::Impl
     std::string activeToolFrameRobotId;
     std::string sprayRangeRobotId;
     bool sprayRangeVisible = false;
+    std::string endEffectorTraceRobotId;
+    bool endEffectorTraceVisible = false;
+    std::vector<collision::Vec3> endEffectorTracePoints;
     struct SpraySurfaceMesh
     {
         std::string linkName;
@@ -3847,6 +3850,7 @@ struct ProjectScene::Impl
     void drawPinnedRobotMountFrames();
     void drawActiveToolAttachmentFrames();
     void drawSprayRange();
+    void drawEndEffectorTrace();
     bool sprayNozzleWorldTransform(
         const std::string& robotId,
         collision::Transform3& tcp) const;
@@ -5816,6 +5820,23 @@ bool ProjectScene::Impl::sprayNozzleWorldTransform(
     return isFiniteVec(tcp.translation());
 }
 
+void ProjectScene::Impl::drawEndEffectorTrace()
+{
+    if(!endEffectorTraceVisible || endEffectorTracePoints.size() < 2) {
+        return;
+    }
+    const scenecore::RenderTag tag{
+        scenecore::RenderLayer::Gizmo,
+        scenecore::RenderCategory::Debug,
+        scenecore::RenderFeature::Gizmo };
+    const glm::vec4 color(1.0f, 0.25f, 0.65f, 1.0f);
+    auto& debug = renderer.debug();
+    for(std::size_t index = 1; index < endEffectorTracePoints.size(); ++index) {
+        debug.drawLine(toGlmVec3(endEffectorTracePoints[index - 1]),
+            toGlmVec3(endEffectorTracePoints[index]), color, tag);
+    }
+}
+
 void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
 {
     if(trajectoryControlPointOverlay.empty()) {
@@ -6459,6 +6480,9 @@ void ProjectScene::setProjectDocument(
     m_impl->showCollisionGeometry = false;
     m_impl->sprayRangeRobotId.clear();
     m_impl->sprayRangeVisible = false;
+    m_impl->endEffectorTraceRobotId.clear();
+    m_impl->endEffectorTraceVisible = false;
+    clearEndEffectorTrace();
     m_impl->spraySurfaceMeshes.clear();
     m_impl->collisionRuntimeBuilt = false;
     m_impl->collisionRuntimeBuildInProgress = false;
@@ -6956,6 +6980,7 @@ void ProjectScene::update(double timeSeconds)
     m_impl->drawPinnedRobotMountFrames();
     m_impl->drawActiveToolAttachmentFrames();
     m_impl->drawSprayRange();
+    m_impl->drawEndEffectorTrace();
     m_impl->drawTrajectoryControlPointOverlay();
     m_impl->drawRobotCollisionModelVariantPreview();
     m_impl->drawObjectCollisionModelVariantPreview();
@@ -8365,6 +8390,44 @@ void ProjectScene::setSprayRangeVisible(const std::string& robotId, bool visible
 {
     m_impl->sprayRangeRobotId = robotId;
     m_impl->sprayRangeVisible = visible && !robotId.empty();
+}
+
+void ProjectScene::setEndEffectorTraceVisible(const std::string& robotId, bool visible)
+{
+    if(!visible || robotId != m_impl->endEffectorTraceRobotId) {
+        clearEndEffectorTrace();
+    }
+    m_impl->endEffectorTraceRobotId = robotId;
+    m_impl->endEffectorTraceVisible = visible && !robotId.empty();
+}
+
+void ProjectScene::clearEndEffectorTrace()
+{
+    m_impl->endEffectorTracePoints.clear();
+}
+
+void ProjectScene::appendEndEffectorTraceSample()
+{
+    if(!m_impl->endEffectorTraceVisible) {
+        return;
+    }
+    collision::Transform3 tcp = collision::Transform3::Identity();
+    if(!m_impl->sprayNozzleWorldTransform(m_impl->endEffectorTraceRobotId, tcp)) {
+        // Do not bridge across an unavailable or invalid tool pose.
+        clearEndEffectorTrace();
+        return;
+    }
+    auto& points = m_impl->endEffectorTracePoints;
+    const collision::Vec3 position = tcp.translation();
+    // Suppress stationary samples within one micrometre without copying the trace.
+    if(points.empty() || (points.back() - position).squaredNorm() > 1.0e-12) {
+        points.push_back(position);
+    }
+}
+
+std::size_t ProjectScene::endEffectorTracePointCount() const
+{
+    return m_impl->endEffectorTracePoints.size();
 }
 
 ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(

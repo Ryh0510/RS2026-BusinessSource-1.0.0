@@ -204,6 +204,9 @@ public:
     void setActiveToolFrameRobot(const QString& robotId);
     void setToolFrameVisibility(const ProjectScene::ToolFrameVisibility& visibility);
     void setSprayRangeVisible(const QString& robotId, bool visible);
+    void setEndEffectorTraceVisible(const QString& robotId, bool visible);
+    void clearEndEffectorTrace();
+    void appendEndEffectorTraceSample();
     ProjectScene::SprayMeasurement sprayMeasurement(const QString& robotId) const;
     std::vector<ProjectScene::RobotLinkMaterialInfo> robotLinkMaterials(
         const QString& robotId,

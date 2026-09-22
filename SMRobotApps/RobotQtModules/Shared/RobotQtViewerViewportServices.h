@@ -80,6 +80,13 @@ namespace robot_qt_viewer
         virtual void setSprayRangeVisible(
             const QString& robotId,
             bool visible) = 0;
+        virtual void setEndEffectorTraceVisible(const QString& robotId, bool visible)
+        {
+            Q_UNUSED(robotId);
+            Q_UNUSED(visible);
+        }
+        virtual void clearEndEffectorTrace() {}
+        virtual void appendEndEffectorTraceSample() {}
         virtual SprayMeasurementResult sprayMeasurement(const QString& robotId) const
         {
             Q_UNUSED(robotId);

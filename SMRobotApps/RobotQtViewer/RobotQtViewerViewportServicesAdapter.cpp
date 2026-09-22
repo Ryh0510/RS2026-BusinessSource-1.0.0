@@ -366,6 +366,21 @@ namespace robot_qt_viewer
         m_viewport.setSprayRangeVisible(robotId, visible);
     }
 
+    void RobotQtViewerViewportServicesAdapter::setEndEffectorTraceVisible(const QString& robotId, bool visible)
+    {
+        m_viewport.setEndEffectorTraceVisible(robotId, visible);
+    }
+
+    void RobotQtViewerViewportServicesAdapter::clearEndEffectorTrace()
+    {
+        m_viewport.clearEndEffectorTrace();
+    }
+
+    void RobotQtViewerViewportServicesAdapter::appendEndEffectorTraceSample()
+    {
+        m_viewport.appendEndEffectorTraceSample();
+    }
+
     SprayMeasurementResult RobotQtViewerViewportServicesAdapter::sprayMeasurement(const QString& robotId) const
     {
         const auto measurement = m_viewport.sprayMeasurement(robotId);

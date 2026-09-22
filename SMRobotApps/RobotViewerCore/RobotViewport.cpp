@@ -977,6 +977,30 @@ void RobotViewport::setSprayRangeVisible(const QString& robotId, bool visible)
     }
 }
 
+void RobotViewport::setEndEffectorTraceVisible(const QString& robotId, bool visible)
+{
+    if(m_scene) {
+        m_scene->setEndEffectorTraceVisible(robotId.toStdString(), visible);
+        update();
+    }
+}
+
+void RobotViewport::clearEndEffectorTrace()
+{
+    if(m_scene) {
+        m_scene->clearEndEffectorTrace();
+        update();
+    }
+}
+
+void RobotViewport::appendEndEffectorTraceSample()
+{
+    if(m_scene) {
+        m_scene->appendEndEffectorTraceSample();
+        update();
+    }
+}
+
 ProjectScene::SprayMeasurement RobotViewport::sprayMeasurement(const QString& robotId) const
 {
     if(m_scene) {

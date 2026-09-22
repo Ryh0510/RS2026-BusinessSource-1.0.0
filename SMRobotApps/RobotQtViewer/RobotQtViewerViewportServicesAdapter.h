@@ -63,6 +63,9 @@ namespace robot_qt_viewer
         void setSprayRangeVisible(
             const QString& robotId,
             bool visible) override;
+        void setEndEffectorTraceVisible(const QString& robotId, bool visible) override;
+        void clearEndEffectorTrace() override;
+        void appendEndEffectorTraceSample() override;
         SprayMeasurementResult sprayMeasurement(const QString& robotId) const override;
         void setRobotMountFrameVisibility(bool selectedLinkFrameVisible, bool mountFrameVisible) override;
         void setPinnedRobotMountFrames(const QStringList& robotMountIds) override;

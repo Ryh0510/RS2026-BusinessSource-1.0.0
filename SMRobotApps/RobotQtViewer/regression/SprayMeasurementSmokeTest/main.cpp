@@ -12,6 +12,8 @@
 #include <MotionPlanningCore/MotionPlanning.h>
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QTabWidget>
 #include <QDialog>
 #include <QImage>
 #include <QFileDialog>
@@ -40,8 +42,10 @@ namespace
     void writeFixture(const std::filesystem::path& folder)
     {
         std::ofstream(folder / "gun.urdf") << R"(<robot name="gun">
-<link name="base"/><link name="Link6"/>
-<joint name="tilt" type="revolute"><parent link="base"/><child link="Link6"/>
+<link name="base"/><link name="carriage"/><link name="Link6"/>
+<joint name="slide" type="prismatic"><parent link="base"/><child link="carriage"/>
+<axis xyz="1 0 0"/><limit lower="-10" upper="10" effort="1" velocity="1"/></joint>
+<joint name="tilt" type="revolute"><parent link="carriage"/><child link="Link6"/>
 <axis xyz="1 0 0"/><limit lower="-3.14" upper="3.14" effort="1" velocity="1"/></joint>
 </robot>)";
         for(bool reversed : { false, true }) {
@@ -92,6 +96,28 @@ namespace
             "Nearest forward STL intersection is 0.3 m");
         require(value.valid && std::abs(value.angleDegrees) < 1.0e-6,
             "Normal incidence is zero degrees");
+        scene.appendEndEffectorTraceSample();
+        require(scene.endEffectorTracePointCount() == 0, "Trace is disabled by default");
+        scene.setEndEffectorTraceVisible("gun", true);
+        scene.appendEndEffectorTraceSample();
+        scene.appendEndEffectorTraceSample();
+        require(scene.endEffectorTracePointCount() == 1, "Stationary TCP samples are deduplicated");
+        scene.setRobotJointValue("gun", "slide", 0.2);
+        scene.appendEndEffectorTraceSample();
+        require(scene.endEffectorTracePointCount() == 2, "FK motion appends a trace point without cone or measurement");
+        scene.setEndEffectorTraceVisible("gun", false);
+        scene.appendEndEffectorTraceSample();
+        require(scene.endEffectorTracePointCount() == 0, "Disabling trace clears and stops sampling");
+        scene.setEndEffectorTraceVisible("gun", true);
+        scene.appendEndEffectorTraceSample();
+        scene.setEndEffectorTraceVisible("missing", true);
+        scene.appendEndEffectorTraceSample();
+        require(scene.endEffectorTracePointCount() == 0, "Robot change and missing TCP cannot connect stale trace");
+        scene.setEndEffectorTraceVisible("gun", true);
+        scene.appendEndEffectorTraceSample();
+        scene.clearEndEffectorTrace();
+        require(scene.endEffectorTracePointCount() == 0, "Playback reset clears trace independently");
+        scene.setRobotJointValue("gun", "slide", 0.0);
         scene.setSprayRangeVisible("gun", true);
         const auto visible = scene.sprayMeasurement("gun");
         require(visible.valid && visible.distanceMeters == value.distanceMeters,
@@ -129,6 +155,10 @@ namespace
         require(!scene.sprayMeasurement("gun").valid, "Parallel ray is invalid");
         require(!scene.sprayMeasurement("missing").valid, "Missing nozzle is invalid");
         require(!scene.sprayMeasurement("gun", "missing").valid, "Missing target is invalid");
+        scene.appendEndEffectorTraceSample();
+        require(scene.endEffectorTracePointCount() == 1, "Trace still samples when spray ray misses target");
+        scene.setProjectDocument(document, folder);
+        require(scene.endEffectorTracePointCount() == 0, "Project reload clears trace");
     }
 
     void verifyPlot(QApplication& application)
@@ -187,6 +217,38 @@ namespace
         }
     };
 
+    class TraceObservingServices : public robot_qt_viewer::RobotQtViewerViewportServicesAdapter
+    {
+    public:
+        using RobotQtViewerViewportServicesAdapter::RobotQtViewerViewportServicesAdapter;
+        int jointUpdates = 0;
+        int samples = 0;
+        int resets = 0;
+        bool enabled = false;
+        void setRobotJointValue(const QString& robotId, const QString& jointName, double value) override
+        {
+            RobotQtViewerViewportServicesAdapter::setRobotJointValue(robotId, jointName, value);
+            ++jointUpdates;
+        }
+        void setEndEffectorTraceVisible(const QString& robotId, bool visible) override
+        {
+            enabled = visible;
+            RobotQtViewerViewportServicesAdapter::setEndEffectorTraceVisible(robotId, visible);
+        }
+        void clearEndEffectorTrace() override
+        {
+            ++resets;
+            RobotQtViewerViewportServicesAdapter::clearEndEffectorTrace();
+        }
+        void appendEndEffectorTraceSample() override
+        {
+            require(jointUpdates == 2, "TCP is sampled once after the entire two-joint group");
+            jointUpdates = 0;
+            ++samples;
+            RobotQtViewerViewportServicesAdapter::appendEndEffectorTraceSample();
+        }
+    };
+
     void verifyPlaybackExport(QApplication& application, const std::filesystem::path& folder)
     {
         simulation_project::ProjectSession session;
@@ -208,10 +270,10 @@ namespace
         plan.id = "spray-test";
         plan.name = "Spray test";
         plan.robotId = "gun";
-        plan.jointNames = { "tilt" };
+        plan.jointNames = { "tilt", "slide" };
         constexpr double pi = 3.14159265358979323846;
-        plan.trajectory.points = { { 0.0, { 0.0 }, {}, {} },
-            { 0.5, { pi / 6.0 }, {}, {} }, { 1.0, { pi }, {}, {} } };
+        plan.trajectory.points = { { 0.0, { 0.0, 0.0 }, {}, {} },
+            { 0.5, { pi / 6.0, 3.0 }, {}, {} }, { 1.0, { pi, 6.0 }, {}, {} } };
         std::string error;
         require(motion_planning::MotionPlanningProjectStore::upsertPlan(document, plan, &error),
             "Playback fixture plan stores in project document");
@@ -225,17 +287,26 @@ namespace
         robot_qt_viewer::RobotQtViewerDocumentContext context(
             session, documentController, selection, preview, hub, status);
         RobotViewport viewport;
-        viewport.resize(320, 240);
+        viewport.resize(760, 600);
         viewport.loadProjectDocument(session.document(), folder);
         viewport.show();
         application.processEvents();
+        viewport.setCameraView(ProjectSceneCameraView::Isometric);
         require(viewport.sprayMeasurement(QStringLiteral("gun")).valid, "Playback viewport loads fixture");
-        robot_qt_viewer::RobotQtViewerViewportServicesAdapter services(viewport);
+        TraceObservingServices services(viewport);
         context.setViewportServices(&services);
         selection.selectRobotLink(QStringLiteral("gun"), QStringLiteral("Link6"));
         MotionPlanningEditorWidget widget;
         robot_qt_viewer::MotionPlanningModuleController controller(widget, context);
 
+        auto* trace = widget.findChild<QCheckBox*>(QStringLiteral("endEffectorTraceVisible"));
+        auto* tabs = widget.findChild<QTabWidget*>();
+        require(trace && !trace->isChecked() && tabs && tabs->widget(0)->isAncestorOf(trace),
+            "Trace checkbox exists on Basic Planning and defaults to off");
+        if(!trace) { return; }
+        trace->setChecked(true);
+        require(services.enabled, "Checkbox enables viewport trace through controller");
+        const int resetsBeforePlayback = services.resets;
         qputenv("SMROBOT_FILE_DIALOG_BACKEND", "qt");
         SaveDialogAcceptor acceptor;
         acceptor.path = QString::fromStdWString((folder / "spray-export.txt").wstring());
@@ -263,12 +334,46 @@ namespace
         require(dataRows == 3 && validRows == 2 && invalidRows == 1,
             "TXT contains one row per joint group with validity status");
         require(hasNegativeThirty, "TXT records signed -30 degree sample");
+        require(services.samples == 3 && services.resets > resetsBeforePlayback,
+            "Playback resets trace and samples every joint group including invalid spray hits");
+        application.processEvents();
+        const QImage traceImage = viewport.grabFramebuffer();
+        int tracePixels = 0;
+        for(int y = 0; y < traceImage.height(); ++y) {
+            for(int x = 0; x < traceImage.width(); ++x) {
+                const QColor c = traceImage.pixelColor(x, y);
+                if(c.red() > 200 && c.green() < 110 && c.blue() > 120 && c.blue() < 220) { ++tracePixels; }
+            }
+        }
+        require(tracePixels > 10, "Actual viewport renders the completed magenta TCP trace");
+        traceImage.save(QStringLiteral("end_effector_trace.png"));
+        trace->setChecked(false);
+        require(!services.enabled, "Unchecking disables viewport trace");
+        trace->setChecked(true);
+        auto* measurement = widget.findChild<QCheckBox*>(QStringLiteral("sprayMeasurementEnabled"));
+        require(measurement != nullptr, "Measurement toggle is available");
+        if(measurement) { measurement->setChecked(false); }
+        services.samples = 0;
+        const int resetsBeforeReplay = services.resets;
+        widget.playbackRequested(0.03);
+        QTimer::singleShot(300, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        require(services.samples == 3 && services.resets > resetsBeforeReplay,
+            "Replay clears previous trace and records with spray calculation disabled");
+        services.samples = 0;
+        widget.playbackRequested(10.0);
+        widget.playbackStopRequested();
+        require(services.samples == 1 && services.enabled, "Early stop retains partial visible trace");
+        const int resetsBeforeSelection = services.resets;
+        widget.trajectorySelectionChanged(QStringLiteral("missing"));
+        require(services.resets > resetsBeforeSelection, "Trajectory selection clears previous trace");
         viewport.close();
     }
 }
 
 int main(int argc, char** argv)
 {
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QApplication application(argc, argv);
     std::cout.setf(std::ios::unitbuf);
     QSurfaceFormat format;
@@ -278,6 +383,7 @@ int main(int argc, char** argv)
     surface.setFormat(format);
     surface.create();
     QOpenGLContext context;
+    context.setShareContext(QOpenGLContext::globalShareContext());
     context.setFormat(format);
     require(context.create() && context.makeCurrent(&surface), "Offscreen OpenGL context available");
     if(failures) { return 1; }

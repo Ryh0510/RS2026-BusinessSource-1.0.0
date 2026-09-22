@@ -341,6 +341,11 @@ public:
     void setActiveToolFrameRobot(const std::string& robotId);
     void setToolFrameVisibility(const ToolFrameVisibility& visibility);
     void setSprayRangeVisible(const std::string& robotId, bool visible);
+    // Transient playback overlay. Disabling or changing robots discards its samples.
+    void setEndEffectorTraceVisible(const std::string& robotId, bool visible);
+    void clearEndEffectorTrace();
+    void appendEndEffectorTraceSample();
+    std::size_t endEffectorTracePointCount() const;
     SprayMeasurement sprayMeasurement(
         const std::string& robotId,
         const std::string& targetRobotId = "burnner") const;
