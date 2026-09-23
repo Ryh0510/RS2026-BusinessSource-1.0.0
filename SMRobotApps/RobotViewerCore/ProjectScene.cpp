@@ -3769,6 +3769,7 @@ struct ProjectScene::Impl
     std::string selectedJointFrameName;
     std::string selectedObjectFrameObjectId;
     std::string selectedObjectFrameId;
+    bool trajectoryControlPointMarkersVisible = true;
     std::string trajectoryControlPointOverlayId;
     std::vector<collision::Transform3> trajectoryControlPointOverlay;
     ProjectScene::ToolFrameVisibility toolFrameVisibility;
@@ -3853,7 +3854,7 @@ struct ProjectScene::Impl
     void drawEndEffectorTrace();
     bool sprayNozzleWorldTransform(
         const std::string& robotId,
-        collision::Transform3& tcp) const;
+        collision::Transform3& tcp, std::string* referenceLink = nullptr) const;
     void drawTrajectoryControlPointOverlay();
     void drawRobotCollisionModelVariantPreview();
     void drawObjectCollisionModelVariantPreview();
@@ -5788,7 +5789,7 @@ void ProjectScene::Impl::drawSprayRange()
 
 bool ProjectScene::Impl::sprayNozzleWorldTransform(
     const std::string& robotId,
-    collision::Transform3& tcp) const
+    collision::Transform3& tcp, std::string* referenceLink) const
 {
     const RuntimeToolAttachmentVisual* attachment = nullptr;
     if(activeToolAttachmentIndex < toolAttachments.size()) {
@@ -5807,12 +5808,14 @@ bool ProjectScene::Impl::sprayNozzleWorldTransform(
     }
     if(attachment != nullptr) {
         tcp = attachment->worldTcp;
+        if(referenceLink) { *referenceLink = attachment->linkName; }
     } else {
         const RuntimeRobot* robot = findRuntimeRobot(robots, robotId);
         if(robot == nullptr || !robot->instance || robot->sprayNozzleLinkName.empty() ||
             robot->model.links.find(robot->sprayNozzleLinkName) == robot->model.links.end()) {
             return false;
         }
+        if(referenceLink) { *referenceLink = robot->sprayNozzleLinkName; }
         tcp = robot->instance->getLinkTransform(robot->sprayNozzleLinkName) *
             robot->sprayNozzleLocalTransform;
     }
@@ -5874,6 +5877,7 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
                 tag);
         }
 
+        if(!trajectoryControlPointMarkersVisible) { continue; }
         const bool isStart = index == 0;
         const bool isEnd = index + 1 == trajectoryControlPointOverlay.size();
         const collision::Vec3 position = point.translation();
@@ -7605,8 +7609,9 @@ bool ProjectScene::clearSurfaceScalarOverlay(const std::string& objectId)
 
 void ProjectScene::setTrajectoryControlPointOverlay(
     const std::string& trajectoryId,
-    const std::vector<simulation_project::TransformDesc>& controlPoints)
+    const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
 {
+    m_impl->trajectoryControlPointMarkersVisible = showPoints;
     m_impl->trajectoryControlPointOverlayId = trajectoryId;
     m_impl->trajectoryControlPointOverlay.clear();
     m_impl->trajectoryControlPointOverlay.reserve(controlPoints.size());
@@ -8384,6 +8389,57 @@ void ProjectScene::setActiveToolFrameRobot(const std::string& robotId)
 void ProjectScene::setToolFrameVisibility(const ToolFrameVisibility& visibility)
 {
     m_impl->toolFrameVisibility = visibility;
+}
+
+ProjectScene::RobotForwardKinematics ProjectScene::robotForwardKinematics(
+    const std::string& robotId, const std::vector<std::string>& jointNames, bool includeTool) const
+{
+    const RuntimeRobot* robot = findRuntimeRobot(m_impl->robots, robotId);
+    if(!robot || !robot->instance || jointNames.empty()) { return {}; }
+    std::string linkName = robot->sprayNozzleLinkName;
+    collision::Transform3 localTcp = collision::Transform3::Identity();
+    if(includeTool) {
+        collision::Transform3 worldTcp;
+        if(!m_impl->sprayNozzleWorldTransform(robotId, worldTcp, &linkName)) { return {}; }
+        if(robot->model.links.find(linkName) == robot->model.links.end()) { return {}; }
+        localTcp = robot->instance->getLinkTransform(linkName).inverse() * worldTcp;
+    }
+    if(robot->model.links.find(linkName) == robot->model.links.end()) { return {}; }
+    std::vector<std::size_t> indices;
+    for(const auto& name : jointNames) {
+        const auto it = robot->model.jointNameToIndex.find(name);
+        if(it == robot->model.jointNameToIndex.end()) { return {}; }
+        const int index = robot->model.joints[it->second].dofIndex;
+        if(index < 0 || std::find(indices.begin(), indices.end(), index) != indices.end()) { return {}; }
+        indices.push_back(static_cast<std::size_t>(index));
+    }
+    // RobotInstance holds a reference to its model: capture both in lifetime order.
+    struct Snapshot {
+        robot::RobotModel model;
+        robotinstance::RobotInstance instance;
+        explicit Snapshot(const RuntimeRobot& source)
+            : model(source.model), instance(model) {
+            instance.setBaseTransform(source.instance->getState().baseTransform);
+            instance.setJoints(source.instance->getState().q);
+            instance.update();
+        }
+    };
+    auto snapshot = std::make_shared<Snapshot>(*robot);
+    return [snapshot, indices, linkName, localTcp](const std::vector<double>& joints) -> Eigen::Isometry3d {
+        if(joints.size() != indices.size()) {
+            throw std::invalid_argument("FK joint count does not match snapshot");
+        }
+        for(std::size_t i = 0; i < indices.size(); ++i) {
+            snapshot->instance.setJoint(indices[i], joints[i]);
+        }
+        snapshot->instance.update();
+        return snapshot->instance.getLinkTransform(linkName) * localTcp;
+    };
+}
+
+bool ProjectScene::endEffectorWorldTransform(const std::string& robotId, Eigen::Isometry3d& pose) const
+{
+    return m_impl->sprayNozzleWorldTransform(robotId, pose);
 }
 
 void ProjectScene::setSprayRangeVisible(const std::string& robotId, bool visible)

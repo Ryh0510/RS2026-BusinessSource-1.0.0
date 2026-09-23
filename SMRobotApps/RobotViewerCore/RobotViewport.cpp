@@ -969,6 +969,13 @@ void RobotViewport::setToolFrameVisibility(const ProjectScene::ToolFrameVisibili
     }
 }
 
+ProjectScene::RobotForwardKinematics RobotViewport::robotForwardKinematics(
+    const QString& robotId, const std::vector<std::string>& jointNames, bool includeTool) const
+{
+    return m_scene ? m_scene->robotForwardKinematics(robotId.toStdString(), jointNames, includeTool)
+        : ProjectScene::RobotForwardKinematics{};
+}
+
 void RobotViewport::setSprayRangeVisible(const QString& robotId, bool visible)
 {
     if(m_scene != nullptr) {
@@ -1109,10 +1116,10 @@ bool RobotViewport::clearSurfaceScalarOverlay(const QString& objectId)
 
 void RobotViewport::setTrajectoryControlPointOverlay(
     const QString& trajectoryId,
-    const std::vector<simulation_project::TransformDesc>& controlPoints)
+    const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
 {
     if(m_scene != nullptr) {
-        m_scene->setTrajectoryControlPointOverlay(trajectoryId.toStdString(), controlPoints);
+        m_scene->setTrajectoryControlPointOverlay(trajectoryId.toStdString(), controlPoints, showPoints);
         update();
     }
 }

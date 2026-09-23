@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <functional>
+#include <Eigen/Geometry>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -248,7 +250,7 @@ public:
     bool clearSurfaceScalarOverlay(const std::string& objectId);
     void setTrajectoryControlPointOverlay(
         const std::string& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints);
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true);
     void clearTrajectoryControlPointOverlay(const std::string& trajectoryId = std::string());
     smrobot::visualization::SurfaceScalarProbeResult probeSurfaceScalarAtScreenPoint(
         const std::string& objectId,
@@ -340,6 +342,11 @@ public:
     bool setActiveToolAttachment(const std::string& id);
     void setActiveToolFrameRobot(const std::string& robotId);
     void setToolFrameVisibility(const ToolFrameVisibility& visibility);
+    using RobotForwardKinematics = std::function<Eigen::Isometry3d(const std::vector<double>&)>;
+    // Owns an independent model/instance; evaluating it never moves the displayed robot.
+    RobotForwardKinematics robotForwardKinematics(const std::string& robotId,
+        const std::vector<std::string>& jointNames, bool includeTool) const;
+    bool endEffectorWorldTransform(const std::string& robotId, Eigen::Isometry3d& pose) const;
     void setSprayRangeVisible(const std::string& robotId, bool visible);
     // Transient playback overlay. Disabling or changing robots discards its samples.
     void setEndEffectorTraceVisible(const std::string& robotId, bool visible);

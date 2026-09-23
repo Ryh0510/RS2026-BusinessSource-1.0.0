@@ -60,6 +60,8 @@ namespace robot_qt_viewer
         void selectMountedAttachment(const QString& attachmentId) override;
         bool setActiveMountedAttachment(const QString& attachmentId) override;
         void setToolFrameVisibility(const RobotQtViewerToolFrameVisibility& visibility) override;
+        RobotForwardKinematics robotForwardKinematics(const QString& robotId,
+            const std::vector<std::string>& jointNames, bool includeTool) const override;
         void setSprayRangeVisible(
             const QString& robotId,
             bool visible) override;
@@ -172,7 +174,7 @@ namespace robot_qt_viewer
         bool clearSurfaceScalarOverlay(const QString& objectId) override;
         void setTrajectoryControlPointOverlay(
             const QString& trajectoryId,
-            const std::vector<simulation_project::TransformDesc>& controlPoints) override;
+            const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true) override;
         void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) override;
         void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId) override;
 

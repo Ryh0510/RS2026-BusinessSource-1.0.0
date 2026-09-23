@@ -359,6 +359,13 @@ namespace robot_qt_viewer
         m_viewport.setToolFrameVisibility(viewportVisibility);
     }
 
+    RobotQtViewerViewportServices::RobotForwardKinematics
+    RobotQtViewerViewportServicesAdapter::robotForwardKinematics(const QString& robotId,
+        const std::vector<std::string>& jointNames, bool includeTool) const
+    {
+        return m_viewport.robotForwardKinematics(robotId, jointNames, includeTool);
+    }
+
     void RobotQtViewerViewportServicesAdapter::setSprayRangeVisible(
         const QString& robotId,
         bool visible)
@@ -707,9 +714,9 @@ namespace robot_qt_viewer
 
     void RobotQtViewerViewportServicesAdapter::setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints)
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
     {
-        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints);
+        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints, showPoints);
     }
 
     void RobotQtViewerViewportServicesAdapter::clearTrajectoryControlPointOverlay(

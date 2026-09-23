@@ -23,6 +23,12 @@ set_target_properties(${EXAMPLE_TARGET_NAME} PROPERTIES
 copy_runtime_dlls(${EXAMPLE_TARGET_NAME})
 deploy_qt(${EXAMPLE_TARGET_NAME})
 if(BuildTests)
+    add_test(NAME RobotQtViewerIkPlaybackSmoke COMMAND ${EXAMPLE_TARGET_NAME}
+        --ik-project "${CMAKE_SOURCE_DIR}/config/projects/ABB4600-burnner.sys.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ik_tcp_poses.txt")
+    set_tests_properties(RobotQtViewerIkPlaybackSmoke PROPERTIES
+        LABELS "RobotQtViewer;Regression;IK"
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
     add_test(NAME RobotQtViewerSprayMeasurementSmoke COMMAND ${EXAMPLE_TARGET_NAME})
     set_tests_properties(RobotQtViewerSprayMeasurementSmoke PROPERTIES
         LABELS "RobotQtViewer;Regression;Spray"

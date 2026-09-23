@@ -203,6 +203,8 @@ public:
     bool setActiveToolAttachment(const QString& id);
     void setActiveToolFrameRobot(const QString& robotId);
     void setToolFrameVisibility(const ProjectScene::ToolFrameVisibility& visibility);
+    ProjectScene::RobotForwardKinematics robotForwardKinematics(const QString& robotId,
+        const std::vector<std::string>& jointNames, bool includeTool) const;
     void setSprayRangeVisible(const QString& robotId, bool visible);
     void setEndEffectorTraceVisible(const QString& robotId, bool visible);
     void clearEndEffectorTrace();
@@ -222,7 +224,7 @@ public:
     bool clearSurfaceScalarOverlay(const QString& objectId);
     void setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints);
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true);
     void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
     void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId = QString());
 

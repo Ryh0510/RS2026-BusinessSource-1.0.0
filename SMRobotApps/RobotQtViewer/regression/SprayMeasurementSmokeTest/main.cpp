@@ -10,6 +10,14 @@
 #include <RobotViewport.h>
 #include "RobotQtViewerViewportServicesAdapter.h"
 #include <MotionPlanningCore/MotionPlanning.h>
+#include <ProjectMotionPlanning/TrajectoryImport.h>
+#include <ProjectMotionPlanning/CdfJointAngleImport.h>
+#include <QLocale>
+#include <QTableWidget>
+#include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
+#include <SimulationProject/ProjectIo.h>
+#include <Eigen/SVD>
+#include <iomanip>
 
 #include <QApplication>
 #include <QCheckBox>
@@ -19,6 +27,7 @@
 #include <QFileDialog>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
+#include <QOpenGLFramebufferObject>
 #include <QPushButton>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
@@ -249,6 +258,321 @@ namespace
         }
     };
 
+    class OverlayObservingServices : public robot_qt_viewer::RobotQtViewerViewportServicesAdapter
+    {
+    public:
+        using RobotQtViewerViewportServicesAdapter::RobotQtViewerViewportServicesAdapter;
+        bool pointsVisible = true;
+        std::size_t pointCount = 0;
+        void setTrajectoryControlPointOverlay(const QString& id,
+            const std::vector<simulation_project::TransformDesc>& points, bool showPoints) override
+        {
+            pointsVisible = showPoints;
+            pointCount = points.size();
+            RobotQtViewerViewportServicesAdapter::setTrajectoryControlPointOverlay(id, points, showPoints);
+        }
+        void clearTrajectoryControlPointOverlay(const QString& id = QString()) override
+        {
+            pointCount = 0;
+            RobotQtViewerViewportServicesAdapter::clearTrajectoryControlPointOverlay(id);
+        }
+    };
+
+    void verifyModelIk()
+    {
+        using namespace motion_planning;
+        simulation_project::ProjectDocument document;
+        simulation_project::RobotDesc robot;
+        robot.id = "model";
+        document.robots.push_back(robot);
+        CartesianIkOptions options;
+        options.robotId = robot.id;
+        options.stepSize = 1.0;
+        options.damping = 0.001;
+        options.worldForwardKinematics = [](const std::vector<double>& q) {
+            Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+            pose.translation() = Eigen::Vector3d(q[0], q[1], q[2]);
+            pose.linear() = (Eigen::AngleAxisd(q[3], Eigen::Vector3d::UnitX()) *
+                Eigen::AngleAxisd(q[4], Eigen::Vector3d::UnitY()) *
+                Eigen::AngleAxisd(q[5], Eigen::Vector3d::UnitZ())).toRotationMatrix();
+            return pose;
+        };
+        StoredMotionPlan plan;
+        plan.robotId = robot.id;
+        robottrajectory::TimedCartesianPoint point;
+        point.tcpPose = options.worldForwardKinematics({ 0.2, -0.3, 0.4, 3.141592653589793, 0, 0 });
+        plan.cartesianControlPoints.points.push_back(point);
+        auto result = ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(document, plan, options);
+        require(result.success, "Actual-model IK converges at a 180-degree orientation error");
+        plan.cartesianControlPoints.points[0].tcpPose.linear() *= 1.0001;
+        result = ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(document, plan, options);
+        require(result.success, "Rounded non-orthogonal input rotations are projected onto SO(3)");
+        plan.cartesianControlPoints.points[0].tcpPose.linear()(0, 0) = std::numeric_limits<double>::quiet_NaN();
+        result = ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(document, plan, options);
+        require(!result.success, "Non-finite IK target is rejected");
+        require(ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues({ 1,2,3,4,5,6 }) ==
+            std::vector<double>({ -1,2,3,-4,-5,-6 }), "Existing IRB4600 joint signs are preserved");
+    }
+
+    void verifyImportedIk(const std::filesystem::path& projectPath,
+        const std::filesystem::path& trajectoryPath, const std::filesystem::path& reportPath)
+    {
+        using namespace motion_planning;
+        simulation_project::ProjectDocument document;
+        std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "IK project loads");
+        if(!error.empty()) { std::cout << error << '\n'; }
+        document.collision.query.enabled = false;
+        for(auto& robot : document.robots) { robot.collisionEnabled = false; }
+        ProjectScene scene;
+        scene.setProjectDocument(document, projectPath.parent_path());
+        require(scene.initialize(), "Actual URDF scene initializes for IK round trip");
+        TrajectoryImportOptions importOptions;
+        importOptions.robotId = "ABB4600_urdf";
+        const auto imported = ProjectTrajectoryImporter::importFile(trajectoryPath, importOptions);
+        require(imported.success, "User-format TCP matrix file imports");
+        if(!imported.success) { return; }
+        CartesianIkOptions options;
+        options.robotId = importOptions.robotId;
+        options.jointNames = ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        options.maxIterations = 5000;
+        options.tolerance = 1.0e-6;
+        options.stepSize = 0.01;
+        options.damping = 0.001;
+        std::cout << "IK points: " << imported.plan.cartesianControlPoints.points.size() << '\n';
+        const auto oldResult = ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(
+            document, imported.plan, options);
+        const auto runtimeFk = scene.robotForwardKinematics(options.robotId, options.jointNames, true);
+        require(static_cast<bool>(runtimeFk), "Model snapshot uses actual nozzle TCP");
+        if(!runtimeFk) { return; }
+        Eigen::Isometry3d before;
+        scene.endEffectorWorldTransform(options.robotId, before);
+        options.worldForwardKinematics = [runtimeFk](const std::vector<double>& joints) {
+            return runtimeFk(ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(joints));
+        };
+        options.stepSize = 1.0;
+        const auto result = ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(
+            document, imported.plan, options);
+        require(result.success, "All imported TCP targets solve with actual-model IK");
+        for(const auto& diagnostic : result.diagnostics) { std::cout << diagnostic.message << '\n'; }
+        Eigen::Isometry3d after;
+        scene.endEffectorWorldTransform(options.robotId, after);
+        require((before.matrix() - after.matrix()).norm() < 1.0e-12, "IK iterations do not move the displayed robot");
+        std::ofstream report(reportPath);
+        report << std::setprecision(12)
+            << "index,target_x,target_y,target_z,old_x,old_y,old_z,actual_x,actual_y,actual_z,old_error_mm,error_mm,angle_error_deg\n";
+        double oldMaximum = 0, maximum = 0, angleMaximum = 0, squaredSum = 0;
+        scene.setEndEffectorTraceVisible(options.robotId, true);
+        std::vector<simulation_project::TransformDesc> overlay;
+        for(std::size_t index = 0; index < result.points.size(); ++index) {
+            const auto& input = imported.plan.cartesianControlPoints.points[index].tcpPose;
+            const auto& solved = result.points[index];
+            if(!solved.success || oldResult.points[index].joints.size() != 6) { continue; }
+            const Eigen::Vector3d oldPosition = options.worldForwardKinematics(oldResult.points[index].joints).translation();
+            const auto joints = ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(solved.joints);
+            for(std::size_t j = 0; j < joints.size(); ++j) {
+                scene.setRobotJointValue(options.robotId, options.jointNames[j], joints[j]);
+            }
+            Eigen::Isometry3d actual;
+            if(!scene.endEffectorWorldTransform(options.robotId, actual)) {
+                require(false, "Playback must have an actual TCP pose");
+                return;
+            }
+            scene.appendEndEffectorTraceSample();
+            const Eigen::JacobiSVD<Eigen::Matrix3d> svd(input.linear(), Eigen::ComputeFullU | Eigen::ComputeFullV);
+            const Eigen::Matrix3d desiredRotation = svd.matrixU() * svd.matrixV().transpose();
+            const double distance = (actual.translation() - input.translation()).norm() * 1000;
+            const double oldDistance = (oldPosition - input.translation()).norm() * 1000;
+            const double angle = Eigen::AngleAxisd(desiredRotation * actual.linear().transpose()).angle() * 180 / 3.141592653589793;
+            oldMaximum = std::max(oldMaximum, oldDistance);
+            maximum = std::max(maximum, distance);
+            angleMaximum = std::max(angleMaximum, angle);
+            squaredSum += distance * distance;
+            report << index;
+            for(const Eigen::Vector3d& v : { Eigen::Vector3d(input.translation()), oldPosition, Eigen::Vector3d(actual.translation()) }) {
+                report << ',' << v.x() << ',' << v.y() << ',' << v.z();
+            }
+            report << ',' << oldDistance << ',' << distance << ',' << angle << '\n';
+            simulation_project::TransformDesc p;
+            p.x = input.translation().x(); p.y = input.translation().y(); p.z = input.translation().z();
+            overlay.push_back(p);
+        }
+        std::cout << "IK legacy solved=" << oldResult.solvedPointCount() << '/' << oldResult.points.size()
+            << " old_max_mm=" << oldMaximum << " new_max_mm=" << maximum
+            << " new_rms_mm=" << std::sqrt(squaredSum / std::max<std::size_t>(1, result.points.size()))
+            << " new_max_deg=" << angleMaximum << '\n';
+        require(maximum < 0.002 && angleMaximum < 0.0001, "Actual playback TCP matches imported positions and orientations");
+        require(scene.endEffectorTracePointCount() > 1, "Round trip records actual endpoint trace");
+        // Verify snapshot base/tool frames survive scene lifetime independently.
+        scene.setTrajectoryControlPointOverlay("imported", overlay);
+        QOpenGLFramebufferObject framebuffer(1200, 900, QOpenGLFramebufferObject::CombinedDepthStencil);
+        require(framebuffer.bind(), "IK comparison framebuffer binds");
+        scene.resize(1200, 900);
+        scene.setCameraView(ProjectSceneCameraView::Isometric);
+        scene.update(0.0);
+        scene.render();
+        auto imagePath = reportPath;
+        imagePath.replace_extension(".png");
+        require(framebuffer.toImage().save(QString::fromStdWString(imagePath.wstring())),
+            "Actual robot, imported control points and playback trace render to comparison image");
+        const QImage markersOn = framebuffer.toImage();
+        scene.setTrajectoryControlPointOverlay("imported", overlay, false);
+        scene.update(0.0);
+        scene.render();
+        const QImage markersOff = framebuffer.toImage();
+        int changedPixels = 0;
+        for(int y = 0; y < markersOn.height(); ++y) {
+            for(int x = 0; x < markersOn.width(); ++x) {
+                if(markersOn.pixel(x, y) != markersOff.pixel(x, y)) { ++changedPixels; }
+            }
+        }
+        require(changedPixels > 10, "Hiding sphere markers changes the actual rendered overlay");
+        scene.setTrajectoryControlPointOverlay("imported", overlay, true);
+        scene.update(0.0);
+        scene.render();
+        require(framebuffer.toImage() == markersOn, "Re-enabling sphere markers restores the same rendered overlay");
+        framebuffer.release();
+        scene.setEndEffectorTraceVisible(options.robotId, false);
+        scene.setProjectDocument(document, projectPath.parent_path());
+        require(options.worldForwardKinematics(result.points.front().joints).matrix().allFinite(),
+            "FK snapshot stays valid after project replacement");
+    }
+
+    void verifyIkController(QApplication& application, const std::filesystem::path& projectPath,
+        const std::filesystem::path& trajectoryPath)
+    {
+        using namespace motion_planning;
+        simulation_project::ProjectDocument document;
+        std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "UI IK project loads");
+        TrajectoryImportOptions importOptions;
+        importOptions.robotId = "ABB4600_urdf";
+        auto imported = ProjectTrajectoryImporter::importFile(trajectoryPath, importOptions);
+        if(!imported.success) { require(false, "UI IK fixture imports"); return; }
+        if(imported.plan.cartesianControlPoints.points.size() > 6) {
+            imported.plan.cartesianControlPoints.points.resize(6);
+        }
+        require(MotionPlanningProjectStore::upsertPlan(document, imported.plan, &error), "UI stores imported plan");
+        simulation_project::ProjectSession session;
+        session.setDocument(document, projectPath, false, false);
+        robot_qt_viewer::RobotQtViewerEventHub hub;
+        robot_qt_viewer::RobotQtViewerDocumentController documentController(session, hub);
+        robot_qt_viewer::RobotQtViewerSelectionModel selection(hub);
+        robot_qt_viewer::RobotQtViewerViewportPreviewState preview(hub);
+        robot_qt_viewer::RobotQtViewerOperationStatusStore status(hub);
+        robot_qt_viewer::RobotQtViewerDocumentContext context(session, documentController, selection, preview, hub, status);
+        RobotViewport viewport;
+        viewport.resize(640, 480);
+        viewport.loadProjectDocument(document, projectPath.parent_path());
+        viewport.show();
+        application.processEvents();
+        const auto names = ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        for(std::size_t i = 0; i < names.size(); ++i) {
+            viewport.setRobotJointValue(QStringLiteral("ABB4600_urdf"), QString::fromStdString(names[i]), 0.05 * (i + 1));
+        }
+        const auto actualFk = viewport.robotForwardKinematics(QStringLiteral("ABB4600_urdf"), names, true);
+        require(static_cast<bool>(actualFk), "UI exposes independent actual-model FK");
+        if(!actualFk) { return; }
+        OverlayObservingServices services(viewport);
+        context.setViewportServices(&services);
+        selection.selectRobotLink(QStringLiteral("ABB4600_urdf"), QStringLiteral("Link6"));
+        MotionPlanningEditorWidget widget;
+        robot_qt_viewer::MotionPlanningModuleController controller(widget, context);
+        widget.trajectorySelectionChanged(QString::fromStdString(imported.plan.id));
+        auto* pointsToggle = widget.findChild<QCheckBox*>(QStringLiteral("trajectoryPointsVisible"));
+        auto* exportButton = widget.findChild<QPushButton*>(QStringLiteral("exportJointTrajectory"));
+        auto* tabs = widget.findChild<QTabWidget*>();
+        require(pointsToggle && exportButton && tabs && tabs->widget(0)->isAncestorOf(pointsToggle) &&
+            tabs->widget(0)->isAncestorOf(exportButton), "Both new controls belong to Basic Planning");
+        if(!pointsToggle || !exportButton) { return; }
+        require(!pointsToggle->isChecked() && !services.pointsVisible && services.pointCount > 0,
+            "Imported trajectory sphere markers are off by default");
+        require(!exportButton->isEnabled(), "Joint export is disabled before IK has joint values");
+        pointsToggle->setChecked(true);
+        require(services.pointsVisible, "Checkbox enables imported sphere markers");
+        widget.inverseKinematicsRequested(true);
+        require(services.pointsVisible, "Marker preference survives IK and view refresh");
+        const auto pointCount = services.pointCount;
+        pointsToggle->setChecked(false);
+        require(!services.pointsVisible && services.pointCount == pointCount,
+            "Unchecking hides markers while preserving imported trajectory geometry");
+        const auto plans = MotionPlanningProjectStore::plans(session.document());
+        const auto plan = std::find_if(plans.begin(), plans.end(), [&](const StoredMotionPlan& candidate) {
+            return candidate.id == imported.plan.id;
+        });
+        const bool solved = plan != plans.end() &&
+            plan->trajectory.points.size() == imported.plan.cartesianControlPoints.points.size();
+        require(solved, "Basic Planning Solve IK and apply stores every solved point");
+        if(solved) {
+            std::vector<double> applied;
+            for(const auto& name : names) {
+                bool ok = false;
+                applied.push_back(services.robotJointValue(QStringLiteral("ABB4600_urdf"), QString::fromStdString(name), &ok));
+                require(ok, "UI applied joint is readable");
+            }
+            const auto expected = ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(plan->trajectory.points.front().q);
+            bool signsPreserved = applied.size() == expected.size();
+            for(std::size_t i = 0; i < applied.size(); ++i) { signsPreserved = signsPreserved && std::abs(applied[i] - expected[i]) < 1.0e-12; }
+            require(signsPreserved, "UI applies stored IK angles using the unchanged sign mapping");
+            require((actualFk(applied).translation() - imported.plan.cartesianControlPoints.points.front().tcpPose.translation()).norm() < 2.0e-6,
+                "Basic Planning apply aligns actual TCP with the imported trajectory");
+            // A long result must export every stored row, not only sampled table rows.
+            auto exportPlan = *plan;
+            const auto solvedPoints = exportPlan.trajectory.points;
+            exportPlan.trajectory.points.clear();
+            for(int i = 0; i < 2001; ++i) {
+                auto point = solvedPoints[static_cast<std::size_t>(i) % solvedPoints.size()];
+                point.time = i * 0.125;
+                exportPlan.trajectory.points.push_back(std::move(point));
+            }
+            auto exportDocument = session.document();
+            require(MotionPlanningProjectStore::upsertPlan(exportDocument, exportPlan, &error), "Long export fixture stores");
+            session.setDocument(exportDocument, projectPath, false, false);
+            robot_qt_viewer::RobotQtViewerEvent changed;
+            changed.kind = robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged;
+            controller.handleEvent(changed);
+            require(exportButton->isEnabled() && !services.pointsVisible,
+                "Export is enabled after IK and marker preference survives document refresh");
+            QTemporaryDir exportFolder;
+            require(exportFolder.isValid(), "Export fixture directory exists");
+            if(!exportFolder.isValid()) { return; }
+            const auto output = std::filesystem::path(exportFolder.path().toStdWString()) / "joint_export.txt";
+            SaveDialogAcceptor acceptor;
+            acceptor.path = QString::fromStdWString(output.wstring());
+            qputenv("SMROBOT_FILE_DIALOG_BACKEND", "qt");
+            application.installEventFilter(&acceptor);
+            const QLocale previousLocale;
+            QLocale::setDefault(QLocale(QLocale::German, QLocale::Germany));
+            exportButton->click();
+            QLocale::setDefault(previousLocale);
+            application.removeEventFilter(&acceptor);
+            const auto exported = ProjectCdfJointAngleImporter::importFile(output);
+            require(exported.success && exported.points.size() == exportPlan.trajectory.points.size(),
+                "TXT exports all 2001 rows and can be read by the degree-format importer");
+            bool valuesMatch = exported.points.size() == exportPlan.trajectory.points.size();
+            for(std::size_t i = 0; valuesMatch && i < exported.points.size(); ++i) {
+                const auto& expectedPoint = exportPlan.trajectory.points[i];
+                const auto& actualPoint = exported.points[i];
+                valuesMatch = std::abs(expectedPoint.time - actualPoint.timeSeconds) < 0.00000051 &&
+                    actualPoint.jointAnglesDegrees.size() == expectedPoint.q.size();
+                for(std::size_t j = 0; valuesMatch && j < expectedPoint.q.size(); ++j) {
+                    valuesMatch = std::abs(actualPoint.jointAnglesDegrees[j] - expectedPoint.q[j] * 180.0 / 3.141592653589793) < 0.00000051;
+                }
+            }
+            require(valuesMatch, "Export preserves times and stored IK signs, converts radians to degrees with six decimals");
+            std::ifstream raw(output);
+            std::string header, line;
+            for(int i = 0; i < 4 && std::getline(raw, line); ++i) {
+                if(!line.empty() && line.back() == '\r') { line.pop_back(); }
+                header += line + '\n';
+            }
+            require(header == "# IK joint angle export\n# Time unit: seconds\n# Joint angle unit: degrees\ntime_s\tJ1_deg\tJ2_deg\tJ3_deg\tJ4_deg\tJ5_deg\tJ6_deg\n",
+                "Export header and tab delimiters match the supplied TXT example");
+
+        }
+        viewport.close();
+    }
+
     void verifyPlaybackExport(QApplication& application, const std::filesystem::path& folder)
     {
         simulation_project::ProjectSession session;
@@ -392,6 +716,15 @@ int main(int argc, char** argv)
     if(failures) { return 1; }
     const std::filesystem::path folder(temporary.path().toStdWString());
     writeFixture(folder);
+    verifyModelIk();
+    if(argc >= 4 && std::string(argv[1]) == "--ik-project") {
+        const auto report = argc >= 5 ? std::filesystem::u8path(argv[4]) : std::filesystem::path("ik_round_trip.csv");
+        try { verifyImportedIk(std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]), report); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        try { verifyIkController(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3])); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        return failures ? 1 : 0;
+    }
     try { verifyGeometry(folder); }
     catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
     verifyPlot(application);

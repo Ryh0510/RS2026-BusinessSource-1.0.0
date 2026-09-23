@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
+#include <Eigen/Geometry>
 #include <vector>
 
 #include <QString>
@@ -77,6 +79,15 @@ namespace robot_qt_viewer
         virtual void selectMountedAttachment(const QString& attachmentId) = 0;
         virtual bool setActiveMountedAttachment(const QString& attachmentId) = 0;
         virtual void setToolFrameVisibility(const RobotQtViewerToolFrameVisibility& visibility) = 0;
+        using RobotForwardKinematics = std::function<Eigen::Isometry3d(const std::vector<double>&)>;
+        virtual RobotForwardKinematics robotForwardKinematics(const QString& robotId,
+            const std::vector<std::string>& jointNames, bool includeTool) const
+        {
+            Q_UNUSED(robotId);
+            Q_UNUSED(jointNames);
+            Q_UNUSED(includeTool);
+            return {};
+        }
         virtual void setSprayRangeVisible(
             const QString& robotId,
             bool visible) = 0;
@@ -218,10 +229,11 @@ namespace robot_qt_viewer
         }
         virtual void setTrajectoryControlPointOverlay(
             const QString& trajectoryId,
-            const std::vector<simulation_project::TransformDesc>& controlPoints)
+            const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true)
         {
             (void)trajectoryId;
             (void)controlPoints;
+            (void)showPoints;
         }
         virtual void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString())
         {
