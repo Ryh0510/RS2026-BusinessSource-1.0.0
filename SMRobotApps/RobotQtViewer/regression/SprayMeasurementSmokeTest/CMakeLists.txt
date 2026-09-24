@@ -34,3 +34,12 @@ if(BuildTests)
         LABELS "RobotQtViewer;Regression;Spray"
         WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
 endif()
+
+if(BuildTests)
+    add_test(NAME RobotQtViewerMultiIkSmoke COMMAND ${EXAMPLE_TARGET_NAME}
+        --multi-ik-project "${CMAKE_SOURCE_DIR}/config/projects/ABB4600-burnner.sys.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ik_tcp_poses.txt")
+    set_tests_properties(RobotQtViewerMultiIkSmoke PROPERTIES
+        LABELS "RobotQtViewer;Regression;IK"
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
+endif()

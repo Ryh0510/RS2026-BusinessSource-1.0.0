@@ -14,6 +14,10 @@
 #include <ProjectMotionPlanning/CdfJointAngleImport.h>
 #include <QLocale>
 #include <QTableWidget>
+#include <QComboBox>
+#include <QElapsedTimer>
+#include <QLabel>
+#include <chrono>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 #include <SimulationProject/ProjectIo.h>
 #include <Eigen/SVD>
@@ -262,6 +266,12 @@ namespace
     {
     public:
         using RobotQtViewerViewportServicesAdapter::RobotQtViewerViewportServicesAdapter;
+        int samples = 0;
+        void appendEndEffectorTraceSample() override
+        {
+            ++samples;
+            RobotQtViewerViewportServicesAdapter::appendEndEffectorTraceSample();
+        }
         bool pointsVisible = true;
         std::size_t pointCount = 0;
         void setTrajectoryControlPointOverlay(const QString& id,
@@ -312,6 +322,131 @@ namespace
         require(!result.success, "Non-finite IK target is rejected");
         require(ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues({ 1,2,3,4,5,6 }) ==
             std::vector<double>({ -1,2,3,-4,-5,-6 }), "Existing IRB4600 joint signs are preserved");
+    }
+
+    void verifyMultiIkDomain()
+    {
+        using namespace motion_planning;
+        constexpr double pi = 3.14159265358979323846;
+        CartesianMultiIkOptions options;
+        options.model.jointNames = ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        options.model.seedJoints = {0.3, 0.4, 0.5, 0.2, 0.3, 0.4};
+        options.model.worldForwardKinematics = [](const std::vector<double>& q) {
+            Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+            pose.translation() = Eigen::Vector3d(std::sin(q[0]), std::sin(q[1]), std::sin(q[2]));
+            pose.linear() = (Eigen::AngleAxisd(q[3], Eigen::Vector3d::UnitX()) *
+                Eigen::AngleAxisd(q[4], Eigen::Vector3d::UnitY()) *
+                Eigen::AngleAxisd(q[5], Eigen::Vector3d::UnitZ())).toRotationMatrix();
+            return pose;
+        };
+        options.lower.assign(6, -pi); options.upper.assign(6, pi);
+        options.lower[0] = -3 * pi; options.upper[0] = 3 * pi;
+        StoredMotionPlan input;
+        robottrajectory::TimedCartesianPoint point;
+        point.tcpPose = options.model.worldForwardKinematics(options.model.seedJoints);
+        input.cartesianControlPoints.points.push_back(point);
+        auto result = ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(input, options);
+        require(result.success && result.layers[0].candidates.size() >= 6, "Multi-start IK retains multiple geometric roots and turns");
+        bool positiveTurn = false, negativeTurn = false, verified = true;
+        for(const auto& candidate : result.layers[0].candidates) {
+            positiveTurn |= candidate.turns[0] > 0; negativeTurn |= candidate.turns[0] < 0;
+            const auto actual = options.model.worldForwardKinematics(candidate.joints);
+            verified &= (actual.translation() - point.tcpPose.translation()).norm() <= options.positionTolerance;
+            verified &= Eigen::AngleAxisd(actual.linear().transpose() * point.tcpPose.linear()).angle() <= options.orientationTolerance;
+            for(int j = 0; j < 6; ++j) { verified &= candidate.joints[j] >= options.lower[j] && candidate.joints[j] <= options.upper[j]; }
+        }
+        require(verified && positiveTurn && negativeTurn, "All candidates satisfy actual FK, bounds, and retain both turn signs");
+        StoredMotionPlan selected;
+        std::string error;
+        require(ProjectTrajectoryInverseKinematics::selectMultiIkTrajectory(result, {1}, selected, error) &&
+            selected.trajectory.points.size() == 1 && selected.trajectory.points[0].q == result.layers[0].candidates[1].joints,
+            "Chosen trajectory contains exactly one selected solution per target");
+        require(!ProjectTrajectoryInverseKinematics::selectMultiIkTrajectory(result, {999999}, selected, error),
+            "Invalid selection cannot create a playback trajectory");
+        options.maxCandidatesPerPoint = 1;
+        auto capped = ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(input, options);
+        require(capped.layers[0].truncated && capped.layers[0].candidates.size() == 1, "Candidate cap explicitly marks truncated enumeration");
+        options.maxCandidatesPerPoint = 512;
+        auto unreachable = input;
+        unreachable.cartesianControlPoints.points[0].tcpPose.translation().x() = 10;
+        auto failed = ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(unreachable, options);
+        require(!failed.success && failed.layers[0].candidates.empty() &&
+            !ProjectTrajectoryInverseKinematics::selectMultiIkTrajectory(failed, {0}, selected, error), "No-solution layer blocks playback");
+        options.cancelled = []() { return true; };
+        auto cancelled = ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(input, options);
+        require(cancelled.cancelled && !cancelled.success && cancelled.layers.empty(), "Cancellation returns no complete trajectory");
+        options.cancelled = {};
+        options.lower[0] = 2; options.upper[0] = 1;
+        require(!ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(input, options).success, "Invalid bounds are rejected");
+        options.lower[0] = -pi; options.upper[0] = pi;
+        options.model.worldForwardKinematics = {};
+        require(!ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(input, options).success, "Multi IK never falls back to legacy nominal DH");
+    }
+
+    void verifyMultiIkImported(const std::filesystem::path& projectPath,
+        const std::filesystem::path& trajectoryPath, const std::filesystem::path& reportPath, int seeds = 64)
+    {
+        using namespace motion_planning;
+        simulation_project::ProjectDocument document;
+        std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "Multi IK project loads");
+        document.collision.query.enabled = false;
+        ProjectScene scene;
+        scene.setProjectDocument(document, projectPath.parent_path());
+        require(scene.initialize(), "Multi IK actual robot scene initializes");
+        TrajectoryImportOptions importOptions;
+        importOptions.robotId = "ABB4600_urdf";
+        auto imported = ProjectTrajectoryImporter::importFile(trajectoryPath, importOptions);
+        require(imported.success, "Multi IK directly imports cartesian targets");
+        if(!imported.success) { return; }
+        CartesianMultiIkOptions options;
+        options.model.robotId = importOptions.robotId;
+        options.model.jointNames = ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto fk = scene.robotForwardKinematics(importOptions.robotId, options.model.jointNames, true);
+        require(static_cast<bool>(fk), "Multi IK uses actual world/TCP snapshot");
+        if(!fk) { return; }
+        options.model.worldForwardKinematics = [fk](const auto& q) {
+            return fk(ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q));
+        };
+        constexpr double pi = 3.14159265358979323846;
+        options.lower.assign(6, -pi); options.upper.assign(6, pi);
+        std::vector<double> modelLower, modelUpper;
+        require(ProjectTrajectoryInverseKinematics::readRevoluteJointLimits(document, projectPath.parent_path(),
+            options.model.robotId, options.model.jointNames, modelLower, modelUpper, error), "Actual URDF limits load without collision detectors");
+        options.seedCount = seeds;
+        options.progress = [](std::size_t done, std::size_t total) {
+            if(done % 25 == 0 || done == total) { std::cout << "Multi IK progress " << done << '/' << total << '\n'; }
+        };
+        const auto start = std::chrono::steady_clock::now();
+        const auto result = ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(imported.plan, options);
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::cout << result.message << " elapsed_seconds=" << seconds << '\n';
+        require(result.success, "Every imported target has valid multi IK candidates");
+        std::size_t minCount = 999999, maxCount = 0, total = 0;
+        double maxPosition = 0, maxOrientation = 0;
+        std::ofstream report(reportPath);
+        report << "point,candidate,j1_deg,j2_deg,j3_deg,j4_deg,j5_deg,j6_deg,position_error_mm,orientation_error_deg\n" << std::setprecision(12);
+        for(const auto& layer : result.layers) {
+            minCount = std::min(minCount, layer.candidates.size()); maxCount = std::max(maxCount, layer.candidates.size());
+            const auto& target = imported.plan.cartesianControlPoints.points[layer.pointIndex].tcpPose;
+            const Eigen::JacobiSVD<Eigen::Matrix3d> svd(target.linear(), Eigen::ComputeFullU | Eigen::ComputeFullV);
+            const Eigen::Matrix3d desiredRotation = svd.matrixU() * svd.matrixV().transpose();
+            for(std::size_t c = 0; c < layer.candidates.size(); ++c) {
+                const auto& candidate = layer.candidates[c];
+                const auto actual = options.model.worldForwardKinematics(candidate.joints);
+                const double pe = (actual.translation() - target.translation()).norm();
+                const double re = Eigen::AngleAxisd(actual.linear().transpose() * desiredRotation).angle();
+                maxPosition = std::max(maxPosition, pe); maxOrientation = std::max(maxOrientation, re);
+                ++total;
+                report << layer.pointIndex + 1 << ',' << c + 1;
+                for(double q : candidate.joints) { report << ',' << q * 180 / pi; }
+                report << ',' << pe * 1000 << ',' << re * 180 / pi << '\n';
+            }
+        }
+        std::cout << "Multi IK min=" << minCount << " max=" << maxCount << " total=" << total
+            << " max_mm=" << maxPosition * 1000 << " max_deg=" << maxOrientation * 180 / pi << '\n';
+        require(minCount >= 2 && maxPosition <= options.positionTolerance && maxOrientation <= options.orientationTolerance,
+            "Independent actual FK verifies every candidate and multiple configurations at every point");
     }
 
     void verifyImportedIk(const std::filesystem::path& projectPath,
@@ -490,6 +625,102 @@ namespace
         require(!exportButton->isEnabled(), "Joint export is disabled before IK has joint values");
         pointsToggle->setChecked(true);
         require(services.pointsVisible, "Checkbox enables imported sphere markers");
+        auto* allButton = widget.findChild<QPushButton*>(QStringLiteral("solveAllIk"));
+        auto* multiPoints = widget.findChild<QComboBox*>(QStringLiteral("multiIkPoint"));
+        auto* multiTable = widget.findChild<QTableWidget*>(QStringLiteral("multiIkCandidates"));
+        auto* multiPlay = widget.findChild<QPushButton*>(QStringLiteral("multiIkPlay"));
+        require(allButton && multiPoints && multiTable && multiPlay && tabs->widget(0)->isAncestorOf(allButton),
+            "All IK and multi-solution controls belong to Basic Planning");
+        if(!allButton || !multiPoints || !multiTable || !multiPlay) { return; }
+        hub.subscribe(robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged, &controller,
+            [&](const auto& event) { controller.handleEvent(event); });
+        hub.subscribe(robot_qt_viewer::RobotQtViewerEventKind::ViewportPreviewChanged, &controller,
+            [&](const auto& event) { controller.handleEvent(event); });
+        // ToolSetup::refresh synchronizes pinned frames after every document change.
+        // Reproduce that nested notification as well as the direct apply notification.
+        QObject toolSetupRefresh;
+        hub.subscribe(robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged, &toolSetupRefresh,
+            [&](const auto&) {
+                robot_qt_viewer::RobotQtViewerViewportPreviewPayload frames;
+                frames.setPinnedRobotMountFrames = true;
+                preview.mutate(frames, QStringLiteral("toolSetupPinnedMountFrames"));
+            });
+        const auto waitMulti = [&]() {
+            QElapsedTimer timer; timer.start();
+            while(allButton->text() != QStringLiteral("\u5168\u9006\u89e3") && timer.elapsed() < 60000) {
+                application.processEvents(QEventLoop::AllEvents, 20);
+            }
+            require(timer.elapsed() < 60000, "Background multi IK finishes without blocking GUI");
+        };
+        widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);
+        waitMulti();
+        require(multiPoints->count() == static_cast<int>(imported.plan.cartesianControlPoints.points.size()) &&
+            multiTable->rowCount() >= 2 && multiPlay->isEnabled(), "Multi-result shows every point and its candidates");
+        if(multiTable->rowCount() >= 2) {
+            const int candidate = multiTable->rowCount() - 1;
+            std::vector<double> expected;
+            for(int j = 0; j < 6; ++j) { expected.push_back(multiTable->item(candidate, j + 1)->text().toDouble()); }
+            widget.multiIkApplyRequested(0, candidate);
+            bool appliedCorrectly = true;
+            for(int j = 0; j < 6; ++j) {
+                bool ok = false;
+                const double actual = services.robotJointValue(QStringLiteral("ABB4600_urdf"), QString::fromStdString(names[j]), &ok);
+                const double sign = j == 0 || j >= 3 ? -1 : 1;
+                appliedCorrectly &= ok && std::abs(actual * 180 / 3.141592653589793 - sign * expected[j]) < 0.00001;
+            }
+            require(appliedCorrectly && multiTable->rowCount() >= 2, "Single candidate applies with original signs and retains multi results");
+            if(multiTable->rowCount() < 2) { return; }
+            const int candidateCount = multiTable->rowCount();
+            const int pointCountBeforeApply = multiPoints->count();
+            widget.multiIkApplyRequested(0, 0);
+            widget.multiIkApplyRequested(0, candidate);
+            require(multiTable->rowCount() == candidateCount && multiPoints->count() == pointCountBeforeApply && multiPlay->isEnabled(),
+                "Repeated apply preserves all candidates and playback through nested ToolSetup refresh");
+            robot_qt_viewer::RobotQtViewerViewportPreviewPayload displayOnly;
+            displayOnly.setToolFrameVisibility = true;
+            displayOnly.focusMountFrameLink = true;
+            preview.mutate(displayOnly, QStringLiteral("multiIkDisplayRegression"));
+            preview.clearTaskPreview(QStringLiteral("multiIkClearFocusRegression"));
+            require(multiTable->rowCount() == candidateCount && multiPlay->isEnabled(),
+                "Frame visibility and focus changes preserve multi IK results");
+            if(multiPoints->count() > 1) {
+                multiPoints->setCurrentIndex(1);
+                require(multiTable->rowCount() > 0, "Other control points remain selectable after applying a candidate");
+                multiPoints->setCurrentIndex(0);
+            }
+            widget.multiIkSelectRequested(0, candidate, true);
+            require(multiTable->item(candidate, 0)->text().contains('*'), "Explicit selected candidate is marked for playback");
+            services.samples = 0;
+            auto* trace = widget.findChild<QCheckBox*>(QStringLiteral("endEffectorTraceVisible"));
+            trace->setChecked(true);
+            widget.multiIkPlaybackRequested(0.1);
+            QElapsedTimer playbackWait; playbackWait.start();
+            while(multiPlay->text() == QStringLiteral("Stop playback") && playbackWait.elapsed() < 10000) {
+                application.processEvents(QEventLoop::AllEvents, 20);
+            }
+            require(services.samples == multiPoints->count(), "Multi playback applies exactly one solution per control point and draws trace");
+            const auto afterMulti = MotionPlanningProjectStore::plans(session.document());
+            require(afterMulti.size() == 1 && afterMulti[0].trajectory.empty(), "Multi debug playback does not overwrite imported trajectory");
+            widget.multiIkPlaybackRequested(10);
+            widget.playbackStopRequested();
+            require(multiPlay->isEnabled(), "Multi playback can stop and restart");
+            robot_qt_viewer::RobotQtViewerViewportPreviewPayload geometryChange;
+            geometryChange.previewRobotBaseTransform = true;
+            geometryChange.robotBaseRobotId = QStringLiteral("ABB4600_urdf");
+            geometryChange.robotBaseTransform.x = 0.1;
+            preview.mutate(geometryChange, QStringLiteral("multiIkBaseRegression"));
+            require(multiPoints->count() == 0 && multiTable->rowCount() == 0 && !multiPlay->isEnabled(),
+                "Actual base transform preview still invalidates multi IK results");
+        }
+        widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);
+        widget.multiIkCancelRequested(); waitMulti();
+        require(multiPoints->count() == 0 && !multiPlay->isEnabled(), "Cancelled job does not publish stale/incomplete results");
+        widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);
+        widget.trajectorySelectionChanged(QStringLiteral("missing")); waitMulti();
+        require(multiPoints->count() == 0, "Changing source cancels background work and clears results");
+        widget.trajectorySelectionChanged(QString::fromStdString(imported.plan.id));
+        hub.unsubscribe(&controller);
+        hub.unsubscribe(&toolSetupRefresh);
         widget.inverseKinematicsRequested(true);
         require(services.pointsVisible, "Marker preference survives IK and view refresh");
         const auto pointCount = services.pointCount;
@@ -717,6 +948,15 @@ int main(int argc, char** argv)
     const std::filesystem::path folder(temporary.path().toStdWString());
     writeFixture(folder);
     verifyModelIk();
+    verifyMultiIkDomain();
+    if(argc >= 4 && std::string(argv[1]) == "--multi-ik-project") {
+        try {
+            verifyMultiIkImported(std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]),
+                argc >= 5 ? std::filesystem::u8path(argv[4]) : std::filesystem::path("multi_ik.csv"), argc >= 6 ? std::stoi(argv[5]) : 64);
+            verifyIkController(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]));
+        } catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        return failures ? 1 : 0;
+    }
     if(argc >= 4 && std::string(argv[1]) == "--ik-project") {
         const auto report = argc >= 5 ? std::filesystem::u8path(argv[4]) : std::filesystem::path("ik_round_trip.csv");
         try { verifyImportedIk(std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]), report); }

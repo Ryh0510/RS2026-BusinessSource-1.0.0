@@ -264,3 +264,44 @@
 - 平滑前后关节弯曲代价 25914.1 → 5630.91 → 2907.07。历史输出与本轮输出同时间采样下的末端累计转弯角 1426.018 → 615.693，减少约 57%；两次优化的 GUI/服务参数有差异，不作单因素速度或质量提升结论。
 - 保留所有原始时间戳和首尾周期等价配置；最大相邻角差 10.829 度，长边仍使用 0.001 rad 碰撞检查。没有执行速度/加速度/jerk 的时间参数化。
 - 最新 Release 仍为 build/Release/bin/RobotQtViewer_APFrx64.exe；结果、对比图和方法说明见同级 build/APF-smoothing-report.md。完整回归之后只增加阶段进度日志及测试断言，数值算法未改。
+
+## 2026-09-24 末端轨迹多逆解与 Basic Planning 调试
+
+### 实现
+
+- 保留旧 solveCartesianControlPoints，新增 solveAllCartesianControlPoints、CartesianMultiIkOptions/Result/Layer/Candidate，以及选解序列构造和实际模型限位读取接口。无新增依赖、持久 schema 或 OMPL/APF/CDF 流程变更。
+- 直接读取导入的 cartesianControlPoints。实际 world FK 快照包含机器人基坐标和所选 TCP/法兰；继续沿用 Joint1/4/5/6 符号反转，未采用旧 DH 构造新候选。
+- 每点沿用前一点所有几何根并加 64 个确定性 Halton 分散初值；每次最多 160 次阻尼迭代、步长限制与回退。找到一组后继续搜索。
+- 周期几何根去重后在有限搜索窗口内枚举 2pi lifts，保留未折回角度与 turn；每组重新通过实际 FK 的位置 1e-6 m、姿态 1e-6 rad 阈值验证。旋转小数矩阵沿用 SVD 正交修正。
+- GUI 输入每轴上下限（度）并与实际模型机械限位取交集，符号变换同时正确变换上下界。continuous 模型限位为无限，必须使用显式搜索窗口；默认各轴 [-180,180] 度。窗口不代表真实机械限位。
+- 每点最多 512 个候选，最多 64 个几何根；达到限制显式显示截断。奇异位姿可能有无限解族，数值候选不声称数学完备或固定八组。
+- Basic Planning 新增“全逆解”、搜索设置、取消和进度；新增“多解关节轨迹”主从视图，控制点下拉栏显示时间/候选数/播放解，表格显示六轴角度、turn、位置/姿态误差。编号仅在该点内有效，不伪装肩肘腕分支标签。
+- 提供单点应用、设置当前点播放解、从当前解按未折回关节距离就近选取后续解、动态播放与停止。星号标记实际播放解；有无解点时禁止完整播放。
+- 计算在 QThread 独占 FK 快照，主线程显示进度。项目、源轨迹、机器人、工具或相关预览改变时取消/清空；析构取消并等待；异常回到 UI。模块事件配置增加工具、附件、预览订阅。
+- 多解候选是当前调试会话数据，不覆盖原始导入轨迹、不持久化所有候选。单点仍通过 document mutation，动态运行通过已有 runtime 接口并记录末端轨迹线。
+- 多解动态播放属于逐点调试，不进行 APF/CDF、段间碰撞/速度/加速度验证，不强制同步构建网格碰撞场景。原普通关节轨迹播放的碰撞行为保留。
+
+### 验证与限制
+
+- Release/Debug 的 MotionPlanningEditor、ProjectMotionPlanning、RobotQtViewer、RobotQtViewer-SprayMeasurementSmoke 构建通过。
+- Release 5/5：ProjectMotionPlanningHeadless、ProjectMotionPlanningImportHeadless、RobotQtViewerIkPlaybackSmoke、RobotQtViewerSprayMeasurementSmoke、RobotQtViewerMultiIkSmoke。Debug 后三项 3/3 通过。
+- 回归覆盖实际模型多解、正负 turn、限位、FK 位置/姿态阈值、候选截断、无解层禁止播放、无实际 FK 拒绝、取消、源切换、应用符号、播放星号选择及逐点末端轨迹采样、旧单逆解与 TXT 导出。
+- 初次 Debug GUI 测试复用了普通播放的同步网格碰撞场景构建，造成长时间无响应且一次被 Windows 关闭；另一次因固定 600ms 测试等待不足失败。已将多解播放定义为明确标注的纯构型调试，并把测试改为有上限地等待实际播放完成；最终 Debug 全部通过。
+- 真实输入 C:/Users/14390/Desktop/11111.txt：749/749 点找到候选，5986 组，747 个点各 8 组，第 121 点 4 组、第 171 点 6 组，无截断。默认 64 分散初值全量搜索约 11.4507 秒（不含加载/UI播放）。
+- 独立 FK 复验所有 5986 组：最大位置误差 0.000999176 mm，最大姿态误差 0.0000541424 度。对第 121/171 点使用 1024 初值重新搜索仍为 4/6 组；这不构成解完备性的数学证明。
+- 日志与候选 CSV 在同级 build/multi-ik-11111.log、multi-ik-11111.csv；强化搜索记录为 multi-ik-probe.log、multi-ik-probe.csv。最终测试日志为 multi-ik-tests-release-final.log / multi-ik-tests-debug-final.log。
+- 当前无原名 Release EXE 被占用，已正常更新 build/Release/bin/RobotQtViewerrx64.exe；历史 RobotQtViewer_APFrx64.exe 不是本轮新构建。
+- git diff --check 通过；涉及 C++/CMake 文件全部保持 CRLF。
+
+- 最终 RobotQtViewerrx64.exe 隐藏启动 smoke（--smoke-exit-ms 1800）返回 0。
+
+## 2026-09-24 多解结果被显示刷新误清空
+
+- 用户报告单点应用一次后多解栏消失，后续调试按钮不可用。旧回归只订阅 ProjectDocumentChanged，缺少实际应用中 ToolSetup 的二次通知，未覆盖此问题。
+- 源码确认：单点应用发出 motionPlanningMultiIkApply 文档变化；ToolSetup 刷新后同步 pinned frames，使用独立 sourceId toolSetupPinnedMountFrames 发出 ViewportPreviewChanged。旧 controller 对所有 preview 事件调用 invalidateMultiIk，因此原 apply sourceId 例外不起作用。
+- 修复仅在 preview 包含基座、mount、object frame 或 scene object 几何变换时使多解失效。坐标系显示、固定坐标系、焦点及纯显示预览清理保留候选和选解。真实项目/轨迹/机器人/工具更改仍按原规则失效。未修改求解算法、关节符号、限位、应用 mutation 或播放数据。
+- 回归补充真实事件链同等的 ToolSetup 嵌套 pinned-frame 通知：修改前 RobotQtViewerMultiIkSmoke 在“Single candidate applies with original signs and retains multi results”处失败；修改后验证连续应用不同解、所有点/候选保留、显示/焦点刷新、切换控制点、选解与动态播放，以及基座变换仍清空旧解。
+- Release 三项回归（MultiIk、IkPlayback、SprayMeasurement）通过；修复版隐藏启动 smoke 返回 0。日志为 build/multi-ik-retention-before.log、multi-ik-retention-release.log、multi-ik-retention-startup.log。
+- 用户原 RobotQtViewerrx64.exe 正在运行，未终止或覆盖；当前交付 build/Release/bin/RobotQtViewer_MultiIKFixrx64.exe，与现有 DLL 同目录。
+
+- Debug 主程序和 smoke 目标构建通过，RobotQtViewerMultiIkSmoke 通过（43.58 秒）；日志 build/multi-ik-retention-debug.log。源码/CMake 保持 CRLF，git diff --check 通过。

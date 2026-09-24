@@ -127,3 +127,20 @@
 - 验证目标：几何与周期关节回归、749 点输入且匹配 GUI 默认参数的单轮全量验证及平滑度对比，Release/Debug 编译和测试。
 
 - 完成：4529 点、0.001 rad 独立回放与再导入均无碰撞段，QP 一轮耗时 870.532 秒，点间距仍未收敛到 10 mm。Release/Debug 各 5 项回归通过。末端曲线对比与限制见同级 build/APF-smoothing-report.md。
+
+## 2026-09-24 多逆解与调试
+
+- 当前相关工作树干净。本轮只新增直接读取末端控制点的多逆解与 Basic Planning 调试入口，保留单逆解和符号映射。
+- ProjectMotionPlanning 拥有有限范围多初值搜索、实际 FK 复验、turn 枚举、去重和单解序列组装；Workbench 拥有后台任务与主从表投影，应用仍走 document/runtime 正式入口。
+- 数值搜索不保证枚举全部离散根；无机械限位的 continuous 关节采用显式可配置搜索窗口，不把窗口宣称为物理限位。
+- 后台单线程独占 FK 快照，支持取消/进度；源项目、轨迹、机器人改变时丢弃过期结果。
+- 验证：领域边界/多圈回归、真实 ABB/TCP 多解复验、GUI 单点/选解播放、Release/Debug 构建。
+
+- 完成：多逆解接口、后台任务、可配置搜索窗口、候选主从表、单点应用和选解序列播放均已实现。真实 749 点得到 5986 组有效候选，搜索约 11.45 秒；Release 5 项、Debug 3 项相关回归通过。可执行文件为同级 build/Release/bin/RobotQtViewerrx64.exe。详见本日 audit 和 multi_ik_debug_usage.md。
+
+## 2026-09-24 多解单点应用后结果消失修复
+
+- 保留上一轮未提交的多逆解实现。根因是应用关节角的文档通知触发 ToolSetup::refresh → syncPinnedRobotMountFrames → ViewportPreviewChanged，旧处理无条件清空多解。
+- MotionPlanningModuleController 按 preview payload 区分几何变换和显示/焦点状态；只有几何变化使多解失效。复用正式 preview state，不屏蔽消息、不绕过 document mutation。
+- 增补跨面板嵌套通知回归，先确认旧实现失败，修复后验证连续应用、候选切换、选解播放及真正基座变换的失效行为。
+- 当前用户原 EXE 在运行，Release 修复版另名为同级 build/Release/bin/RobotQtViewer_MultiIKFixrx64.exe。

@@ -173,7 +173,10 @@ namespace robot_qt_viewer
                 makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ProjectOpened),
                 makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ProjectDocumentChanged),
                 makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::RobotRuntimeChanged),
-                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ViewportReloaded)
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ViewportReloaded),
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ToolSetupChanged),
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::AttachmentChanged),
+                makeSubscription(QStringLiteral("motionPlanning"), RobotQtViewerEventKind::ViewportPreviewChanged)
             }));
 
         config.modules.push_back(makeModule(
