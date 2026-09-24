@@ -144,3 +144,21 @@
 - MotionPlanningModuleController 按 preview payload 区分几何变换和显示/焦点状态；只有几何变化使多解失效。复用正式 preview state，不屏蔽消息、不绕过 document mutation。
 - 增补跨面板嵌套通知回归，先确认旧实现失败，修复后验证连续应用、候选切换、选解播放及真正基座变换的失效行为。
 - 当前用户原 EXE 在运行，Release 修复版另名为同级 build/Release/bin/RobotQtViewer_MultiIKFixrx64.exe。
+
+## 2026-09-24 分层图 Top-M 筛选与 CDF 初始解
+
+- 开始时根仓库及相关子仓工作树干净，基线已包含多逆解和应用后结果保留修复。
+- 领域 ProjectMotionPlanning 新增分层图 API：仅相邻层全连接、无节点代价/碰撞检测，以实际未折回关节差和可配置权重精确求 Top-M；回溯存储受显式预算约束，超限报错而非静默裁边。
+- Workbench 增加 M/权重、筛选/取消、结果排名与逐点明细，后台计算，源逆解失效时取消旧任务。选中结果以原 IK 符号、度数和时间戳进入现有 CDF 初始栏。
+- 本轮不自动执行 APF 或 CDF，不进行碰撞后的最终 Top-K 排名。用户本轮的前 K 组输出按可配置 M 条运动学候选实现。
+- 验证：小图穷举对比、turn/同价/无解/取消/预算回归、GUI 到 CDF 符号时间对照、真实 749 点、Release/Debug 构建测试。
+
+- 完成：精确 Top-M API、后台筛选/取消、结果及完整明细、选中候选进入 CDF。Release 4 项/Debug 2 项回归通过；真实 749 点 Top-30 图计算约 0.0095 秒。当前可执行文件恢复为同级 build/Release/bin/RobotQtViewerrx64.exe。
+
+## 2026-09-24 构型选择对比窗口
+
+- 保留当前未提交的 Top-M 实现。新增 Basic Planning 按钮及 Qt 绘图窗口，由 controller 从完整排名结果投影一基逆解编号，不读采样表格，不改变筛选或优化算法。
+- 支持任意多选、叠加/分行和控制点区间；源结果失效时关闭旧窗口。编号仅代表当前点内的候选。
+- 验证完整序列投影、多选/区间、生命周期、Release/Debug 构建和 GUI 回归。
+
+- 完成：对比窗口及全量只读投影已接入，Release 三项/Debug 一项 GUI 回归通过，749 点单点差异绘图已视觉核对，主程序启动检查退出 0。可执行文件为同级 build/Release/bin/RobotQtViewerrx64.exe。

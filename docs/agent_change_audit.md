@@ -305,3 +305,48 @@
 - 用户原 RobotQtViewerrx64.exe 正在运行，未终止或覆盖；当前交付 build/Release/bin/RobotQtViewer_MultiIKFixrx64.exe，与现有 DLL 同目录。
 
 - Debug 主程序和 smoke 目标构建通过，RobotQtViewerMultiIkSmoke 通过（43.58 秒）；日志 build/multi-ik-retention-debug.log。源码/CMake 保持 CRLF，git diff --check 通过。
+
+## 2026-09-24 分层图 Top-M 与 CDF 初始解传递
+
+### 领域与算法
+
+- 新增 ProjectMotionPlanning/LayeredIkGraph.h/.cpp，公开 LayeredIkGraphOptions、LayeredIkPath、LayeredIkGraphResult 和 ProjectLayeredIkGraph::filter。消费现有已通过实际 FK/限位校验的 CartesianMultiIkResult，不重新生成末端位姿或逆解。
+- 层节点为原候选；相邻层隐式完全二部连接。所有首层前缀代价为零，只累计 sum(w[j] * (q_next[j]-q_prev[j])^2)。直接使用含 turn 的实际弧度值，无 wrapToPi、节点代价、碰撞调用、速度或加速度硬约束。
+- 每节点保留前 M 条前缀，以每个前驱的有序前缀列表加边代价后做堆归并；最终再归并末层并回溯，得到全局代价最小且候选索引序列互异的 Top-M。多条序列可以共享同一个首点构型；不以首点分组截断。相同代价按节点和前缀序号稳定排序。
+- API 默认 M=30，允许 1..1000；GUI 可配置 1..200、六轴非负权重。前缀存储默认预算 8,000,000 条，分配前检查；超限明确失败，不裁边、不减少输入候选、不返回冒充精确 Top-M 的近似结果。
+- 支持取消和进度，任何无解层、未完成逆解、非法数据/权重或代价溢出均失败。若组合总数小于 M，则返回实际全部序列；一层轨迹得到每候选一条零代价序列。逆解曾截断时传递提示，排名范围仅是已找到的逆解集合。
+
+### 界面与后续流程
+
+- Basic Planning 新增“分层图筛选”、M 和 J1..J6 权重；结果栏显示排名/总代价/点数/首末解编号，选中后显示每一个原控制点的时间、解编号、六轴度数和 turn。
+- QThread 使用独立输入副本，支持取消；修改参数或源多逆解失效时清空旧排名并取消任务，完成回调不发布已取消结果。窗口析构取消并等待任务结束。
+- “使用该结果作为优化初始解”从选中完整序列构造轨迹，验证机器人和关节顺序；不通过 TXT 或表格显示值中转，以全精度原时间/原关节值转换到度数后填入现有 m_cdfJointPoints，并切换到 CDF 页。原始多逆解和分层图结果保留，未自动运行 APF。
+- CDF 单点应用和后续 repairImportedCdfTrajectory 复用既有关节符号映射。修复流程排序改用 stable_sort，避免重复时间戳交换控制点；无 QP/CDF 参数或算法变更。
+- CDF/普通关节单点应用均属已知仅关节状态变化，保留多逆解/排名；几何或源轨迹变化仍使结果失效。分层图传入的 CDF 初始解绑定所选机器人，切换机器人或打开项目会清空该临时输入，防止误用于另一机器人。
+- 本轮不进行碰撞后的最终 Top-K 重排，也不自动优化全部 M 条。用户本轮所称前 K 组输出，对应界面设定 M 条运动学候选；用户选择一条交给现有 APF/CDF。
+- 无新增依赖、项目 schema 或持久化字段。
+
+### 验证
+
+- 新建领域回归 IkGraphTests：小图穷举比对 Top-1/7/30、加权代价与排序、序列唯一、零权重同价稳定性、360 度位移不折回、选解回溯时间/角度保持、单层/空层、非法权重/数据、预算拒绝及运行中取消。新测试 target 名缩短以避开 Windows 260 字符中间路径限制。
+- GUI smoke 验证 M=30/3、选中排名的完整明细、逐点/逐轴 CDF 输入对照、CDF 实际关节应用符号、结果保留、参数更改/源失效/取消后的禁用行为；保留旧 IK、末端轨迹、TXT 导出与多解通知链回归。
+- Release：主程序、smoke、IkGraphTests 构建通过，相关四项 CTest 4/4 通过。Debug：同目标构建通过，领域与多逆解 GUI 两项 2/2 通过；既有 OMPL Debug PDB 缺失警告仍存在。
+- 真实输入 C:/Users/14390/Desktop/11111.txt：749 层、5986 个已验证逆解，Top-30 用时 0.0094875 秒（仅图阶段，不含约 11.66 秒多逆解）。返回 30 条不同完整序列、每条 749 点；代价范围 148.219446481662..152.738179469245 rad^2，独立重算一致，所有原点和时间保持。
+- 真实候选逐点报告：同级 build/topm-11111.topm.csv（22470 行数据）；全量日志 topm-11111.log。构建/测试日志 topm-release-build.log、topm-debug-build.log、topm-tests-release.log、topm-tests-debug.log。
+- 未对 30 条执行完整 APF/CDF 耗时优化，不把运动学排名当作无碰撞或工艺位姿保持的保证；本轮验证到 CDF 原始输入和实际单点应用入口。
+- 已正常更新同级 build/Release/bin/RobotQtViewerrx64.exe 和 Debug 程序。旧另名 MultiIKFix/APF EXE 不包含本次新增功能。
+
+- 最终主程序隐藏启动 smoke（--smoke-exit-ms 1800）返回 0；git diff --check 和修改源码/CMake 的 CRLF 检查通过。
+
+## 2026-09-24 查看构型选择窗口
+
+- Basic Planning 分层图排名表下新增“查看构型选择”，有有效排名时启用。controller 从完整 `LayeredIkGraphResult::paths[].selections` 转为一基编号只读投影；不从抽样表格或当前播放序列拼接曲线。
+- 新增 `ConfigurationSelectionDialog`（MotionPlanningEditor 内 Qt 视图）：任意候选勾选、全选/清空、稳定颜色/线型图例、同图叠加、滚动分行对比、控制点起止区间和全程恢复。QPainter 逐点画线，不降采样；单点范围仍画标记。
+- 下方显示当前区间内所选序列存在选择差异的点数。坐标均一基，与现有逆解明细一致；明确说明逆解编号是本点内候选编号，不是跨点稳定的肩/肘/腕标签。
+- Widget 以 QPointer 管理无模态窗口，重复点击复用。重新筛选、改变参数或源结果失效时关闭并清除旧快照，防止排名和图形不同步。
+- 保留既有未提交 Top-M 实现；本轮未更改图筛选、IK、APF/CDF、播放或项目持久化语义，无新增第三方依赖。
+- GUI 回归逐一核对所有排名、所有点的图形数据与 controller 明细；验证窗口复用、参数失效、重算后的新快照。合成 749 点回归覆盖单点差异、49 点区间差异、任意多选、全选/清空、单点/逆序区间、分行/叠加和窗口释放。
+- CMake configure、Release/Debug 的 smoke 和主程序构建通过。Release 三项 GUI CTest 3/3；Debug MultiIkSmoke 1/1（48.88 秒）。Debug 仍有既有 OMPL/FCL PDB 缺失 LNK4099 警告，无构建错误。
+- 独立绘图测试通过，已查看 `../build/config-selection-preview.png`，可见孤立单点差异。Release 主程序 `--smoke-exit-ms 1800` 启动退出码 0。
+- 日志：同级 build/config-selection-{configure,release-build,debug-build,release-tests,debug-tests,plot-test}.log。7 个本轮源码/CMake 文件均 UTF-8/CRLF，根仓及 Workbench 子仓 `git diff --check` 通过。
+- 使用当前更新的 `../build/Release/bin/RobotQtViewerrx64.exe`。说明见 `docs/multi_ik_debug_usage.md` 的“查看构型选择”。

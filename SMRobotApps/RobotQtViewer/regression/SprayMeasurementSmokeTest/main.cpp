@@ -1,5 +1,8 @@
 #include <ProjectScene.h>
 #include <MotionPlanningEditorWidget.h>
+#include <ConfigurationSelectionDialog.h>
+#include <QListWidget>
+#include <QPointer>
 #include <MotionPlanningModuleController.h>
 #include <RobotQtViewerDocumentContext.h>
 #include <RobotQtViewerDocumentController.h>
@@ -16,9 +19,13 @@
 #include <QTableWidget>
 #include <QComboBox>
 #include <QElapsedTimer>
+#include <QSpinBox>
+#include <QLineEdit>
+#include <set>
 #include <QLabel>
 #include <chrono>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
+#include <ProjectMotionPlanning/LayeredIkGraph.h>
 #include <SimulationProject/ProjectIo.h>
 #include <Eigen/SVD>
 #include <iomanip>
@@ -447,6 +454,38 @@ namespace
             << " max_mm=" << maxPosition * 1000 << " max_deg=" << maxOrientation * 180 / pi << '\n';
         require(minCount >= 2 && maxPosition <= options.positionTolerance && maxOrientation <= options.orientationTolerance,
             "Independent actual FK verifies every candidate and multiple configurations at every point");
+        const auto graphStart = std::chrono::steady_clock::now();
+        const auto ranked = ProjectLayeredIkGraph::filter(result);
+        std::cout << "Layered graph " << ranked.message << " elapsed_seconds="
+            << std::chrono::duration<double>(std::chrono::steady_clock::now() - graphStart).count() << '\n';
+        bool pathsValid = ranked.success && !ranked.paths.empty();
+        std::set<std::vector<std::size_t>> sequences;
+        double previousCost = -1;
+        auto graphReportPath = reportPath; graphReportPath.replace_extension(".topm.csv");
+        std::ofstream graphReport(graphReportPath);
+        graphReport << "rank,cost,point,time,candidate,j1_deg,j2_deg,j3_deg,j4_deg,j5_deg,j6_deg\n" << std::setprecision(15);
+        for(std::size_t rank = 0; rank < ranked.paths.size(); ++rank) {
+            const auto& path = ranked.paths[rank];
+            StoredMotionPlan seed;
+            pathsValid &= ProjectTrajectoryInverseKinematics::selectMultiIkTrajectory(result, path.selections, seed, error);
+            pathsValid &= sequences.insert(path.selections).second && path.cost >= previousCost &&
+                seed.trajectory.points.size() == imported.plan.cartesianControlPoints.points.size();
+            previousCost = path.cost;
+            double independentCost = 0;
+            for(std::size_t i = 0; i < seed.trajectory.points.size(); ++i) {
+                const auto& q = seed.trajectory.points[i].q;
+                pathsValid &= seed.trajectory.points[i].time == imported.plan.cartesianControlPoints.points[i].time;
+                if(i) {
+                    for(std::size_t j = 0; j < q.size(); ++j) { independentCost += std::pow(q[j] - seed.trajectory.points[i - 1].q[j], 2); }
+                }
+                graphReport << rank + 1 << ',' << path.cost << ',' << i + 1 << ',' << seed.trajectory.points[i].time << ',' << path.selections[i] + 1;
+                for(double value : q) { graphReport << ',' << value * 180 / pi; }
+                graphReport << '\n';
+            }
+            pathsValid &= std::abs(independentCost - path.cost) < 1.0e-8 * std::max(1.0, path.cost);
+        }
+        require(pathsValid, "Real Top-M candidates are unique, sorted and preserve every original point/time with independently checked cost");
+
     }
 
     void verifyImportedIk(const std::filesystem::path& projectPath,
@@ -571,6 +610,51 @@ namespace
         scene.setProjectDocument(document, projectPath.parent_path());
         require(options.worldForwardKinematics(result.points.front().joints).matrix().allFinite(),
             "FK snapshot stays valid after project replacement");
+    }
+
+    void verifyConfigurationPlot(QApplication& application, const QString& screenshot = {})
+    {
+        QVector<QVector<int>> sequences(3, QVector<int>(749, 4));
+        sequences[1][275] = 7;
+        for(int i = 276; i < 325; ++i) { sequences[2][i] = 2; }
+        QPointer<ConfigurationSelectionDialog> dialog = new ConfigurationSelectionDialog(sequences, 1);
+        dialog->show(); application.processEvents();
+        auto* ranks = dialog->findChild<QListWidget*>(QStringLiteral("configurationRanks"));
+        auto* first = dialog->findChild<QSpinBox*>(QStringLiteral("configurationFirstPoint"));
+        auto* last = dialog->findChild<QSpinBox*>(QStringLiteral("configurationLastPoint"));
+        auto* separate = dialog->findChild<QCheckBox*>(QStringLiteral("configurationSeparate"));
+        auto* summary = dialog->findChild<QLabel*>(QStringLiteral("configurationSummary"));
+        require(dialog->sequences() == sequences && dialog->selectedRanks() == QVector<int>({0, 1}),
+            "Plot retains all 749 samples including an isolated one-point difference");
+        dialog->findChild<QPushButton*>(QStringLiteral("configurationSelectNone"))->click();
+        require(dialog->selectedRanks().isEmpty(), "All ranks can be unchecked");
+        ranks->item(1)->setCheckState(Qt::Checked); ranks->item(2)->setCheckState(Qt::Checked);
+        require(dialog->selectedRanks() == QVector<int>({1, 2}), "Arbitrary nonadjacent-to-first ranks can be compared");
+        dialog->findChild<QPushButton*>(QStringLiteral("configurationSelectAll"))->click();
+        require(dialog->selectedRanks().size() == 3 && summary->text().contains(QStringLiteral("50")),
+            "Full-range comparison finds isolated and 49-point differences");
+        first->setValue(276); last->setValue(276);
+        require(summary->text().contains(QStringLiteral("1 ")) && first->value() == last->value(),
+            "Single-point range remains inspectable");
+        auto* plot = dialog->findChild<QWidget*>(QStringLiteral("configurationSelectionPlot"));
+        require(!plot->grab().isNull(), "Single-point plot renders");
+        first->setValue(300);
+        require(last->value() == 300, "Range endpoints stay ordered when start moves beyond end");
+        last->setValue(100);
+        require(first->value() == 100, "Range endpoints stay ordered when end moves before start");
+        dialog->findChild<QPushButton*>(QStringLiteral("configurationFullRange"))->click();
+        separate->setChecked(true); application.processEvents();
+        require(first->value() == 1 && last->value() == 749 && plot->minimumHeight() == 540,
+            "Full range and separate rows retain the complete source point numbering");
+        if(!screenshot.isEmpty()) { require(dialog->grab().save(screenshot), "Save configuration comparison screenshot"); }
+        separate->setChecked(false);
+        require(plot->minimumHeight() == 360 && !plot->grab().isNull(), "Overlay mode renders all selected series");
+        dialog->close(); QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        require(dialog.isNull(), "Plot dialog is released on close");
+        QPointer<ConfigurationSelectionDialog> single = new ConfigurationSelectionDialog({{8}}, 0);
+        single->show(); application.processEvents();
+        require(!single->grab().isNull() && single->sequences()[0][0] == 8, "One-point trajectory renders its original IK number");
+        single->close(); QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 
     void verifyIkController(QApplication& application, const std::filesystem::path& projectPath,
@@ -704,6 +788,93 @@ namespace
             widget.multiIkPlaybackRequested(10);
             widget.playbackStopRequested();
             require(multiPlay->isEnabled(), "Multi playback can stop and restart");
+            auto* graphButton = widget.findChild<QPushButton*>(QStringLiteral("layeredGraphFilter"));
+            auto* graphResults = widget.findChild<QTableWidget*>(QStringLiteral("layeredGraphResults"));
+            auto* graphPath = widget.findChild<QTableWidget*>(QStringLiteral("layeredGraphPath"));
+            auto* graphUse = widget.findChild<QPushButton*>(QStringLiteral("useLayeredGraphResult"));
+            auto* graphM = widget.findChild<QSpinBox*>(QStringLiteral("layeredGraphMaxPaths"));
+            auto* cdfInitial = widget.findChild<QTableWidget*>(QStringLiteral("cdfInitialJointAngles"));
+            require(graphButton && graphResults && graphPath && graphUse && graphM && cdfInitial &&
+                tabs->widget(0)->isAncestorOf(graphButton), "Layered graph controls and CDF initial table are available");
+            if(!graphButton || !graphResults || !graphPath || !graphUse || !graphM || !cdfInitial) { return; }
+            const auto waitGraph = [&]() {
+                QElapsedTimer timer; timer.start();
+                while(graphButton->text() != QStringLiteral("\u5206\u5c42\u56fe\u7b5b\u9009") && timer.elapsed() < 30000) {
+                    application.processEvents(QEventLoop::AllEvents, 20);
+                }
+                require(timer.elapsed() < 30000, "Background Top-M filtering completes");
+            };
+            graphButton->click(); waitGraph();
+            int expectedPaths = 1;
+            for(int i = 0; i < multiPoints->count(); ++i) {
+                multiPoints->setCurrentIndex(i);
+                expectedPaths = std::min(30, expectedPaths * multiTable->rowCount());
+            }
+            multiPoints->setCurrentIndex(0);
+            require(graphResults->rowCount() == expectedPaths && graphUse->isEnabled(), "Default M=30 returns ranked full sequences");
+            if(graphResults->rowCount() < 1) { return; }
+            auto* graphView = widget.findChild<QPushButton*>(QStringLiteral("viewConfigurationSelection"));
+            require(graphView && graphView->isEnabled(), "Configuration plot button is enabled for ranked results");
+            if(!graphView) { return; }
+            graphView->click(); application.processEvents();
+            QPointer<ConfigurationSelectionDialog> comparison = widget.findChild<ConfigurationSelectionDialog*>();
+            require(comparison && comparison->isVisible(), "Configuration plot opens from Basic Planning");
+            if(!comparison) { return; }
+            bool plotMatches = comparison->sequences().size() == graphResults->rowCount();
+            for(int rank = 0; plotMatches && rank < graphResults->rowCount(); ++rank) {
+                graphResults->selectRow(rank);
+                const auto& sequence = comparison->sequences()[rank];
+                plotMatches &= sequence.size() == graphPath->rowCount();
+                for(int i = 0; plotMatches && i < sequence.size(); ++i) {
+                    plotMatches &= sequence[i] == graphPath->item(i, 2)->text().toInt();
+                }
+            }
+            require(plotMatches, "Every plotted rank/point equals the corresponding domain-backed path detail");
+            graphView->click();
+            require(widget.findChildren<ConfigurationSelectionDialog*>().size() == 1,
+                "Repeated plot button reuses the current result window");
+            graphResults->selectRow(std::min(7, graphResults->rowCount() - 1));
+            require(graphPath->rowCount() == pointCountBeforeApply, "Selected result shows every original control point");
+            std::vector<std::vector<double>> selectedDegrees;
+            std::vector<double> selectedTimes;
+            for(int i = 0; i < graphPath->rowCount(); ++i) {
+                selectedTimes.push_back(graphPath->item(i, 1)->text().toDouble());
+                std::vector<double> q;
+                for(const auto& value : graphPath->item(i, 3)->text().split(',')) { q.push_back(value.trimmed().toDouble()); }
+                selectedDegrees.push_back(q);
+            }
+            graphUse->click();
+            bool cdfMatches = tabs->currentIndex() == 1 && cdfInitial->rowCount() == pointCountBeforeApply;
+            for(int i = 0; cdfMatches && i < cdfInitial->rowCount(); ++i) {
+                cdfMatches &= std::abs(cdfInitial->item(i, 1)->text().toDouble() - selectedTimes[i]) < 1.0e-5;
+                for(int j = 0; j < 6; ++j) {
+                    cdfMatches &= std::abs(cdfInitial->item(i, j + 2)->text().toDouble() - selectedDegrees[i][j]) < 1.0e-5;
+                }
+            }
+            require(cdfMatches, "Selected Top-M sequence fills CDF input with original times, degrees and stored IK signs");
+            widget.applySelectedCdfJointAnglesRequested(pointCountBeforeApply - 1);
+            bool appliedSeed = true;
+            for(int j = 0; j < 6; ++j) {
+                bool ok = false;
+                const double actual = services.robotJointValue(QStringLiteral("ABB4600_urdf"), QString::fromStdString(names[j]), &ok);
+                const double sign = j == 0 || j >= 3 ? -1 : 1;
+                appliedSeed &= ok && std::abs(actual * 180 / 3.141592653589793 - sign * selectedDegrees.back()[j]) < 0.00001;
+            }
+            require(appliedSeed && graphUse->isEnabled() && graphResults->rowCount() == expectedPaths,
+                "CDF seed applies through existing sign mapping and keeps ranked results available");
+            graphM->setValue(3);
+            require(!graphView->isEnabled() && (!comparison || !comparison->isVisible()),
+                "Invalidated results disable plotting and close the stale comparison window");
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            require(comparison.isNull(), "Invalidated comparison releases its old snapshot");
+            require(graphResults->rowCount() == 0 && !graphUse->isEnabled(), "Changing graph settings invalidates old ranks");
+            graphButton->click(); widget.layeredGraphCancelRequested(); waitGraph();
+            require(graphResults->rowCount() == 0 && !graphUse->isEnabled(), "Cancelled graph task publishes no partial results");
+            graphButton->click(); waitGraph();
+            require(graphResults->rowCount() == 3, "Configured M=3 is honored");
+            graphView->click(); application.processEvents();
+            comparison = widget.findChild<ConfigurationSelectionDialog*>();
+            require(comparison && comparison->sequences().size() == 3, "Recomputed results open a fresh plot snapshot");
             robot_qt_viewer::RobotQtViewerViewportPreviewPayload geometryChange;
             geometryChange.previewRobotBaseTransform = true;
             geometryChange.robotBaseRobotId = QStringLiteral("ABB4600_urdf");
@@ -711,6 +882,8 @@ namespace
             preview.mutate(geometryChange, QStringLiteral("multiIkBaseRegression"));
             require(multiPoints->count() == 0 && multiTable->rowCount() == 0 && !multiPlay->isEnabled(),
                 "Actual base transform preview still invalidates multi IK results");
+            require(graphResults->rowCount() == 0 && graphPath->rowCount() == 0 && !graphUse->isEnabled(),
+                "Invalidating source IK also clears ranked paths and disables CDF transfer");
         }
         widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);
         widget.multiIkCancelRequested(); waitMulti();
@@ -949,7 +1122,12 @@ int main(int argc, char** argv)
     writeFixture(folder);
     verifyModelIk();
     verifyMultiIkDomain();
+    if(argc >= 2 && std::string(argv[1]) == "--configuration-plot") {
+        verifyConfigurationPlot(application, argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString{});
+        return failures == 0 ? 0 : 1;
+    }
     if(argc >= 4 && std::string(argv[1]) == "--multi-ik-project") {
+        verifyConfigurationPlot(application);
         try {
             verifyMultiIkImported(std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]),
                 argc >= 5 ? std::filesystem::u8path(argv[4]) : std::filesystem::path("multi_ik.csv"), argc >= 6 ? std::stoi(argv[5]) : 64);
