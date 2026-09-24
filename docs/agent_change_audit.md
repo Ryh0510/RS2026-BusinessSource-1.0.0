@@ -206,3 +206,61 @@
 - 离散 collision motion validation 的安全性受 `maxJointStep` 影响，不等同于连续碰撞检测。
 - 采样规划器对无法证明的无解空间通常以 `Timeout` 结束；实现不会返回空的 Success。
 - Qt Workbench/document event/Robot Run 集成属于阶段 F，本轮未修改其业务接线。
+
+## 2026-09-23 导入关节路径的 APF 预修复
+
+### 实现与所有权
+
+- `ProjectMotionPlanning/src/ApfLocalPlanner.*`：私有人工势场积分器，目标吸引、原路径弱吸引、最近距离斥力、确定性切向脱困、正反向尝试、步长回退与有限迭代。没有采样树或 OMPL 兜底。
+- `CdfQpTrajectoryRepair.cpp`：检测连续碰撞段，选取两侧安全锚点并有限扩展；验证重采样后的每条边；固定锚点及时间戳；完整预修复路径通过碰撞检查后才进入原有 QP/CDF。运动检查步长上限为 0.001 rad。首尾本身不安全且无法找到两侧锚点时拒绝，不再静默移动原始端点。
+- 修复距离接口使用：`checkDetector` 的无碰撞结果可能不包含距离，改为复用该 detector 的完整过滤设置显式调用 `CollisionScene::distance`。无修改碰撞几何、障碍位置或碰撞对。
+- `CdfDistanceField.h` 为私有距离场契约。最近特征的相对运动投影计算原 CDF 距离梯度，缺少可靠最近点时退回原中央差分。QP 目标、约束、参数和后处理保持。
+- 连续关节统一解缠输出，使实际线性回放与检测使用的最短圆弧一致；锁定端点按关节的 2π 周期保持等价配置。新增真实几何的跨圈回归。
+- 最终碰撞复验失败时不发布轨迹；无碰撞但安全间距不达标仍保持原来的 partial 状态，界面显示最终诊断。保存的 plan ID 规则不变。
+- `ProjectCdfQpRepairOptions` 新增可选同步 `progress` 观察回调；没有新增依赖、项目 schema 或持久字段。通用起终点 OMPL 规划入口仍独立保留。
+- Workbench 只更新 APF + CDF/QP 文案和失败提示；关节符号转换、导入导出、轨迹显示接线保持。
+
+### 验证记录
+
+- 当前测试输入：`C:/Users/14390/Desktop/ik_joint_angles.txt`，749 点，SHA256 `733BC8E1A230ECE4D6E3E135E8143A4E5DF5631D32459815D0E96AD4B97829AD`。场景 `config/projects/ABB4600-burnner.sys.json`。
+- 初始端点均安全；0.005 rad 步长检查原始 748 条边，其中 277 条存在碰撞。加密到 8641 点后检测到 106 处连续碰撞区间，APF 预修复后全路径通过检查。
+- 在输入中按固定步距抽取 38 个安全姿态，对最近特征梯度与独立中央距离差分比较，最大误差 `6.04401e-07`；全部样本启用最近特征加速。
+- Release/Debug 均已编译规划 headless、APF 回归和 RobotQtViewer。Debug 仍有已有 OMPL 预编译库缺失 PDB 的 LNK4099 提示，不影响链接或运行。
+- Release/Debug CTest：`ProjectMotionPlanningHeadless`、`ProjectMotionPlanningImportHeadless`、`ProjectMotionPlanningApf`、`ProjectMotionPlanningApfPeriodic` 均通过（4/4）。APF 回归覆盖无障碍、对称障碍脱困、端点锁定、确定性、完全阻断走廊、无效距离查询。
+- 收紧步长的依据：0.005 rad 检查曾通过的结果，在 0.001 rad 独立复验中发现 2 段碰撞，因此这次不交付粗检查结果，生产管线的全部运动检查统一收紧到 0.001 rad。
+- 最终真实输入回归使用 1 轮 QP，其余服务默认参数：8641 点，内部与独立实际线性插值（0.001 rad）均为 0 碰撞段；TXT 再次导入检查也为 0，返回码 0。全部原始时间点及 740.3255 秒时长保留；首尾配置周期误差 0；最大相邻角差 1.745515395 度。
+- 轨迹点最小间距约 0.00675 mm，低于默认 10 mm；服务如实保留 success=false / partial，修复 CLI 返回 1 的原因是间距未收敛，碰撞与导出复验通过。计算耗时约 1192 秒，未更改默认 QP 迭代次数。
+- 结果和日志：`build/apf-current-verified-joints.txt`、`build/apf-current-real-input.log`、`build/apf-current-export-reimport-check.log`、`build/APF-validation-report.md`（build 位于源码根目录的同级）。
+- 原 Release EXE 被用户运行中的进程占用（LNK1104）；未关闭该进程。最新 Release 使用同项目、同 DLL 目录链接为 `build/Release/bin/RobotQtViewer_APFrx64.exe`；Debug 原目标正常构建。
+
+### 复现
+
+- 从 `build/Release/bin` 运行 `ProjectMotionPlanning-Headlessrx64.exe --project <source>/config/projects/ABB4600-burnner.sys.json --cdf-file <input.txt> --cdf-output <verified-output.txt>`。
+- 添加 `--cdf-gradient-check` 进行独立距离梯度检查；添加 `--cdf-inspect --linear-input --verification-step 0.001` 按原始角度线性插值检查导出文件全部线段。可用 `--cdf-iterations 1` 跑一次 QP 回归；未更改生产服务和 GUI 的默认迭代次数。
+- `ctest --test-dir <build> -C Release -R "ProjectMotionPlanning(Apf|ApfPeriodic|ImportHeadless|Headless)$" --output-on-failure`，Debug 同样执行。
+- 检查为按关节步长采样的运动碰撞验证，不等同于连续碰撞检测；APF 不保证在任意复杂空间找到路径，失败时返回诊断而非碰撞轨迹。
+
+## 2026-09-23 QP 默认单轮调整
+
+- 将 CdfQpTrajectoryRepair.h、MotionPlanningEditorWidget.h/.cpp、headless main.cpp 中的 QP 外层迭代默认值统一为 1；界面原为 5，服务和 headless 原为 8。
+- 用户仍可显式调整 Max iterations / --cdf-iterations。OSQP 内部迭代数及安全验证参数保持原有语义。
+- 这是轮数设置修改；此前单轮真实输入完整流程约 20 分钟，不能据此承诺快速完成或安全间距收敛。
+- 本轮验证：Release 领域服务、headless、MotionPlanningEditor 和另名 RobotQtViewer_APFrx64.exe 构建通过；未传 --cdf-iterations 的周期关节小样本仅输出 iteration 1，成功返回且无碰撞。此次未重跑完整 749 点样例，也未声称新的全量耗时。
+
+## 2026-09-23 APF 轨迹减点与平滑改进
+
+- 复核问题：原优化节点与 validationMaxJointStep 耦合；APF 积分路径未去绕行；旧平滑只微调单个点；QP 在目标、边界和初值中逐点折回连续关节角，导致跨正负 pi 的虚假大转角。
+- 新增 optimizationMaxJointStep（默认 0.04 rad），最低插入点默认 1；独立保持最多 0.001 rad 运动检查，原输入节点时间戳和首尾配置不删除。实际 749 点样例加密为 4529 点，旧版为 8641 点。
+- 私有 PathRefinement 在每个 APF 局部区间内使用有限前视捷径，每条捷径验证碰撞。随后在 QP 前后使用 32/16/8 点窗口、渐弱边界权重、时间加权弯曲代价和 0.15 rad 相对偏移限制进行平滑；代价包含两个接缝，仅接受长度不增加、弯曲代价降低且每条边无碰撞的候选。
+- QP 后平滑若降低已有最小点间距（未达到目标时），整体退回平滑前轨迹；不会通过降低安全间距参数宣称成功。QP 仍默认一轮，线性回放与周期关节解缠规则保留。
+- 原始文件前两行时间均为 0，但姿态不同。输出保留原时间；平滑内部对非正时间差采用最小正间隔，避免除零，同时输出诊断。这不是速度/加速度可执行性的保证。
+- 小回归新增障碍圆弧去绕行/平滑、接缝代价、不可行窗口保持原值和无效时间拒绝；新增真实项目正负 179 度跨界并包含重复时间戳的回归，限制修正量低于 0.05 rad，防止 2pi 伪跳变复发。
+- headless 增加 --cdf-gui-defaults 以匹配界面 trustRegion=0.02、seedCorridor=0.10、seedTrackingWeight=0.40、segmentIntermediateSamples=1；增加 --cdf-max-correction 供回归验证。
+
+### 减点平滑验收结果
+
+- Release/Debug 领域、headless、APF tests 和 GUI 构建通过，各 5/5 回归通过；git diff --check 通过。
+- 真实输入使用 GUI 参数、一轮 QP：4529 点，规划 870.532 秒；内部、独立 0.001 rad 线性回放、导出再导入均 0 碰撞段。最小点间距约 0.02002 mm，低于 10 mm，仍如实返回 partial。
+- 平滑前后关节弯曲代价 25914.1 → 5630.91 → 2907.07。历史输出与本轮输出同时间采样下的末端累计转弯角 1426.018 → 615.693，减少约 57%；两次优化的 GUI/服务参数有差异，不作单因素速度或质量提升结论。
+- 保留所有原始时间戳和首尾周期等价配置；最大相邻角差 10.829 度，长边仍使用 0.001 rad 碰撞检查。没有执行速度/加速度/jerk 的时间参数化。
+- 最新 Release 仍为 build/Release/bin/RobotQtViewer_APFrx64.exe；结果、对比图和方法说明见同级 build/APF-smoothing-report.md。完整回归之后只增加阶段进度日志及测试断言，数值算法未改。

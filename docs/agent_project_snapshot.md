@@ -96,3 +96,34 @@
 - 固定真实项目 fixture 已验证“起终点合法、直线插值碰撞、RRTConnect 可绕行”，并完成最终路径逐段复验、保存/重载和 runtime 回放。
 - `build/codex_ompl_stage_e` Release 构建 `ProjectMotionPlanning-Headless`、`ProjectOmplPlanningViewer`、`RobotQtViewer` 通过；CTest 1/1 通过；隐藏 GLFW/OpenGL 运行通过；PE 依赖不含 Qt。
 - 下一步若进入阶段 F，应直接复用 `ProjectMotionPlanningService`，Qt 层不得重新构建 OMPL state space 或直接调用 collision backend。
+
+## 2026-09-23 APF 碰撞段预修复
+
+- 分支 main；根仓库和两个相关子模块工作树在任务开始时干净。
+- 在 ProjectMotionPlanning 领域服务替换导入轨迹的 OMPL 预修复；Qt workbench 只更新算法文案。通用 OMPL 规划入口保留。
+- 不变量：原始关节符号映射、时间戳、后续 QP/CDF 流程保持；两侧安全锚点固定，替换段及完整路径验证通过后才允许优化，不发布碰撞残留路径。
+- 采用实际检测器的显式距离查询生成斥力；受限步长、确定性切向脱困和有限迭代，不增加依赖。
+- 验证：私有 APF 算法回归、指定 ik_joint_angles.txt 真实网格场景、Release/Debug 规划测试和 RobotQtViewer 构建。离散运动检查不等于连续碰撞证明。
+
+### APF 任务完成状态
+
+- 已实现 APF 安全锚点预修复、0.001 rad 全流程碰撞验收、连续关节解缠输出及真实回放复验，原 QP/CDF 目标与参数保留。
+- Release/Debug 各 4 项回归通过；真实输入 749 → 8641 点，修复与导出重新导入后的线性回放均 0 碰撞段。真实文件最终回归采用 1 轮 QP；间距约 0.00675 mm，未达默认 10 mm，按 partial 如实报告。
+- 当前用户运行中的 Release EXE 无法覆盖，最新可执行文件另存为同目录 `RobotQtViewer_APFrx64.exe`；Debug 正常构建。
+- 细节、哈希及验证命令见 `docs/agent_change_audit.md` 本日章节和同级 build 目录的 `APF-validation-report.md`。
+
+## 2026-09-23 QP 默认单轮调整
+
+- 用户要求当前代码改为一轮 QP；GUI 控件初值、GUI settings、领域 options 和 headless 默认值统一为 1，保留显式轮数设置能力。
+- 保留已有 APF、QP 求解器内部迭代和碰撞验收；当前已开始的旧进程任务不会动态改变参数。
+- 本轮只调整默认值，不声称解决计算性能；上一轮真实数据单轮完整流程约 1192 秒。
+
+## 2026-09-23 轨迹减点与平滑
+
+- 保留之前未提交的 APF/单轮 QP 工作。本轮算法归属 ProjectMotionPlanning；不调整关节符号、碰撞检测器或场景几何。
+- 优化节点间隔独立为 0.04 rad，运动验收仍为最多 0.001 rad；保留原始输入时间点和首尾配置。
+- APF 局部段采用有界碰撞验证捷径；QP 前后采用包含接缝的时间加权弯曲代价下降平滑。后平滑不得降低已达到的最小点间距（达到目标后允许保持目标）。
+- QP 连续关节统一使用解缠坐标，避免逐点折回正负 pi 引入虚假折角。
+- 验证目标：几何与周期关节回归、749 点输入且匹配 GUI 默认参数的单轮全量验证及平滑度对比，Release/Debug 编译和测试。
+
+- 完成：4529 点、0.001 rad 独立回放与再导入均无碰撞段，QP 一轮耗时 870.532 秒，点间距仍未收敛到 10 mm。Release/Debug 各 5 项回归通过。末端曲线对比与限制见同级 build/APF-smoothing-report.md。
