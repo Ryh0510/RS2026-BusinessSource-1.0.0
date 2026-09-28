@@ -485,6 +485,61 @@ namespace
             pathsValid &= std::abs(independentCost - path.cost) < 1.0e-8 * std::max(1.0, path.cost);
         }
         require(pathsValid, "Real Top-M candidates are unique, sorted and preserve every original point/time with independently checked cost");
+        LayeredIkGraphOptions groupedOptions; groupedOptions.maxPaths = 3;
+        const auto groupedStart = std::chrono::steady_clock::now();
+        const auto grouped = ProjectLayeredIkGraph::filterByStart(result, groupedOptions);
+        std::cout << "Fixed-start graph " << grouped.message << " elapsed_seconds="
+            << std::chrono::duration<double>(std::chrono::steady_clock::now() - groupedStart).count() << '\n';
+        bool groupedValid = grouped.success && !grouped.paths.empty();
+        std::set<std::size_t> coveredStarts;
+        QVector<QVector<int>> globalPlot, startPlot;
+        QStringList startLabels;
+        for(const auto& path : ranked.paths) {
+            QVector<int> indices;
+            for(auto index : path.selections) { indices.push_back(static_cast<int>(index + 1)); }
+            globalPlot.push_back(indices);
+        }
+        auto groupedReportPath = reportPath; groupedReportPath.replace_extension(".start-topk.csv");
+        std::ofstream groupedReport(groupedReportPath);
+        groupedReport << "start,group_rank,global_rank,cost,point,time,candidate,j1_deg,j2_deg,j3_deg,j4_deg,j5_deg,j6_deg\n" << std::setprecision(15);
+        std::size_t previousStart = std::numeric_limits<std::size_t>::max(), groupRank = 0;
+        double lastCost = -1;
+        for(const auto& path : grouped.paths) {
+            const auto start = path.selections.front(); coveredStarts.insert(start);
+            if(start != previousStart) { groupRank = 0; lastCost = -1; previousStart = start; }
+            ++groupRank;
+            StoredMotionPlan seed;
+            groupedValid &= ProjectTrajectoryInverseKinematics::selectMultiIkTrajectory(result, path.selections, seed, error);
+            groupedValid &= seed.trajectory.points.size() == result.layers.size() && path.cost >= lastCost && groupRank <= 3;
+            lastCost = path.cost;
+            QString globalRank = QStringLiteral(">%1").arg(ranked.paths.size());
+            for(std::size_t rank = 0; rank < ranked.paths.size(); ++rank) {
+                if(ranked.paths[rank].selections == path.selections) { globalRank = QString::number(rank + 1); break; }
+            }
+            startLabels << QStringLiteral("Start #%1 / within #%2 / global %3").arg(start + 1).arg(groupRank).arg(globalRank);
+            QVector<int> indices;
+            double independentCost = 0;
+            for(std::size_t i = 0; i < seed.trajectory.points.size(); ++i) {
+                const auto& point = seed.trajectory.points[i]; indices.push_back(static_cast<int>(path.selections[i] + 1));
+                groupedValid &= point.time == imported.plan.cartesianControlPoints.points[i].time;
+                if(i) {
+                    for(std::size_t j = 0; j < point.q.size(); ++j) { independentCost += std::pow(point.q[j] - seed.trajectory.points[i - 1].q[j], 2); }
+                }
+                groupedReport << start + 1 << ',' << groupRank << ',' << globalRank.toStdString() << ',' << path.cost << ',' << i + 1 << ',' << point.time << ',' << path.selections[i] + 1;
+                for(double value : point.q) { groupedReport << ',' << value * 180 / pi; }
+                groupedReport << '\n';
+            }
+            groupedValid &= std::abs(independentCost - path.cost) < 1.0e-8 * std::max(1.0, path.cost);
+            startPlot.push_back(indices);
+        }
+        require(groupedValid && coveredStarts.size() == result.layers.front().candidates.size(),
+            "Real conditional paths cover every start, preserve all points/turns/times, and have independently verified costs");
+        auto* plot = new ConfigurationSelectionDialog(globalPlot, startPlot, startLabels, 0, true);
+        plot->show(); QApplication::processEvents();
+        auto plotPath = reportPath; plotPath.replace_extension(".start-topk.png");
+        require(plot->grab().save(QString::fromStdWString(plotPath.wstring())), "Save real fixed-start comparison plot");
+        plot->close();
+
 
     }
 
@@ -619,30 +674,31 @@ namespace
         for(int i = 276; i < 325; ++i) { sequences[2][i] = 2; }
         QPointer<ConfigurationSelectionDialog> dialog = new ConfigurationSelectionDialog(sequences, 1);
         dialog->show(); application.processEvents();
-        auto* ranks = dialog->findChild<QListWidget*>(QStringLiteral("configurationRanks"));
-        auto* first = dialog->findChild<QSpinBox*>(QStringLiteral("configurationFirstPoint"));
-        auto* last = dialog->findChild<QSpinBox*>(QStringLiteral("configurationLastPoint"));
-        auto* separate = dialog->findChild<QCheckBox*>(QStringLiteral("configurationSeparate"));
-        auto* summary = dialog->findChild<QLabel*>(QStringLiteral("configurationSummary"));
+        auto* page = dialog->findChild<QWidget*>(QStringLiteral("configurationGlobalPage"));
+        auto* ranks = page->findChild<QListWidget*>(QStringLiteral("configurationRanks"));
+        auto* first = page->findChild<QSpinBox*>(QStringLiteral("configurationFirstPoint"));
+        auto* last = page->findChild<QSpinBox*>(QStringLiteral("configurationLastPoint"));
+        auto* separate = page->findChild<QCheckBox*>(QStringLiteral("configurationSeparate"));
+        auto* summary = page->findChild<QLabel*>(QStringLiteral("configurationSummary"));
         require(dialog->sequences() == sequences && dialog->selectedRanks() == QVector<int>({0, 1}),
             "Plot retains all 749 samples including an isolated one-point difference");
-        dialog->findChild<QPushButton*>(QStringLiteral("configurationSelectNone"))->click();
+        page->findChild<QPushButton*>(QStringLiteral("configurationSelectNone"))->click();
         require(dialog->selectedRanks().isEmpty(), "All ranks can be unchecked");
         ranks->item(1)->setCheckState(Qt::Checked); ranks->item(2)->setCheckState(Qt::Checked);
         require(dialog->selectedRanks() == QVector<int>({1, 2}), "Arbitrary nonadjacent-to-first ranks can be compared");
-        dialog->findChild<QPushButton*>(QStringLiteral("configurationSelectAll"))->click();
+        page->findChild<QPushButton*>(QStringLiteral("configurationSelectAll"))->click();
         require(dialog->selectedRanks().size() == 3 && summary->text().contains(QStringLiteral("50")),
             "Full-range comparison finds isolated and 49-point differences");
         first->setValue(276); last->setValue(276);
         require(summary->text().contains(QStringLiteral("1 ")) && first->value() == last->value(),
             "Single-point range remains inspectable");
-        auto* plot = dialog->findChild<QWidget*>(QStringLiteral("configurationSelectionPlot"));
+        auto* plot = page->findChild<QWidget*>(QStringLiteral("configurationSelectionPlot"));
         require(!plot->grab().isNull(), "Single-point plot renders");
         first->setValue(300);
         require(last->value() == 300, "Range endpoints stay ordered when start moves beyond end");
         last->setValue(100);
         require(first->value() == 100, "Range endpoints stay ordered when end moves before start");
-        dialog->findChild<QPushButton*>(QStringLiteral("configurationFullRange"))->click();
+        page->findChild<QPushButton*>(QStringLiteral("configurationFullRange"))->click();
         separate->setChecked(true); application.processEvents();
         require(first->value() == 1 && last->value() == 749 && plot->minimumHeight() == 540,
             "Full range and separate rows retain the complete source point numbering");
@@ -793,6 +849,11 @@ namespace
             auto* graphPath = widget.findChild<QTableWidget*>(QStringLiteral("layeredGraphPath"));
             auto* graphUse = widget.findChild<QPushButton*>(QStringLiteral("useLayeredGraphResult"));
             auto* graphM = widget.findChild<QSpinBox*>(QStringLiteral("layeredGraphMaxPaths"));
+            auto* perStartK = widget.findChild<QSpinBox*>(QStringLiteral("layeredGraphPerStartPaths"));
+            auto* resultTabs = widget.findChild<QTabWidget*>(QStringLiteral("layeredGraphResultTabs"));
+            auto* startResults = widget.findChild<QTableWidget*>(QStringLiteral("layeredGraphStartResults"));
+            require(perStartK && resultTabs && startResults, "Fixed-start controls and second results tab exist");
+            if(!perStartK || !resultTabs || !startResults) { return; }
             auto* cdfInitial = widget.findChild<QTableWidget*>(QStringLiteral("cdfInitialJointAngles"));
             require(graphButton && graphResults && graphPath && graphUse && graphM && cdfInitial &&
                 tabs->widget(0)->isAncestorOf(graphButton), "Layered graph controls and CDF initial table are available");
@@ -830,6 +891,45 @@ namespace
                 }
             }
             require(plotMatches, "Every plotted rank/point equals the corresponding domain-backed path detail");
+            const int startCount = multiTable->rowCount();
+            require(startResults->rowCount() == startCount && perStartK->value() == 1,
+                "Default K=1 computes one complete optimum for every actual start candidate");
+            auto* plotTabs = comparison->findChild<QTabWidget*>(QStringLiteral("configurationSelectionTabs"));
+            require(plotTabs && plotTabs->count() == 2 && comparison->sequences(1).size() == startCount &&
+                comparison->selectedRanks(1).size() == startCount, "Plot has both categories and initially selects every start optimum");
+            resultTabs->setCurrentIndex(1); graphView->click();
+            require(plotTabs && plotTabs->currentIndex() == 1, "Plot follows the selected results category");
+            bool startMatches = true, globalRankMatches = true, startCdfMatches = true;
+            for(int row = 0; row < startResults->rowCount(); ++row) {
+                startResults->selectRow(row);
+                const auto& sequence = comparison->sequences(1)[row];
+                startMatches &= sequence.size() == graphPath->rowCount() && sequence.front() == row + 1;
+                for(int i = 0; startMatches && i < sequence.size(); ++i) {
+                    startMatches &= sequence[i] == graphPath->item(i, 2)->text().toInt();
+                }
+                int globalRank = -1;
+                for(int i = 0; i < comparison->sequences().size(); ++i) {
+                    if(comparison->sequences()[i] == sequence) { globalRank = i + 1; break; }
+                }
+                const auto expectedRank = globalRank > 0 ? QString::number(globalRank) :
+                    QStringLiteral(">%1").arg(graphResults->rowCount());
+                globalRankMatches &= startResults->item(row, 2)->text() == expectedRank;
+                graphUse->click();
+                startCdfMatches &= cdfInitial->rowCount() == sequence.size();
+                for(int i = 0; startCdfMatches && i < cdfInitial->rowCount(); ++i) {
+                    startCdfMatches &= std::abs(cdfInitial->item(i, 1)->text().toDouble() - graphPath->item(i, 1)->text().toDouble()) < 1.0e-5;
+                    const auto q = graphPath->item(i, 3)->text().split(',');
+                    for(int j = 0; j < 6; ++j) {
+                        startCdfMatches &= std::abs(cdfInitial->item(i, j + 2)->text().toDouble() - q[j].trimmed().toDouble()) < 1.0e-5;
+                    }
+                }
+                tabs->setCurrentIndex(0);
+            }
+            require(startMatches, "Fixed-start plot and table show all original point selections for each distinct start");
+            require(globalRankMatches, "Global rank is exact for matching sequences and explicitly bounded otherwise");
+            require(startCdfMatches, "Every start optimum transfers original times and all joints to CDF from page two");
+            resultTabs->setCurrentIndex(0);
+
             graphView->click();
             require(widget.findChildren<ConfigurationSelectionDialog*>().size() == 1,
                 "Repeated plot button reuses the current result window");
@@ -863,6 +963,8 @@ namespace
             require(appliedSeed && graphUse->isEnabled() && graphResults->rowCount() == expectedPaths,
                 "CDF seed applies through existing sign mapping and keeps ranked results available");
             graphM->setValue(3);
+            perStartK->setValue(2);
+            require(startResults->rowCount() == 0, "Changing either ranking parameter invalidates both categories");
             require(!graphView->isEnabled() && (!comparison || !comparison->isVisible()),
                 "Invalidated results disable plotting and close the stale comparison window");
             QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -872,6 +974,13 @@ namespace
             require(graphResults->rowCount() == 0 && !graphUse->isEnabled(), "Cancelled graph task publishes no partial results");
             graphButton->click(); waitGraph();
             require(graphResults->rowCount() == 3, "Configured M=3 is honored");
+            require(startResults->rowCount() == 2 * startCount, "Per-start K=2 is independent of global M=3");
+            bool groupOrder = true;
+            for(int i = 0; i < startResults->rowCount(); ++i) {
+                groupOrder &= startResults->item(i, 0)->text().toInt() == i / 2 + 1 &&
+                    startResults->item(i, 1)->text().toInt() == i % 2 + 1;
+            }
+            require(groupOrder, "Fixed-start results expose unambiguous start number and within-group rank");
             graphView->click(); application.processEvents();
             comparison = widget.findChild<ConfigurationSelectionDialog*>();
             require(comparison && comparison->sequences().size() == 3, "Recomputed results open a fresh plot snapshot");
@@ -882,7 +991,7 @@ namespace
             preview.mutate(geometryChange, QStringLiteral("multiIkBaseRegression"));
             require(multiPoints->count() == 0 && multiTable->rowCount() == 0 && !multiPlay->isEnabled(),
                 "Actual base transform preview still invalidates multi IK results");
-            require(graphResults->rowCount() == 0 && graphPath->rowCount() == 0 && !graphUse->isEnabled(),
+            require(graphResults->rowCount() == 0 && startResults->rowCount() == 0 && graphPath->rowCount() == 0 && !graphUse->isEnabled(),
                 "Invalidating source IK also clears ranked paths and disables CDF transfer");
         }
         widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);

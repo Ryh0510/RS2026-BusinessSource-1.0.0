@@ -162,3 +162,12 @@
 - 验证完整序列投影、多选/区间、生命周期、Release/Debug 构建和 GUI 回归。
 
 - 完成：对比窗口及全量只读投影已接入，Release 三项/Debug 一项 GUI 回归通过，749 点单点差异绘图已视觉核对，主程序启动检查退出 0。可执行文件为同级 build/Release/bin/RobotQtViewerrx64.exe。
+
+## 2026-09-28 固定起点构型的 Top-K
+
+- 开始时根仓及相关子仓工作树干净。保留全局 Top-M，额外按首层每个实际逆解（含 turn）独立求 Top-K，K 默认 1、可配置；不硬编码八组，不改变边代价或增加碰撞检查。
+- ProjectMotionPlanning 复用精确 DP，固定首层有效前缀；Workbench/controller 持两套结果，结果栏和绘图对话框各两页，两页都可传 CDF，明确起点编号和组内排名。
+- 仅新增领域查询接口，保留原 filter；Qt 内部信号携带结果类别，避免跨页取错轨迹。输入/参数失效同时清两套结果和窗口。
+- 验证小图按起点穷举、K=1/多条/组合不足/单层/turn/取消/预算，GUI 双页数据和 CDF 逐点对照，Release/Debug 构建测试及真实文件统计。
+
+- 完成：双页结果/双页绘图、每起点独立 Top-K 与 CDF 应用已实现，并显示精确全局榜内名次或 >M。Release 领域及三项 GUI、Debug 两项测试通过；749 点真实文件得到 8 组×3 条，组阶段约 0.0215 秒。原程序在运行，新版交付 build/Release/bin/RobotQtViewer_StartTopKrx64.exe。
