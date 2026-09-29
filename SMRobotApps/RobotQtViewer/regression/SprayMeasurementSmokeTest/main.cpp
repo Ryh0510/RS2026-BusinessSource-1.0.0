@@ -667,6 +667,89 @@ namespace
             "FK snapshot stays valid after project replacement");
     }
 
+    void verifyCdfProgress(QApplication& application, const std::filesystem::path& projectPath,
+        const std::filesystem::path& folder)
+    {
+        using namespace robot_qt_viewer;
+        simulation_project::ProjectDocument document;
+        std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "CDF GUI project loads");
+        simulation_project::ProjectSession session;
+        session.setDocument(document, projectPath, false, false);
+        RobotQtViewerEventHub hub;
+        RobotQtViewerDocumentController documentController(session, hub);
+        RobotQtViewerSelectionModel selection(hub);
+        RobotQtViewerViewportPreviewState preview(hub);
+        RobotQtViewerOperationStatusStore status(hub);
+        RobotQtViewerDocumentContext context(session, documentController, selection, preview, hub, status);
+        selection.selectRobotLink(QStringLiteral("ABB4600_urdf"), QStringLiteral("Link6"));
+        MotionPlanningEditorWidget widget;
+        MotionPlanningModuleController controller(widget, context);
+        const auto input = folder / "cdf_ui_seed.txt";
+        {
+            std::ofstream file(input);
+            file << "time_s J1_deg J2_deg J3_deg J4_deg J5_deg J6_deg\n"
+                 << "0 97.4408658925731 1.19975930231299 33.9729339352994 97.9832197903536 -105.415134110182 -24.3060644844148\n"
+                 << "1 97.4408658925731 1.19975930231299 33.9729339352994 97.9832197903536 -105.415134110182 -24.3060644844148\n";
+        }
+        QTimer chooseFile;
+        QObject::connect(&chooseFile, &QTimer::timeout, &widget, [&]() {
+            for(auto* window : application.topLevelWidgets()) {
+                if(auto* file = qobject_cast<QFileDialog*>(window)) {
+                    file->selectFile(QString::fromStdWString(input.wstring()));
+                    QMetaObject::invokeMethod(file, "accept", Qt::DirectConnection);
+                }
+            }
+        });
+        chooseFile.start(10);
+        widget.importCdfJointAnglesRequested();
+        chooseFile.stop();
+        auto* initial = widget.findChild<QTableWidget*>(QStringLiteral("cdfInitialJointAngles"));
+        require(initial && initial->rowCount() == 2, "CDF GUI imports two real seed points");
+        if(!initial || initial->rowCount() != 2) return;
+        for(bool invalidate : {false, true}) {
+            int ticks = 0;
+            bool checkedClose = false;
+            const auto plansBefore = motion_planning::MotionPlanningProjectStore::plans(context.document());
+            QTimer heartbeat;
+            QObject::connect(&heartbeat, &QTimer::timeout, &widget, [&]() {
+                auto* dialog = widget.findChild<QDialog*>(QStringLiteral("cdfRepairProgress"));
+                if(!dialog || !dialog->isVisible()) return;
+                ++ticks;
+                if(ticks == 20 && !invalidate) dialog->grab().save(QStringLiteral("cdf-progress-preview.png"));
+                if(!checkedClose) {
+                    checkedClose = true;
+                    dialog->reject();
+                    require(dialog->isVisible(), "CDF task cannot destroy widgets before worker completion");
+                    if(invalidate) documentController.publishDocumentChanged(QStringLiteral("cdfStaleRegression"), false);
+                }
+            });
+            heartbeat.start(10);
+            widget.repairImportedCdfTrajectoryRequested();
+            heartbeat.stop();
+            require(ticks > 0 && checkedClose, "CDF worker leaves the GUI event loop responsive");
+            require(!widget.findChild<QDialog*>(QStringLiteral("cdfRepairProgress")), "CDF task window is released after worker join");
+            QString resultText;
+            for(auto* label : widget.findChildren<QLabel*>()) {
+                if(label->text().contains(QStringLiteral(" | Log: "))) resultText = label->text();
+            }
+            require(!resultText.isEmpty(), "CDF final result shows measured duration and log path");
+            const QString logPath = resultText.section(QStringLiteral(" | Log: "), 1);
+            QFile log(logPath);
+            const bool opened = log.open(QIODevice::ReadOnly);
+            const auto logText = opened ? log.readAll() : QByteArray{};
+            require(opened && logText.contains("CDF performance v2") && logText.contains("CDF query workers:") &&
+                logText.contains("Finished:"), "CDF log contains executable, worker count, stages and final status");
+            const auto plansAfter = motion_planning::MotionPlanningProjectStore::plans(context.document());
+            if(invalidate) {
+                require(resultText.contains(QStringLiteral("Project changed")) && plansAfter.size() == plansBefore.size(),
+                    "Changed project rejects stale CDF result");
+            } else {
+                require(plansAfter.size() > plansBefore.size(), "Completed CDF snapshot commits through the document service");
+            }
+        }
+    }
+
     void verifyConfigurationPlot(QApplication& application, const QString& screenshot = {})
     {
         QVector<QVector<int>> sequences(3, QVector<int>(749, 4));
@@ -1211,6 +1294,8 @@ namespace
 int main(int argc, char** argv)
 {
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    if(argc >= 2 && std::string(argv[1]) == "--cdf-progress")
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication application(argc, argv);
     std::cout.setf(std::ios::unitbuf);
     QSurfaceFormat format;
@@ -1229,6 +1314,10 @@ int main(int argc, char** argv)
     if(failures) { return 1; }
     const std::filesystem::path folder(temporary.path().toStdWString());
     writeFixture(folder);
+    if(argc >= 3 && std::string(argv[1]) == "--cdf-progress") {
+        verifyCdfProgress(application, std::filesystem::u8path(argv[2]), folder);
+        return failures ? 1 : 0;
+    }
     verifyModelIk();
     verifyMultiIkDomain();
     if(argc >= 2 && std::string(argv[1]) == "--configuration-plot") {

@@ -171,3 +171,34 @@
 - 验证小图按起点穷举、K=1/多条/组合不足/单层/turn/取消/预算，GUI 双页数据和 CDF 逐点对照，Release/Debug 构建测试及真实文件统计。
 
 - 完成：双页结果/双页绘图、每起点独立 Top-K 与 CDF 应用已实现，并显示精确全局榜内名次或 >M。Release 领域及三项 GUI、Debug 两项测试通过；749 点真实文件得到 8 组×3 条，组阶段约 0.0215 秒。原程序在运行，新版交付 build/Release/bin/RobotQtViewer_StartTopKrx64.exe。
+
+## 2026-09-28 CDF/QP 等价提速
+
+- 当前根仓及子仓工作树干净。保留 QP 轮数、矩阵/容差、APF、原始点、平滑参数和 0.001 rad 碰撞验收精度；不依赖修改预编译 Collision/SimulationRuntime SDK。
+- 在 ProjectMotionPlanning 引入单次 repair 私有批量查询上下文：独立场景并行评估互不依赖的点/边，精确 double 键缓存重复距离和运动验证，不共享可变碰撞场景、不量化角度。每轮规划重新建立/销毁缓存。
+- 保留单工作场景模式用于回归比较；默认按硬件限制最多四个。Qt/CDF 数据和优化约束不变，底层同步接口返回前等待批量工作结束。
+- 验证：保留原 baseline EXE 和同输入完整输出；领域小场景单/多工作场景对照、缓存与无缓存对照、原有回归、749 点 GUI 默认参数全程基准以及独立高密度回放、Release/Debug 编译。
+
+- 完成：Release/Debug 各 6 项通过；同一输入 861.754 → 316.912 秒，输出 4529 点 TXT SHA256 完全相同，独立 0.001 rad 复验均 0 碰撞段。原安全间距未达标状态保留。主程序已更新为同级 build/Release/bin/RobotQtViewerrx64.exe，报告见 cdf_qp_performance.md。
+
+## 2026-09-28 Top-K 输入耗时复核
+
+- 用户确认慢输入来自 Top-K，并非上一轮 ik_joint_angles.txt。当前保留此前提速的所有未提交修改。
+- GUI 旧入口同步占用 UI 线程且未接 progress；改为 controller 私有快照后台执行和模态阶段窗口，记录 EXE、配置、输入来源、阶段时间。期间文档变化则拒绝提交过期结果。
+- APF 梯度探针、碰撞区间扫描和局部 QP 查询复用领域层独立场景批量查询/精确缓存；保持 APF 搜索、有限差分、QP 参数及最终 0.001 rad 新鲜复验。
+- 用现有全局 Top-M 第 1 条 749 点候选进行顺序对照；实际用户所选编号尚未明确，不能把该复测当成其具体运行。验证包括 APF 批量等价回归、查询回归、Release/Debug 主程序构建。
+
+- 本轮完成：全局 Top-M 第 1 条实测 1012.320 → 439.964 秒；难段 1660→1813 为 726.794 → 277.199 秒。两版 4592 点导出 TXT 逐字节一致，SHA-256 为 c73a1ea0998ec31a7b4fd5ae2e5bfb579fe0bc5d1cbdc3e8cdfc811b2a4381ce；独立 0.001 rad 复验均 0 碰撞段，安全间距未达标的返回 1 状态保持。
+- CMake configure、Release/Debug 主程序与相关目标构建通过；两配置各 6 项领域回归及新 GUI 阶段/线程/过期结果回归通过。阶段窗口已视觉核对，主程序 smoke 退出 0，源码 UTF-8/CRLF 与 diff 检查通过。
+- 当前 GUI：同级 build/Release/bin/RobotQtViewerrx64.exe；每次运行日志位于 EXE 同目录 log/cdf，结束摘要给出路径。完整证据/口径见 docs/cdf_qp_performance.md 第二轮；未把第一轮原始文件基准推广为任意 Top-K 的耗时保证。未新增公共 API、第三方依赖或项目持久化字段。
+
+## 2026-09-29 GPU 碰撞查询接入核对
+
+- 当前根仓、MotionPlanning 与 Workbench 保留上轮未提交提速改动；本轮尚未修改算法、编译配置或 EXE。任务是核对并推进 GPU 碰撞/距离查询，保持现有几何与过滤语义。
+- NVIDIA 驱动查询及 CUDA Driver API 的 cuInit/cuDeviceGet 成功：RTX 5050 Laptop，8151 MiB 可见显存，compute capability 12.0；驱动 591.91。nvidia-smi 显示的 CUDA 13.1 是驱动支持版本，不是已安装 Toolkit 的证明。
+- PATH 未找到 nvcc，标准 NVIDIA GPU Computing Toolkit 目录与本工程内也未找到 CUDA 编译工具/内核。暂未安装任何依赖或声称已执行 GPU 碰撞内核。
+- 本工程依赖 PrebuiltPackages 下 Collision/SimulationRuntime；工作区未找到 CollisionWorld.cpp 或 ICollisionBackend.h 的实现源码。CollisionBackendType 只有 Default/Fcl/Coal，CollisionWorld 的 backend_ 为私有，没有公开后端注入接口；ProjectCollisionRuntime 也不公开完整对象/有效碰撞对快照。
+- 正确所有者是 Collision：需在后端层接入 GPU 批量碰撞/最小距离/最近点查询，继承 includePairs/excludePairs、ACM、geometryRole/source/group/mask 和对象标识；规划域 CdfQueryBatch 消费批量接口。不能通过显示网格或自行复制筛选规则冒充原检测器。
+- 推荐先保持原网格的 GPU 批量后端与 CPU 回退/最终高密度复验；SDF 是另外一种近似路线，不在未经说明时替换。必须将距离误差、碰撞误判、最近点/梯度一致性、CPU/GPU 传输与端到端耗时分开验证，不预先承诺倍数。
+- 用户已确认只有当前工程和预编译 SDK。现有接口可读部分几何缓存、显示描述及 ACM 单对查询，但不提供可替换后端或带完整过滤语义的批量场景快照；不能据此宣称可直接替换原 FCL。没有修改预编译 SDK 或在 UI 中伪装 GPU 开关。
+- 完整精确后端迁移需要可扩展的 Collision SDK。当前工程内可考虑独立 GPU 距离场辅助 APF/CDF，由 CPU 保留精确运动检查及最终验收，但这是近似搜索路线，会影响梯度和结果轨迹，不能按此前“保持现有功能/查询语义”要求擅自替换。后续须明确是否接受这一范围变化；目前仅完成环境与接口核对，未安装 CUDA Toolkit、未新增 GPU 内核或更改程序。
