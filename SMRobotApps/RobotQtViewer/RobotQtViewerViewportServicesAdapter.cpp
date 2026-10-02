@@ -3,6 +3,8 @@
 #include "ProjectScene.h"
 #include "RobotViewport.h"
 
+#include <SimulationProject/ProjectAttachmentCommands.h>
+
 namespace
 {
     robot_qt_viewer::CollisionRuntimeDetectorInfo::Vec3Info toRuntimeVec3(
@@ -221,12 +223,49 @@ namespace
 
 namespace robot_qt_viewer
 {
-    RobotQtViewerViewportServicesAdapter::RobotQtViewerViewportServicesAdapter(RobotViewport& viewport)
+    RobotQtViewerDocumentViewportAdapter::RobotQtViewerDocumentViewportAdapter(
+        RobotViewport& viewport,
+        RobotQtViewerViewportProjectState& projectState)
+        : m_viewport(viewport)
+        , m_projectState(projectState)
+    {
+    }
+
+    RobotQtViewerSelectionViewportAdapter::RobotQtViewerSelectionViewportAdapter(
+        RobotViewport& viewport)
         : m_viewport(viewport)
     {
     }
 
-    void RobotQtViewerViewportServicesAdapter::selectRobotMount(
+    RobotQtViewerAssemblyViewportAdapter::RobotQtViewerAssemblyViewportAdapter(
+        RobotViewport& viewport,
+        const RobotQtViewerViewportProjectState& projectState)
+        : m_viewport(viewport)
+        , m_projectState(projectState)
+    {
+    }
+
+    RobotQtViewerCollisionViewportAdapter::RobotQtViewerCollisionViewportAdapter(
+        RobotViewport& viewport,
+        const RobotQtViewerViewportProjectState& projectState)
+        : m_viewport(viewport)
+        , m_projectState(projectState)
+    {
+    }
+
+    RobotQtViewerVisualizationViewportAdapter::RobotQtViewerVisualizationViewportAdapter(
+        RobotViewport& viewport)
+        : m_viewport(viewport)
+    {
+    }
+
+    RobotQtViewerRobotRunServiceAdapter::RobotQtViewerRobotRunServiceAdapter(
+        RobotViewport& viewport)
+        : m_viewport(viewport)
+    {
+    }
+
+    void RobotQtViewerSelectionViewportAdapter::selectRobotMount(
         const QString& robotId,
         const QString& linkName,
         const QString& robotMountId)
@@ -234,70 +273,106 @@ namespace robot_qt_viewer
         m_viewport.selectRobotMount(robotId, linkName, robotMountId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setActivePreviewRobotMount(const QString& robotMountId)
+    bool RobotQtViewerAssemblyViewportAdapter::setActivePreviewRobotMount(const QString& robotMountId)
     {
         return m_viewport.setActivePreviewRobotMount(robotMountId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::previewRobotMountTransform(
+    bool RobotQtViewerAssemblyViewportAdapter::previewRobotMountTransform(
         const QString& robotMountId,
         const simulation_project::TransformDesc& transform)
     {
         return m_viewport.setPreviewRobotMountTransform(robotMountId, transform);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::previewRobotMountLink(
+    bool RobotQtViewerAssemblyViewportAdapter::previewMountedAttachmentTransform(
+        const QString& attachmentId,
+        const simulation_project::TransformDesc& transform)
+    {
+        return m_viewport.setPreviewMountedAttachmentTransform(attachmentId, transform);
+    }
+
+    bool RobotQtViewerAssemblyViewportAdapter::previewAttachmentAsset(
+        const simulation_project::AttachmentAssetDesc& asset)
+    {
+        return m_viewport.setPreviewAttachmentAsset(asset);
+    }
+
+    bool RobotQtViewerAssemblyViewportAdapter::previewAttachmentBinding(
+        const simulation_project::BindFramesRequest& request)
+    {
+        if(!m_projectState.loaded) {
+            return false;
+        }
+
+        simulation_project::ProjectDocument previewDocument = m_projectState.document;
+        simulation_project::ProjectAttachmentCommands commands(previewDocument);
+        const simulation_project::BindFramesResult result = commands.bindFrames(request);
+        return result.success &&
+            m_viewport.loadProjectDocument(previewDocument, m_projectState.basePath);
+    }
+
+    void RobotQtViewerAssemblyViewportAdapter::clearAttachmentBindingPreview()
+    {
+        if(m_projectState.loaded) {
+            m_viewport.loadProjectDocument(
+                m_projectState.document,
+                m_projectState.basePath);
+        }
+    }
+
+    bool RobotQtViewerAssemblyViewportAdapter::previewRobotMountLink(
         const QString& robotMountId,
         const QString& linkName)
     {
         return m_viewport.setPreviewRobotMountLink(robotMountId, linkName);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::upsertPreviewRobotMount(
+    bool RobotQtViewerAssemblyViewportAdapter::upsertPreviewRobotMount(
         const simulation_project::RobotMountDesc& mount)
     {
         return m_viewport.upsertPreviewRobotMount(mount);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::removePreviewRobotMount(const QString& robotMountId)
+    bool RobotQtViewerAssemblyViewportAdapter::removePreviewRobotMount(const QString& robotMountId)
     {
         return m_viewport.removePreviewRobotMount(robotMountId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::previewRobotBaseTransform(
+    void RobotQtViewerAssemblyViewportAdapter::previewRobotBaseTransform(
         const QString& robotId,
         const simulation_project::TransformDesc& transform)
     {
         m_viewport.previewRobotBaseTransform(robotId, transform);
     }
 
-    void RobotQtViewerViewportServicesAdapter::previewSceneObjectTransform(
+    void RobotQtViewerAssemblyViewportAdapter::previewSceneObjectTransform(
         const QString& objectId,
         const simulation_project::TransformDesc& transform)
     {
         m_viewport.previewSceneObjectTransform(objectId, transform);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::commitSceneObjectTransform(
+    bool RobotQtViewerAssemblyViewportAdapter::commitSceneObjectTransform(
         const QString& objectId,
         const simulation_project::TransformDesc& transform)
     {
         return m_viewport.setSceneObjectTransform(objectId, transform);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::removeSceneObject(const QString& objectId)
+    bool RobotQtViewerAssemblyViewportAdapter::removeSceneObject(const QString& objectId)
     {
         return m_viewport.removeSceneObject(objectId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::selectObjectFrame(
+    void RobotQtViewerSelectionViewportAdapter::selectObjectFrame(
         const QString& objectId,
         const QString& frameId)
     {
         m_viewport.selectObjectFrame(objectId, frameId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::previewObjectFrameTransform(
+    bool RobotQtViewerAssemblyViewportAdapter::previewObjectFrameTransform(
         const QString& objectId,
         const QString& frameId,
         const simulation_project::TransformDesc& transform)
@@ -305,48 +380,48 @@ namespace robot_qt_viewer
         return m_viewport.previewObjectFrameTransform(objectId, frameId, transform);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::upsertPreviewObjectFrame(
+    bool RobotQtViewerAssemblyViewportAdapter::upsertPreviewObjectFrame(
         const QString& objectId,
         const simulation_project::ObjectFrameDesc& frame)
     {
         return m_viewport.upsertPreviewObjectFrame(objectId, frame);
     }
 
-    void RobotQtViewerViewportServicesAdapter::selectRobotLink(
+    void RobotQtViewerSelectionViewportAdapter::selectRobotLink(
         const QString& robotId,
         const QString& linkName)
     {
         m_viewport.selectRobotLink(robotId, linkName);
     }
 
-    void RobotQtViewerViewportServicesAdapter::selectRobotJointFrame(
+    void RobotQtViewerSelectionViewportAdapter::selectRobotJointFrame(
         const QString& robotId,
         const QString& jointName)
     {
         m_viewport.selectRobotJointFrame(robotId, jointName);
     }
 
-    void RobotQtViewerViewportServicesAdapter::setActiveToolFrameRobot(const QString& robotId)
+    void RobotQtViewerSelectionViewportAdapter::setActiveToolFrameRobot(const QString& robotId)
     {
         m_viewport.setActiveToolFrameRobot(robotId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::selectSceneObject(const QString& objectId)
+    void RobotQtViewerSelectionViewportAdapter::selectSceneObject(const QString& objectId)
     {
         m_viewport.selectSceneObject(objectId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::selectMountedAttachment(const QString& attachmentId)
+    void RobotQtViewerSelectionViewportAdapter::selectMountedAttachment(const QString& attachmentId)
     {
         m_viewport.selectMountedAttachment(attachmentId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setActiveMountedAttachment(const QString& attachmentId)
+    bool RobotQtViewerAssemblyViewportAdapter::setActiveMountedAttachment(const QString& attachmentId)
     {
         return m_viewport.setActiveMountedAttachment(attachmentId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::setToolFrameVisibility(
+    void RobotQtViewerAssemblyViewportAdapter::setToolFrameVisibility(
         const RobotQtViewerToolFrameVisibility& visibility)
     {
         ProjectScene::ToolFrameVisibility viewportVisibility;
@@ -359,99 +434,63 @@ namespace robot_qt_viewer
         m_viewport.setToolFrameVisibility(viewportVisibility);
     }
 
-    RobotQtViewerViewportServices::RobotForwardKinematics
-    RobotQtViewerViewportServicesAdapter::robotForwardKinematics(const QString& robotId,
-        const std::vector<std::string>& jointNames, bool includeTool) const
-    {
-        return m_viewport.robotForwardKinematics(robotId, jointNames, includeTool);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::setSprayRangeVisible(
-        const QString& robotId,
-        bool visible)
-    {
-        m_viewport.setSprayRangeVisible(robotId, visible);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::setEndEffectorTraceVisible(const QString& robotId, bool visible)
-    {
-        m_viewport.setEndEffectorTraceVisible(robotId, visible);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::clearEndEffectorTrace()
-    {
-        m_viewport.clearEndEffectorTrace();
-    }
-
-    void RobotQtViewerViewportServicesAdapter::appendEndEffectorTraceSample()
-    {
-        m_viewport.appendEndEffectorTraceSample();
-    }
-
-    SprayMeasurementResult RobotQtViewerViewportServicesAdapter::sprayMeasurement(const QString& robotId) const
-    {
-        const auto measurement = m_viewport.sprayMeasurement(robotId);
-        return { measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
-            QString::fromStdString(measurement.errorMessage) };
-    }
-
-    void RobotQtViewerViewportServicesAdapter::setRobotMountFrameVisibility(
+    void RobotQtViewerAssemblyViewportAdapter::setRobotMountFrameVisibility(
         bool selectedLinkFrameVisible,
         bool mountFrameVisible)
     {
         m_viewport.setRobotMountFrameVisibility(selectedLinkFrameVisible, mountFrameVisible);
     }
 
-    void RobotQtViewerViewportServicesAdapter::setPinnedRobotMountFrames(const QStringList& robotMountIds)
+    void RobotQtViewerAssemblyViewportAdapter::setPinnedRobotMountFrames(const QStringList& robotMountIds)
     {
         m_viewport.setPinnedRobotMountFrames(robotMountIds);
     }
 
-    void RobotQtViewerViewportServicesAdapter::focusMountFrameLink(
+    void RobotQtViewerSelectionViewportAdapter::focusMountFrameLink(
         const QString& robotId,
         const QString& linkName)
     {
         m_viewport.focusMountFrameLink(robotId, linkName);
     }
 
-    void RobotQtViewerViewportServicesAdapter::clearMountFrameLinkFocus()
+    void RobotQtViewerSelectionViewportAdapter::clearMountFrameLinkFocus()
     {
         m_viewport.clearMountFrameLinkFocus();
     }
 
-    void RobotQtViewerViewportServicesAdapter::focusObjectFrameObject(const QString& objectId)
+    void RobotQtViewerSelectionViewportAdapter::focusObjectFrameObject(const QString& objectId)
     {
         m_viewport.focusObjectFrameObject(objectId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::clearObjectFrameObjectFocus()
+    void RobotQtViewerSelectionViewportAdapter::clearObjectFrameObjectFocus()
     {
         m_viewport.clearObjectFrameObjectFocus();
     }
 
-    void RobotQtViewerViewportServicesAdapter::focusMountedAttachment(const QString& attachmentId)
+    void RobotQtViewerSelectionViewportAdapter::focusMountedAttachment(const QString& attachmentId)
     {
         m_viewport.focusMountedAttachment(attachmentId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::clearMountedAttachmentFocus()
+    void RobotQtViewerSelectionViewportAdapter::clearMountedAttachmentFocus()
     {
         m_viewport.clearMountedAttachmentFocus();
     }
 
-    void RobotQtViewerViewportServicesAdapter::previewObjectCollisionModelVariant(
+    void RobotQtViewerCollisionViewportAdapter::previewObjectCollisionModelVariant(
         const QString& objectId,
         const QString& variantId)
     {
         m_viewport.previewObjectCollisionModelVariant(objectId, variantId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::clearObjectCollisionModelVariantPreview()
+    void RobotQtViewerCollisionViewportAdapter::clearObjectCollisionModelVariantPreview()
     {
         m_viewport.clearObjectCollisionModelVariantPreview();
     }
 
-    void RobotQtViewerViewportServicesAdapter::previewCollisionPairTargets(
+    void RobotQtViewerCollisionViewportAdapter::previewCollisionPairTargets(
         const QString& robotAId,
         const QString& linkAName,
         const QString& objectAId,
@@ -472,7 +511,7 @@ namespace robot_qt_viewer
             attachmentBId);
     }
 
-    RobotQtViewerViewportLoadResult RobotQtViewerViewportServicesAdapter::loadProjectDocument(
+    RobotQtViewerViewportLoadResult RobotQtViewerDocumentViewportAdapter::loadProjectDocument(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath)
     {
@@ -480,70 +519,80 @@ namespace robot_qt_viewer
         result.success = m_viewport.loadProjectDocument(document, basePath);
         if(!result.success) {
             result.errorMessage = m_viewport.lastError();
+        } else {
+            m_projectState.document = document;
+            m_projectState.basePath = basePath;
+            m_projectState.loaded = true;
         }
         return result;
     }
 
-    std::filesystem::path RobotQtViewerViewportServicesAdapter::projectBasePath() const
+    std::filesystem::path RobotQtViewerCollisionViewportAdapter::projectBasePath() const
     {
-        return m_viewport.projectBasePath();
+        return m_projectState.loaded ? m_projectState.basePath : m_viewport.projectBasePath();
     }
 
-    bool RobotQtViewerViewportServicesAdapter::refreshCollisionConfiguration(
+    bool RobotQtViewerCollisionViewportAdapter::refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath)
     {
         return m_viewport.refreshCollisionConfiguration(document, basePath);
     }
 
-    void RobotQtViewerViewportServicesAdapter::setCollisionGeometryVisible(bool visible)
+    void RobotQtViewerCollisionViewportAdapter::setCollisionGeometryVisible(bool visible)
     {
         m_viewport.setCollisionGeometryVisible(visible);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::collisionQueriesEnabled() const
+    bool RobotQtViewerCollisionViewportAdapter::collisionQueriesEnabled() const
     {
         return m_viewport.collisionQueriesEnabled();
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setCollisionQueriesEnabled(bool enabled)
+    bool RobotQtViewerCollisionViewportAdapter::setCollisionQueriesEnabled(bool enabled)
     {
         return m_viewport.setCollisionQueriesEnabled(enabled);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setActiveCollisionDetector(const QString& detectorId)
+    bool RobotQtViewerCollisionViewportAdapter::setActiveCollisionDetector(const QString& detectorId)
     {
         return m_viewport.setActiveCollisionDetector(detectorId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setCollisionDetectorEnabled(const QString& detectorId, bool enabled)
+    bool RobotQtViewerCollisionViewportAdapter::refreshCollisionDetectorNearest(
+        const QString& detectorId)
+    {
+        return m_viewport.refreshCollisionDetectorNearest(detectorId);
+    }
+
+    bool RobotQtViewerCollisionViewportAdapter::setCollisionDetectorEnabled(const QString& detectorId, bool enabled)
     {
         return m_viewport.setCollisionDetectorEnabled(detectorId, enabled);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setCollisionDetectorVisible(const QString& detectorId, bool visible)
+    bool RobotQtViewerCollisionViewportAdapter::setCollisionDetectorVisible(const QString& detectorId, bool visible)
     {
         return m_viewport.setCollisionDetectorVisible(detectorId, visible);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::updateCollisionDetectorRuntimeOptions(
+    bool RobotQtViewerCollisionViewportAdapter::updateCollisionDetectorRuntimeOptions(
         const simulation_project::CollisionDetectorDesc& detector)
     {
         return m_viewport.updateCollisionDetectorRuntimeOptions(detector);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::rebuildCollisionDetectorsFromDocument(
+    bool RobotQtViewerCollisionViewportAdapter::rebuildCollisionDetectorsFromDocument(
         const simulation_project::ProjectDocument& document)
     {
         return m_viewport.rebuildCollisionDetectorsFromDocument(document);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::removeCollisionDetector(const QString& detectorId)
+    bool RobotQtViewerCollisionViewportAdapter::removeCollisionDetector(const QString& detectorId)
     {
         return m_viewport.removeCollisionDetector(detectorId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setVisibleRobotCollisionVariant(
+    bool RobotQtViewerCollisionViewportAdapter::setVisibleRobotCollisionVariant(
         const QString& robotId,
         const QString& linkName,
         const QString& variantId)
@@ -551,20 +600,20 @@ namespace robot_qt_viewer
         return m_viewport.setVisibleRobotCollisionVariant(robotId, linkName, variantId);
     }
 
-    QString RobotQtViewerViewportServicesAdapter::visibleRobotCollisionVariant(
+    QString RobotQtViewerCollisionViewportAdapter::visibleRobotCollisionVariant(
         const QString& robotId,
         const QString& linkName) const
     {
         return m_viewport.visibleRobotCollisionVariant(robotId, linkName);
     }
 
-    CollisionRuntimeRobotSummary RobotQtViewerViewportServicesAdapter::robotCollisionSummary(
+    CollisionRuntimeRobotSummary RobotQtViewerCollisionViewportAdapter::robotCollisionSummary(
         const QString& robotId) const
     {
         return toRuntimeRobotSummary(m_viewport.robotCollisionSummary(robotId));
     }
 
-    std::vector<CollisionRuntimeDetectorInfo> RobotQtViewerViewportServicesAdapter::collisionRuntimeDetectors() const
+    std::vector<CollisionRuntimeDetectorInfo> RobotQtViewerCollisionViewportAdapter::collisionRuntimeDetectors() const
     {
         const std::vector<ProjectScene::CollisionDetectorInfo> viewportDetectors = m_viewport.collisionDetectors();
         std::vector<CollisionRuntimeDetectorInfo> detectors;
@@ -575,7 +624,7 @@ namespace robot_qt_viewer
         return detectors;
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateRobotCollisionProxies(
+    bool RobotQtViewerCollisionViewportAdapter::generateRobotCollisionProxies(
         const QString& robotId,
         const QString& linkName,
         const CollisionRuntimeProxyRequest& request,
@@ -588,7 +637,7 @@ namespace robot_qt_viewer
             elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateRobotCollisionProxiesFromExistingCollision(
+    bool RobotQtViewerCollisionViewportAdapter::generateRobotCollisionProxiesFromExistingCollision(
         const QString& robotId,
         const QString& linkName,
         const CollisionRuntimeProxyRequest& request,
@@ -601,7 +650,7 @@ namespace robot_qt_viewer
             elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateRobotCollisionProxiesFromExistingCollision(
+    bool RobotQtViewerCollisionViewportAdapter::generateRobotCollisionProxiesFromExistingCollision(
         const QString& robotId,
         const CollisionRuntimeProxyRequest& request,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements) const
@@ -612,7 +661,7 @@ namespace robot_qt_viewer
             elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateRobotCollisionCoacdFromVisual(
+    bool RobotQtViewerCollisionViewportAdapter::generateRobotCollisionCoacdFromVisual(
         const QString& robotId,
         const QString& linkName,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements) const
@@ -620,7 +669,7 @@ namespace robot_qt_viewer
         return m_viewport.generateRobotCollisionCoacdFromVisual(robotId, linkName, elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateRobotCollisionCoacdFromExistingCollision(
+    bool RobotQtViewerCollisionViewportAdapter::generateRobotCollisionCoacdFromExistingCollision(
         const QString& robotId,
         const QString& linkName,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements) const
@@ -628,14 +677,14 @@ namespace robot_qt_viewer
         return m_viewport.generateRobotCollisionCoacdFromExistingCollision(robotId, linkName, elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateObjectCollisionCoacdFromVisual(
+    bool RobotQtViewerCollisionViewportAdapter::generateObjectCollisionCoacdFromVisual(
         const QString& objectId,
         std::vector<simulation_project::ObjectCollisionElementOverrideDesc>& elements) const
     {
         return m_viewport.generateObjectCollisionCoacdFromVisual(objectId, elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::generateMissingRobotCollisionProxies(
+    bool RobotQtViewerCollisionViewportAdapter::generateMissingRobotCollisionProxies(
         const QString& robotId,
         const CollisionRuntimeProxyRequest& request,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements) const
@@ -646,7 +695,7 @@ namespace robot_qt_viewer
             elements);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::evaluateRobotCollisionProxyQuality(
+    bool RobotQtViewerCollisionViewportAdapter::evaluateRobotCollisionProxyQuality(
         const QString& robotId,
         const QString& linkName,
         const CollisionRuntimeProxyRequest& request,
@@ -668,71 +717,94 @@ namespace robot_qt_viewer
         return true;
     }
 
-    double RobotQtViewerViewportServicesAdapter::robotJointValue(
-        const QString& robotId,
-        const QString& jointName,
-        bool* ok) const
-    {
-        return m_viewport.robotJointValue(robotId, jointName, ok);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::setRobotJointValue(
-        const QString& robotId,
-        const QString& jointName,
-        double value)
-    {
-        m_viewport.setRobotJointValue(robotId, jointName, value);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::setRobotAutoMotion(
-        const QString& robotId,
-        bool enabled,
-        double amplitude,
-        double speed)
-    {
-        m_viewport.setRobotAutoMotion(robotId, enabled, amplitude, speed);
-    }
-
-    bool RobotQtViewerViewportServicesAdapter::applySurfaceScalarOverlay(
+    bool RobotQtViewerVisualizationViewportAdapter::applySurfaceScalarOverlay(
         const smrobot::visualization::SurfaceScalarOverlay& overlay,
         QString* errorMessage)
     {
         return m_viewport.applySurfaceScalarOverlay(overlay, errorMessage);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::setSurfaceScalarOverlayVisible(
+    bool RobotQtViewerVisualizationViewportAdapter::setSurfaceScalarOverlayVisible(
         const QString& objectId,
         bool visible)
     {
         return m_viewport.setSurfaceScalarOverlayVisible(objectId, visible);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::clearSurfaceScalarOverlay(const QString& objectId)
+    bool RobotQtViewerVisualizationViewportAdapter::clearSurfaceScalarOverlay(const QString& objectId)
     {
         return m_viewport.clearSurfaceScalarOverlay(objectId);
     }
 
-    void RobotQtViewerViewportServicesAdapter::setTrajectoryControlPointOverlay(
-        const QString& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
-    {
-        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints, showPoints);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::clearTrajectoryControlPointOverlay(
-        const QString& trajectoryId)
-    {
-        m_viewport.clearTrajectoryControlPointOverlay(trajectoryId);
-    }
-
-    void RobotQtViewerViewportServicesAdapter::setSurfaceScalarProbeEnabled(
+    void RobotQtViewerVisualizationViewportAdapter::setSurfaceScalarProbeEnabled(
         bool enabled,
         const QString& objectId)
     {
         m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
     }
 
-    bool RobotQtViewerViewportServicesAdapter::jointValue(
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::upsertCustomMesh(
+        const smrobot::visualization::CustomMeshDesc& desc,
+        smrobot::visualization::CustomMeshHandle& handle)
+    {
+        return m_viewport.upsertCustomMesh(desc, handle);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::updateCustomMeshGeometry(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::MeshData& mesh)
+    {
+        return m_viewport.updateCustomMeshGeometry(handle, mesh);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::updateCustomMeshColors(
+        smrobot::visualization::CustomMeshHandle handle,
+        const std::vector<smrobot::visualization::Color4f>& colors)
+    {
+        return m_viewport.updateCustomMeshColors(handle, colors);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::setCustomMeshTransform(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::TransformMatrix& transform)
+    {
+        return m_viewport.setCustomMeshTransform(handle, transform);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::setCustomMeshAppearance(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::MeshAppearance& appearance)
+    {
+        return m_viewport.setCustomMeshAppearance(handle, appearance);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::setCustomMeshVisible(
+        smrobot::visualization::CustomMeshHandle handle,
+        bool visible)
+    {
+        return m_viewport.setCustomMeshVisible(handle, visible);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::removeCustomMesh(
+        smrobot::visualization::CustomMeshHandle handle)
+    {
+        return m_viewport.removeCustomMesh(handle);
+    }
+
+    smrobot::visualization::CustomMeshResult
+    RobotQtViewerVisualizationViewportAdapter::clearCustomMeshes(const std::string& ownerId)
+    {
+        return m_viewport.clearCustomMeshes(ownerId);
+    }
+
+    bool RobotQtViewerRobotRunServiceAdapter::jointValue(
         const std::string& robotId,
         const std::string& jointName,
         double& value) const
@@ -745,7 +817,7 @@ namespace robot_qt_viewer
         return ok;
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::setJointValue(
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::setJointValue(
         const std::string& robotId,
         const std::string& jointName,
         double value)
@@ -757,7 +829,7 @@ namespace robot_qt_viewer
         return { true, "Robot joint value updated." };
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::setAutoMotion(
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::setAutoMotion(
         const std::string& robotId,
         bool enabled,
         double amplitude,
@@ -771,7 +843,7 @@ namespace robot_qt_viewer
         return { true, enabled ? "Robot auto motion enabled." : "Robot auto motion disabled." };
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::loadTrajectory(
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::loadTrajectory(
         const std::string& robotId,
         const std::string& trajectoryId,
         const std::vector<std::string>& jointNames,
@@ -788,7 +860,7 @@ namespace robot_qt_viewer
         return result;
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::startTrajectory()
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::startTrajectory()
     {
         const robotruntime::RobotRunCommandResult result = m_trajectorySession.start();
         if(result.success) {
@@ -805,17 +877,17 @@ namespace robot_qt_viewer
         return result;
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::pauseTrajectory()
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::pauseTrajectory()
     {
         return m_trajectorySession.pause();
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::stopTrajectory()
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::stopTrajectory()
     {
         return m_trajectorySession.stop();
     }
 
-    robotruntime::RobotRunCommandResult RobotQtViewerViewportServicesAdapter::stepTrajectory(
+    robotruntime::RobotRunCommandResult RobotQtViewerRobotRunServiceAdapter::stepTrajectory(
         double timeStep)
     {
         const robotruntime::RobotRunCommandResult result = m_trajectorySession.step(timeStep);
@@ -835,8 +907,73 @@ namespace robot_qt_viewer
     }
 
     robotruntime::RobotRunExecutionSnapshot
-    RobotQtViewerViewportServicesAdapter::trajectorySnapshot() const
+    RobotQtViewerRobotRunServiceAdapter::trajectorySnapshot() const
     {
         return m_trajectorySession.snapshot();
+    }
+
+    IRobotQtViewerMotionPlanningViewportPort::RobotForwardKinematics
+    RobotQtViewerMotionPlanningViewportAdapter::robotForwardKinematics(const QString& robotId,
+        const std::vector<std::string>& jointNames, bool includeTool) const
+    {
+        return m_viewport.robotForwardKinematics(robotId, jointNames, includeTool);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValue(
+        const QString& robotId,
+        const QString& jointName,
+        double value)
+    {
+        m_viewport.setRobotJointValue(robotId, jointName, value);
+    }
+
+    double RobotQtViewerMotionPlanningViewportAdapter::robotJointValue(
+        const QString& robotId,
+        const QString& jointName,
+        bool* ok) const
+    {
+        return m_viewport.robotJointValue(robotId, jointName, ok);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setSprayRangeVisible(
+        const QString& robotId,
+        bool visible)
+    {
+        m_viewport.setSprayRangeVisible(robotId, visible);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setEndEffectorTraceVisible(const QString& robotId, bool visible)
+    {
+        m_viewport.setEndEffectorTraceVisible(robotId, visible);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::clearEndEffectorTrace()
+    {
+        m_viewport.clearEndEffectorTrace();
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::appendEndEffectorTraceSample()
+    {
+        m_viewport.appendEndEffectorTraceSample();
+    }
+
+    SprayMeasurementResult RobotQtViewerMotionPlanningViewportAdapter::sprayMeasurement(const QString& robotId) const
+    {
+        const auto measurement = m_viewport.sprayMeasurement(robotId);
+        return { measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
+            QString::fromStdString(measurement.errorMessage) };
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(
+        const QString& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
+    {
+        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints, showPoints);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::clearTrajectoryControlPointOverlay(
+        const QString& trajectoryId)
+    {
+        m_viewport.clearTrajectoryControlPointOverlay(trajectoryId);
     }
 }

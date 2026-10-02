@@ -238,47 +238,47 @@ namespace
         }
     };
 
-    class TraceObservingServices : public robot_qt_viewer::RobotQtViewerViewportServicesAdapter
+    class TraceObservingServices : public robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter
     {
     public:
-        using RobotQtViewerViewportServicesAdapter::RobotQtViewerViewportServicesAdapter;
+        using RobotQtViewerMotionPlanningViewportAdapter::RobotQtViewerMotionPlanningViewportAdapter;
         int jointUpdates = 0;
         int samples = 0;
         int resets = 0;
         bool enabled = false;
         void setRobotJointValue(const QString& robotId, const QString& jointName, double value) override
         {
-            RobotQtViewerViewportServicesAdapter::setRobotJointValue(robotId, jointName, value);
+            RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValue(robotId, jointName, value);
             ++jointUpdates;
         }
         void setEndEffectorTraceVisible(const QString& robotId, bool visible) override
         {
             enabled = visible;
-            RobotQtViewerViewportServicesAdapter::setEndEffectorTraceVisible(robotId, visible);
+            RobotQtViewerMotionPlanningViewportAdapter::setEndEffectorTraceVisible(robotId, visible);
         }
         void clearEndEffectorTrace() override
         {
             ++resets;
-            RobotQtViewerViewportServicesAdapter::clearEndEffectorTrace();
+            RobotQtViewerMotionPlanningViewportAdapter::clearEndEffectorTrace();
         }
         void appendEndEffectorTraceSample() override
         {
             require(jointUpdates == 2, "TCP is sampled once after the entire two-joint group");
             jointUpdates = 0;
             ++samples;
-            RobotQtViewerViewportServicesAdapter::appendEndEffectorTraceSample();
+            RobotQtViewerMotionPlanningViewportAdapter::appendEndEffectorTraceSample();
         }
     };
 
-    class OverlayObservingServices : public robot_qt_viewer::RobotQtViewerViewportServicesAdapter
+    class OverlayObservingServices : public robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter
     {
     public:
-        using RobotQtViewerViewportServicesAdapter::RobotQtViewerViewportServicesAdapter;
+        using RobotQtViewerMotionPlanningViewportAdapter::RobotQtViewerMotionPlanningViewportAdapter;
         int samples = 0;
         void appendEndEffectorTraceSample() override
         {
             ++samples;
-            RobotQtViewerViewportServicesAdapter::appendEndEffectorTraceSample();
+            RobotQtViewerMotionPlanningViewportAdapter::appendEndEffectorTraceSample();
         }
         bool pointsVisible = true;
         std::size_t pointCount = 0;
@@ -287,12 +287,12 @@ namespace
         {
             pointsVisible = showPoints;
             pointCount = points.size();
-            RobotQtViewerViewportServicesAdapter::setTrajectoryControlPointOverlay(id, points, showPoints);
+            RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(id, points, showPoints);
         }
         void clearTrajectoryControlPointOverlay(const QString& id = QString()) override
         {
             pointCount = 0;
-            RobotQtViewerViewportServicesAdapter::clearTrajectoryControlPointOverlay(id);
+            RobotQtViewerMotionPlanningViewportAdapter::clearTrajectoryControlPointOverlay(id);
         }
     };
 
@@ -973,7 +973,7 @@ namespace
         require(static_cast<bool>(actualFk), "UI exposes independent actual-model FK");
         if(!actualFk) { return; }
         OverlayObservingServices services(viewport);
-        context.setViewportServices(&services);
+        context.setMotionPlanningViewport(&services);
         selection.selectRobotLink(QStringLiteral("ABB4600_urdf"), QStringLiteral("Link6"));
         MotionPlanningEditorWidget widget;
         robot_qt_viewer::MotionPlanningModuleController controller(widget, context);
@@ -1370,7 +1370,7 @@ namespace
         viewport.setCameraView(ProjectSceneCameraView::Isometric);
         require(viewport.sprayMeasurement(QStringLiteral("gun")).valid, "Playback viewport loads fixture");
         TraceObservingServices services(viewport);
-        context.setViewportServices(&services);
+        context.setMotionPlanningViewport(&services);
         selection.selectRobotLink(QStringLiteral("gun"), QStringLiteral("Link6"));
         MotionPlanningEditorWidget widget;
         robot_qt_viewer::MotionPlanningModuleController controller(widget, context);

@@ -41,6 +41,7 @@ signals:
     void addDetectorRequested();
     void editDetectorRequested();
     void showSelectedRequested();
+    void refreshNearestRequested();
     void removeDetectorRequested();
     void bindDraftSetsRequested();
     void removePairGeneratorsRequested(const QVector<int>& generatorIndexes);
@@ -91,6 +92,7 @@ private:
     QPushButton* m_configureButton = nullptr;
     QPushButton* m_addDetectorButton = nullptr;
     QPushButton* m_showSelectedButton = nullptr;
+    QPushButton* m_refreshNearestButton = nullptr;
     QPushButton* m_bindDraftSetsButton = nullptr;
     QPushButton* m_removeDetectorButton = nullptr;
     CollisionDetectorPropertiesView m_properties;

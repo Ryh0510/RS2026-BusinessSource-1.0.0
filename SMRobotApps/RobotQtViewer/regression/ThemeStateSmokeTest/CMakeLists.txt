@@ -5,20 +5,28 @@ set(ROBOT_QT_VIEWER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
 add_executable(${TEST_TARGET_NAME}
     main.cpp
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerPlatformConfigurationDialog.cpp"
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerPlatformConfigurationDialog.h"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerTheme.cpp"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerTheme.h"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerResources.qrc"
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/../RobotViewerCore/CameraPreviewWidget.cpp"
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/../RobotViewerCore/CameraPreviewWidget.h"
 )
 
 target_include_directories(${TEST_TARGET_NAME}
     PRIVATE
         "${ROBOT_QT_VIEWER_SOURCE_DIR}"
+        "${ROBOT_QT_VIEWER_SOURCE_DIR}/../RobotViewerCore"
 )
 
 target_link_libraries(${TEST_TARGET_NAME}
     PRIVATE
         Qt5::Widgets
         SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
+        SMRobotWorkbenchCommon::RobotQtModulesShared
+        ProjectAssemblyToolSetup
+        RobotRunMotionControl
 )
 if(WIN32)
     target_link_libraries(${TEST_TARGET_NAME} PRIVATE dwmapi)
@@ -41,6 +49,10 @@ add_test(
     NAME SMRobotGen2RobotQtViewerThemeStateSmokeTest
     COMMAND $<TARGET_FILE:${TEST_TARGET_NAME}>
 )
+add_test(
+    NAME SMRobotGen2RobotQtViewerThemeStateHighDpiSmokeTest
+    COMMAND $<TARGET_FILE:${TEST_TARGET_NAME}>
+)
 if(WIN32)
     set(_theme_test_qpa_platform windows)
 else()
@@ -50,5 +62,10 @@ set_tests_properties(SMRobotGen2RobotQtViewerThemeStateSmokeTest PROPERTIES
     LABELS "SMRobotGen2;RobotQtViewer;Regression;Theme;UI"
     WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>
     ENVIRONMENT "QT_QPA_PLATFORM=${_theme_test_qpa_platform}"
+)
+set_tests_properties(SMRobotGen2RobotQtViewerThemeStateHighDpiSmokeTest PROPERTIES
+    LABELS "SMRobotGen2;RobotQtViewer;Regression;Theme;UI;HighDpi"
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>
+    ENVIRONMENT "QT_QPA_PLATFORM=${_theme_test_qpa_platform};QT_SCALE_FACTOR=1.5"
 )
 unset(_theme_test_qpa_platform)

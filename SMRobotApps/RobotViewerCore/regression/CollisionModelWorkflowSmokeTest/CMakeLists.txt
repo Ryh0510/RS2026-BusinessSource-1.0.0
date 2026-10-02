@@ -22,7 +22,15 @@ target_include_directories(${EXAMPLE_TARGET_NAME}
 target_link_libraries(${EXAMPLE_TARGET_NAME}
     PRIVATE
         SMRobotApps::RobotViewerCore
-        ${RobotViewerCore_REQUIRED_TARGETS}
+        Common::Utility
+        Eigen3::Eigen
+        glm::glm
+        SMRobotCore::Collision
+        SMRobotCore::Kinematics
+        SMRobotCore::RobotIO
+        SMRobotPlatform::AssetCore
+        SMRobotPlatform::SimulationProject
+        SMRobotPlatform::SimulationRuntime
 )
 
 target_compile_features(${EXAMPLE_TARGET_NAME}

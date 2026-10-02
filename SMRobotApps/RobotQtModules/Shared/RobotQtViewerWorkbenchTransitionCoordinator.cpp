@@ -199,6 +199,9 @@ namespace robot_qt_viewer
                 QStringLiteral("workbench.descriptor.missing"));
         }
         m_manager.commitWorkbench(target, *targetDescriptor, sourceId);
+        if(!m_suppressReturnTargetUpdate && previous != target) {
+            m_returnWorkbenchIds[target] = previous;
+        }
         publishCommitted(previous, target, context.transitionId, sourceId);
         m_hasPreparedDeactivation = false;
 
@@ -207,6 +210,53 @@ namespace robot_qt_viewer
             << ", target=" << workbenchDisplayName(m_registry, target).toStdString()
             << ", elapsedMs=" << elapsed.elapsed();
         return workbenchTransitionSucceeded();
+    }
+
+    RobotQtViewerWorkbenchTransitionResult
+    RobotQtViewerWorkbenchTransitionCoordinator::requestReturn(
+        const QString& fallbackWorkbenchId,
+        const QString& sourceId,
+        QWidget* promptParent)
+    {
+        const QString active = m_manager.activeWorkbenchId();
+        QString target;
+        const auto returnIt = m_returnWorkbenchIds.find(active);
+        if(returnIt != m_returnWorkbenchIds.end() &&
+            returnIt->second != active &&
+            m_registry.isWorkbenchReady(returnIt->second) &&
+            lifecycleState(returnIt->second) != RobotQtViewerWorkbenchLifecycleState::Failed) {
+            target = returnIt->second;
+        }
+        if(target.isEmpty() && fallbackWorkbenchId != active &&
+            m_registry.isWorkbenchReady(fallbackWorkbenchId) &&
+            lifecycleState(fallbackWorkbenchId) != RobotQtViewerWorkbenchLifecycleState::Failed) {
+            target = fallbackWorkbenchId;
+        }
+        if(target.isEmpty()) {
+            for(const RobotQtViewerWorkbenchDesc& candidate : m_registry.workbenches()) {
+                if(candidate.descriptor.id != active &&
+                    m_registry.isWorkbenchReady(candidate.descriptor.id) &&
+                    lifecycleState(candidate.descriptor.id) != RobotQtViewerWorkbenchLifecycleState::Failed) {
+                    target = candidate.descriptor.id;
+                    break;
+                }
+            }
+        }
+        if(target.isEmpty()) {
+            return workbenchTransitionRejected(
+                QStringLiteral("No available Workbench return target."),
+                QStringLiteral("workbench.return.unavailable"));
+        }
+
+        const bool previousSuppress = m_suppressReturnTargetUpdate;
+        m_suppressReturnTargetUpdate = true;
+        const RobotQtViewerWorkbenchTransitionResult result = requestTransition(
+            target,
+            sourceId,
+            promptParent,
+            RobotQtViewerWorkbenchTransitionCause::UserWorkbenchSwitch);
+        m_suppressReturnTargetUpdate = previousSuppress;
+        return result;
     }
 
     RobotQtViewerWorkbenchTransitionResult
@@ -355,6 +405,7 @@ namespace robot_qt_viewer
             m_states[mode.descriptor.id] = RobotQtViewerWorkbenchLifecycleState::Inactive;
         }
         m_manager.releaseProjectSessions();
+        m_returnWorkbenchIds.clear();
         m_hasPreparedDeactivation = false;
     }
 

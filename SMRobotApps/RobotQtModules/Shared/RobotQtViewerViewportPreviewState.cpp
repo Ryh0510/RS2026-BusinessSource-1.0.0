@@ -34,6 +34,7 @@ namespace robot_qt_viewer
         mutation.clearMountFrameLinkFocus = true;
         mutation.clearObjectFrameObjectFocus = true;
         mutation.clearMountedAttachmentFocus = true;
+        mutation.clearAttachmentBindingPreview = true;
         mutation.clearObjectCollisionModelVariantPreview = true;
         mutation.setActiveMountedAttachment = true;
         mutation.activeMountedAttachmentId = QString();

@@ -6,6 +6,7 @@ set(${PACKAGE_NAME}_PublicComponents
     WorkbenchCommon
     RobotQtModulesShared
     RobotQtModulesCoreWidgets
+    CollisionRuntimeResultsView
 )
 
 set(${PACKAGE_NAME}_CompatibilityComponents)
@@ -16,6 +17,7 @@ set(${PACKAGE_NAME}_ExportComponents
 
 set(${PACKAGE_NAME}_Components
     WorkbenchCommon
+    CollisionRuntimeResultsView
 )
 
 foreach(TARGET_NAME ${${PACKAGE_NAME}_Components})

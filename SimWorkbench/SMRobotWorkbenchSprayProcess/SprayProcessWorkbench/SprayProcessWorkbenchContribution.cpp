@@ -2,14 +2,34 @@
 
 namespace robot_qt_viewer
 {
+    RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
+    makeSprayProcessWorkbenchRuntimeContributionFactory(QWidget& statusPanel)
+    {
+        const QString workbenchId = robotQtViewerWorkbenchId(
+            RobotQtViewerWorkbenchKind::SprayProcess);
+        return {
+            workbenchId,
+            [workbenchId, &statusPanel](QWidget*) {
+                return std::make_unique<RobotQtViewerBasicWorkbenchRuntimeContribution>(
+                    workbenchId,
+                    [&statusPanel]() { return &statusPanel; },
+                    std::make_unique<RobotQtViewerNoOpWorkbenchLifecycle>(),
+                    RobotQtViewerWorkbenchLifecyclePolicy{
+                        RobotQtViewerWorkbenchExecutionPolicy::NoOwnedExecution,
+                        RobotQtViewerWorkbenchReactivationPolicy::PackageDefined },
+                    std::make_unique<RobotQtViewerNoOpLanguageParticipant>(),
+                    true);
+            }
+        };
+    }
+
     bool registerSprayProcessWorkbenchContribution(
-        RobotQtViewerWorkbenchPackageRegistry& catalog,
-        RobotQtViewerWorkbenchPackageSource source)
+        RobotQtViewerWorkbenchPackageRegistry& catalog)
     {
         const QString packageId = QStringLiteral("smrobot.workbench.spray-process");
         if(!catalog.registerPackage(makeRobotQtViewerWorkbenchPackage(
-               packageId, QStringLiteral("Spray Process"), source)) ||
-            !catalog.registerMode(makeRobotQtViewerWorkbenchMode(
+               packageId, QStringLiteral("Spray Process"))) ||
+            !catalog.registerWorkbench(makeRobotQtViewerWorkbench(
                packageId,
                RobotQtViewerWorkbenchKind::SprayProcess,
                QStringLiteral("sprayProcessWorkbench"),

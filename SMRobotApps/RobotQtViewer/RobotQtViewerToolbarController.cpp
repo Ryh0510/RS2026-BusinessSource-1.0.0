@@ -93,6 +93,9 @@ namespace
         if(actionId == QStringLiteral("toolSetupWorkbench")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/tool_setup_workbench.png");
         }
+        if(actionId == QStringLiteral("addLinkMount")) {
+            return QStringLiteral(":/RobotQtViewer/icons/ribbon/tool_setup_workbench.png");
+        }
         if(actionId == QStringLiteral("collisionWorkbench")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/collision_workbench.png");
         }
@@ -329,6 +332,7 @@ namespace robot_qt_viewer
         actionMap.insert(QStringLiteral("saveCollisionOverrides"), actions.saveCollisionOverrides);
         actionMap.insert(QStringLiteral("importRobot"), actions.importRobot);
         actionMap.insert(QStringLiteral("importObject"), actions.importObject);
+        actionMap.insert(QStringLiteral("addCamera"), actions.addCamera);
         actionMap.insert(QStringLiteral("importPointCloud"), actions.importPointCloud);
         actionMap.insert(QStringLiteral("deleteSelectedItem"), actions.deleteSelectedItem);
         actionMap.insert(QStringLiteral("saveImage"), actions.saveImage);
@@ -340,6 +344,7 @@ namespace robot_qt_viewer
         actionMap.insert(QStringLiteral("motionWorkbench"), actions.motionWorkbench);
         actionMap.insert(QStringLiteral("robotRunWorkbench"), actions.motionWorkbench);
         actionMap.insert(QStringLiteral("toolSetupWorkbench"), actions.toolSetupWorkbench);
+        actionMap.insert(QStringLiteral("addLinkMount"), actions.addLinkMount);
         actionMap.insert(QStringLiteral("collisionWorkbench"), actions.collisionWorkbench);
         actionMap.insert(QStringLiteral("collisionConfigWorkbench"), actions.collisionWorkbench);
         actionMap.insert(QStringLiteral("trajectoryPlanningWorkbench"), actions.trajectoryPlanningWorkbench);
@@ -347,9 +352,11 @@ namespace robot_qt_viewer
         actionMap.insert(QStringLiteral("sprayProcessWorkbench"), actions.sprayProcessWorkbench);
         actionMap.insert(QStringLiteral("coatingAnalysisWorkbench"), actions.coatingAnalysisWorkbench);
         actionMap.insert(QStringLiteral("digitalTwinWorkbench"), actions.digitalTwinWorkbench);
-        for(auto it = actions.dynamicWorkbenchActions.cbegin();
-            it != actions.dynamicWorkbenchActions.cend(); ++it) {
-            actionMap.insert(it.key(), it.value());
+        for(auto iterator = actions.dynamicWorkbenchActions.cbegin();
+            iterator != actions.dynamicWorkbenchActions.cend(); ++iterator) {
+            if(!iterator.key().isEmpty() && iterator.value() != nullptr) {
+                actionMap.insert(iterator.key(), iterator.value());
+            }
         }
         return actionMap;
     }

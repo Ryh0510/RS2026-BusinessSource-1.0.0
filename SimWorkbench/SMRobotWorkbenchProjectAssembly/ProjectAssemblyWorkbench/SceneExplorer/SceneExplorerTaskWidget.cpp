@@ -7,10 +7,12 @@
 #include <QCheckBox>
 #include <QFont>
 #include <QFontMetrics>
+#include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSizePolicy>
 #include <QSignalBlocker>
 #include <QStringList>
@@ -434,9 +436,20 @@ private:
 SceneExplorerTaskWidget::SceneExplorerTaskWidget(QWidget* parent)
     : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(8);
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setObjectName(QStringLiteral("sceneExplorerTaskContentScrollArea"));
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* layout = new QVBoxLayout(contentWidget);
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(8);
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea, 1);
 
     m_previewTimer = new QTimer(this);
     m_previewTimer->setSingleShot(true);
@@ -534,6 +547,8 @@ SceneExplorerTaskWidget::SceneExplorerTaskWidget(QWidget* parent)
     buttonRow->setContentsMargins(0, 0, 0, 0);
     m_applyTransformButton = new QPushButton(QStringLiteral("Apply Transform"), this);
     m_cancelTransformButton = new QPushButton(QStringLiteral("Cancel Transform"), this);
+    m_applyTransformButton->setObjectName(QStringLiteral("sceneExplorerApplyTransformButton"));
+    m_cancelTransformButton->setObjectName(QStringLiteral("sceneExplorerCancelTransformButton"));
     robot_qt_viewer::configureActionButton(
         m_applyTransformButton,
         robot_qt_viewer::UiActionRole::Primary);
@@ -554,7 +569,12 @@ SceneExplorerTaskWidget::SceneExplorerTaskWidget(QWidget* parent)
     });
     buttonRow->addWidget(m_applyTransformButton);
     buttonRow->addWidget(m_cancelTransformButton);
-    layout->addLayout(buttonRow);
+    auto* commandBar = new QFrame(this);
+    commandBar->setObjectName(QStringLiteral("sceneExplorerTaskCommandBar"));
+    auto* commandBarLayout = new QVBoxLayout(commandBar);
+    commandBarLayout->setContentsMargins(10, 8, 10, 8);
+    commandBarLayout->addLayout(buttonRow);
+    rootLayout->addWidget(commandBar);
     layout->addStretch(1);
 
     setDocumentView(robot_qt_viewer::SceneExplorerViewModel());

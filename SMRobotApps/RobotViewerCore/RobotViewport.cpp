@@ -2,15 +2,21 @@
 
 #include "ProjectScene.h"
 #include "ProjectScenePickingService.h"
+#include "CameraPreviewWidget.h"
 
 #include <CustomLog/CustomLog.h>
 #include <SimulationProject/ProjectDocument.h>
 
 #include <QKeyEvent>
+#include <QAction>
 #include <QEvent>
+#include <QImage>
+#include <QMenu>
 #include <QMouseEvent>
+#include <QStyle>
 #include <QStringList>
 #include <QTimer>
+#include <QToolButton>
 #include <QWheelEvent>
 
 #include <chrono>
@@ -23,6 +29,23 @@
 
 namespace
 {
+    class CurrentContextGuard
+    {
+    public:
+        explicit CurrentContextGuard(QOpenGLWidget& widget)
+            : m_widget(widget)
+        {
+        }
+
+        ~CurrentContextGuard()
+        {
+            m_widget.doneCurrent();
+        }
+
+    private:
+        QOpenGLWidget& m_widget;
+    };
+
     double elapsedMilliseconds(const std::chrono::steady_clock::time_point& start)
     {
         const auto elapsed = std::chrono::steady_clock::now() - start;
@@ -75,6 +98,18 @@ namespace
     }
 }
 
+struct RobotViewportCameraStreamState
+{
+    ProjectScene::CameraInfo info;
+    CameraPreviewWidget* preview = nullptr;
+    bool running = true;
+    bool visible = true;
+    int targetFps = 15;
+    std::chrono::steady_clock::time_point nextFrame;
+    std::chrono::steady_clock::time_point lastFrame;
+    QString lastError;
+};
+
 RobotViewport::RobotViewport(QWidget* parent)
     : QOpenGLWidget(parent)
     , m_scene(std::make_unique<ProjectScene>())
@@ -82,6 +117,18 @@ RobotViewport::RobotViewport(QWidget* parent)
     setMinimumSize(640, 480);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+
+    m_cameraStreamsMenu = new QMenu(this);
+    m_cameraStreamsButton = new QToolButton(this);
+    m_cameraStreamsButton->setObjectName(QStringLiteral("cameraStreamsButton"));
+    m_cameraStreamsButton->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+    m_cameraStreamsButton->setText(QStringLiteral("Cameras"));
+    m_cameraStreamsButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_cameraStreamsButton->setToolTip(QStringLiteral("Open, show, hide, and manage camera previews"));
+    m_cameraStreamsButton->setPopupMode(QToolButton::InstantPopup);
+    m_cameraStreamsButton->setMenu(m_cameraStreamsMenu);
+    m_cameraStreamsButton->setMinimumSize(112, 36);
+    m_cameraStreamsButton->hide();
 
     m_updateTimer = new QTimer(this);
     m_updateTimer->setInterval(16);
@@ -98,6 +145,7 @@ RobotViewport::~RobotViewport()
 
 void RobotViewport::releaseScene() noexcept
 {
+    clearCameraStreams();
     if(m_scene == nullptr) {
         return;
     }
@@ -136,6 +184,7 @@ bool RobotViewport::loadProjectDocument(
         releaseScene();
         m_scene = std::make_unique<ProjectScene>();
         m_scene->setDefaultBackgroundColor(m_defaultBackgroundColor);
+        m_scene->setEnvironmentPreset(m_environmentPreset);
         m_scene->setProjectDocument(document, basePath);
         m_scene->resize(width(), height());
         logProfileRow(
@@ -200,6 +249,20 @@ void RobotViewport::setDefaultBackgroundColor(const simulation_project::ColorDes
     update();
 }
 
+void RobotViewport::setEnvironmentPreset(ProjectSceneEnvironmentPreset preset)
+{
+    m_environmentPreset = preset;
+    if(m_scene != nullptr) {
+        m_scene->setEnvironmentPreset(preset);
+    }
+    update();
+}
+
+ProjectSceneEnvironmentPreset RobotViewport::environmentPreset() const
+{
+    return m_scene != nullptr ? m_scene->environmentPreset() : m_environmentPreset;
+}
+
 bool RobotViewport::refreshCollisionConfiguration(
     const simulation_project::ProjectDocument& document,
     const std::filesystem::path& basePath)
@@ -246,6 +309,7 @@ bool RobotViewport::loadToolAssetPreview(
     releaseScene();
     m_scene = std::make_unique<ProjectScene>();
     m_scene->setDefaultBackgroundColor(m_defaultBackgroundColor);
+    m_scene->setEnvironmentPreset(ProjectSceneEnvironmentPreset::Studio);
     m_scene->setToolAssetPreview(asset, basePath);
     m_scene->setInteractionMode(m_interactionMode);
     m_scene->resize(width(), height());
@@ -281,6 +345,28 @@ bool RobotViewport::setPreviewRobotMountTransform(
 {
     const bool changed = m_scene != nullptr &&
         m_scene->setPreviewRobotMountTransform(robotMountId.toStdString(), transform);
+    if(changed) {
+        update();
+    }
+    return changed;
+}
+
+bool RobotViewport::setPreviewMountedAttachmentTransform(
+    const QString& attachmentId,
+    const simulation_project::TransformDesc& transform)
+{
+    const bool changed = m_scene != nullptr &&
+        m_scene->setPreviewMountedAttachmentTransform(attachmentId.toStdString(), transform);
+    if(changed) {
+        update();
+    }
+    return changed;
+}
+
+bool RobotViewport::setPreviewAttachmentAsset(
+    const simulation_project::AttachmentAssetDesc& asset)
+{
+    const bool changed = m_scene != nullptr && m_scene->setPreviewAttachmentAsset(asset);
     if(changed) {
         update();
     }
@@ -746,6 +832,16 @@ bool RobotViewport::setActiveCollisionDetector(const QString& id)
     return changed;
 }
 
+bool RobotViewport::refreshCollisionDetectorNearest(const QString& id)
+{
+    const bool refreshed =
+        m_scene != nullptr && m_scene->refreshCollisionDetectorNearest(id.toStdString());
+    if(refreshed) {
+        update();
+    }
+    return refreshed;
+}
+
 bool RobotViewport::setCollisionDetectorEnabled(const QString& id, bool enabled)
 {
     const bool changed = m_scene != nullptr && m_scene->setCollisionDetectorEnabled(id.toStdString(), enabled);
@@ -1132,6 +1228,165 @@ void RobotViewport::clearTrajectoryControlPointOverlay(const QString& trajectory
     }
 }
 
+smrobot::visualization::CustomMeshResult RobotViewport::upsertCustomMesh(
+    const smrobot::visualization::CustomMeshDesc& desc,
+    smrobot::visualization::CustomMeshHandle& handle)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    CustomMeshResult result;
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    try {
+        result = m_scene->upsertCustomMesh(desc, handle);
+    }
+    catch(const std::exception& exception) {
+        result = CustomMeshResult::fail(CustomMeshError::InternalError, exception.what());
+    }
+    catch(...) {
+        result = CustomMeshResult::fail(CustomMeshError::InternalError, "Unknown custom mesh error.");
+    }
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::updateCustomMeshGeometry(
+    smrobot::visualization::CustomMeshHandle handle,
+    const smrobot::visualization::MeshData& mesh)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->updateCustomMeshGeometry(handle, mesh);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::updateCustomMeshColors(
+    smrobot::visualization::CustomMeshHandle handle,
+    const std::vector<smrobot::visualization::Color4f>& colors)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->updateCustomMeshColors(handle, colors);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::setCustomMeshTransform(
+    smrobot::visualization::CustomMeshHandle handle,
+    const smrobot::visualization::TransformMatrix& transform)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->setCustomMeshTransform(handle, transform);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::setCustomMeshAppearance(
+    smrobot::visualization::CustomMeshHandle handle,
+    const smrobot::visualization::MeshAppearance& appearance)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->setCustomMeshAppearance(handle, appearance);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::setCustomMeshVisible(
+    smrobot::visualization::CustomMeshHandle handle,
+    bool visible)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->setCustomMeshVisible(handle, visible);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::removeCustomMesh(
+    smrobot::visualization::CustomMeshHandle handle)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->removeCustomMesh(handle);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
+smrobot::visualization::CustomMeshResult RobotViewport::clearCustomMeshes(
+    const std::string& ownerId)
+{
+    using namespace smrobot::visualization;
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "Viewport OpenGL context is not available.");
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    CustomMeshResult result = m_scene->clearCustomMeshes(ownerId);
+    if(result.success) {
+        update();
+    }
+    return result;
+}
+
 void RobotViewport::setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
 {
     m_surfaceScalarProbeEnabled = enabled;
@@ -1166,6 +1421,7 @@ bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
     }
     if(ok) {
         publishRobotLinks();
+        syncCameraStreams();
     }
     if(releaseContext) {
         doneCurrent();
@@ -1183,6 +1439,7 @@ void RobotViewport::initializeGL()
         if(m_scene == nullptr) {
             m_scene = std::make_unique<ProjectScene>();
             m_scene->setDefaultBackgroundColor(m_defaultBackgroundColor);
+            m_scene->setEnvironmentPreset(m_environmentPreset);
             m_scene->setProjectDocument(m_pendingProjectDocument, m_pendingProjectBasePath);
             m_scene->resize(width(), height());
             m_treePublished = false;
@@ -1236,6 +1493,7 @@ void RobotViewport::resizeGL(int width, int height)
     if(m_scene != nullptr) {
         m_scene->resize(width, height);
     }
+    updateCameraOverlayGeometry();
 }
 
 void RobotViewport::paintGL()
@@ -1254,6 +1512,7 @@ void RobotViewport::paintGL()
     const auto renderStart = Clock::now();
     m_scene->render();
     const double renderMs = elapsedMilliseconds(renderStart);
+    const double cameraRenderMs = renderDueCameraStreams();
     const double totalMs = elapsedMilliseconds(frameStart);
 
     if(m_firstPaintPending || m_cameraDragFramePending || totalMs > 16.0) {
@@ -1270,6 +1529,7 @@ void RobotViewport::paintGL()
             << ", totalMs=" << totalMs
             << ", updateMs=" << updateMs
             << ", renderMs=" << renderMs
+            << ", cameraRenderMs=" << cameraRenderMs
             << ", poseMs=" << (info ? info->frameRobotPoseMs : 0.0)
             << ", collisionWorldMs=" << (info ? info->frameCollisionWorldUpdateMs : 0.0)
             << ", queryMs=" << (info ? info->lastQueryMs : 0.0)
@@ -1280,6 +1540,364 @@ void RobotViewport::paintGL()
     }
     m_firstPaintPending = false;
     m_cameraDragFramePending = false;
+}
+
+QStringList RobotViewport::cameraIds() const
+{
+    QStringList result;
+    for(const auto& stream : m_cameraStreams) {
+        result.push_back(QString::fromStdString(stream->info.attachmentId));
+    }
+    return result;
+}
+
+RobotViewportCameraStreamState* RobotViewport::cameraStream(const QString& cameraId) const
+{
+    for(const auto& stream : m_cameraStreams) {
+        if(QString::fromStdString(stream->info.attachmentId) == cameraId) {
+            return stream.get();
+        }
+    }
+    return nullptr;
+}
+
+bool RobotViewport::setCameraStreamRunning(const QString& cameraId, bool running)
+{
+    RobotViewportCameraStreamState* stream = cameraStream(cameraId);
+    if(stream == nullptr || (running && !stream->info.enabled)) {
+        return false;
+    }
+    stream->running = running;
+    stream->nextFrame = Clock::time_point();
+    if(stream->preview != nullptr && stream->preview->streamRunning() != running) {
+        stream->preview->setStreamRunning(running);
+    }
+    QTimer::singleShot(0, this, [this]() { rebuildCameraStreamsMenu(); });
+    update();
+    return true;
+}
+
+bool RobotViewport::setCameraPreviewVisible(const QString& cameraId, bool visible)
+{
+    RobotViewportCameraStreamState* stream = cameraStream(cameraId);
+    if(stream == nullptr || stream->preview == nullptr) {
+        return false;
+    }
+    stream->visible = visible;
+    stream->preview->setVisible(visible);
+    if(visible) {
+        stream->preview->clampToParent();
+        stream->preview->raise();
+        m_cameraStreamsButton->raise();
+    }
+    QTimer::singleShot(0, this, [this]() { rebuildCameraStreamsMenu(); });
+    update();
+    return true;
+}
+
+void RobotViewport::setAllCameraStreamsRunning(bool running)
+{
+    for(const auto& stream : m_cameraStreams) {
+        if(!running || stream->info.enabled) {
+            stream->running = running;
+            stream->nextFrame = Clock::time_point();
+            stream->preview->setStreamRunning(running);
+        }
+    }
+    QTimer::singleShot(0, this, [this]() { rebuildCameraStreamsMenu(); });
+    update();
+}
+
+void RobotViewport::setAllCameraPreviewsVisible(bool visible)
+{
+    for(const auto& stream : m_cameraStreams) {
+        stream->visible = visible;
+        stream->preview->setVisible(visible);
+        if(visible) {
+            stream->preview->clampToParent();
+        }
+    }
+    if(m_cameraStreamsButton != nullptr) {
+        m_cameraStreamsButton->raise();
+    }
+    QTimer::singleShot(0, this, [this]() { rebuildCameraStreamsMenu(); });
+    update();
+}
+
+void RobotViewport::syncCameraStreams()
+{
+    if(m_scene == nullptr || !m_scene->isInitialized()) {
+        clearCameraStreams();
+        return;
+    }
+
+    const std::vector<ProjectScene::CameraInfo> cameras = m_scene->cameras();
+    for(auto it = m_cameraStreams.begin(); it != m_cameraStreams.end();) {
+        const bool exists = std::any_of(cameras.begin(), cameras.end(), [&](const ProjectScene::CameraInfo& camera) {
+            return camera.attachmentId == (*it)->info.attachmentId;
+        });
+        if(!exists) {
+            delete (*it)->preview;
+            it = m_cameraStreams.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for(const ProjectScene::CameraInfo& camera : cameras) {
+        const QString cameraId = QString::fromStdString(camera.attachmentId);
+        RobotViewportCameraStreamState* existing = cameraStream(cameraId);
+        if(existing != nullptr) {
+            existing->info = camera;
+            if(!camera.enabled) {
+                existing->running = false;
+                existing->preview->setStreamRunning(false);
+            }
+            continue;
+        }
+
+        auto stream = std::make_unique<RobotViewportCameraStreamState>();
+        stream->info = camera;
+        stream->running = camera.enabled;
+        stream->visible = camera.enabled;
+        stream->preview = new CameraPreviewWidget(
+            cameraId,
+            QString::fromStdString(camera.name),
+            this);
+        stream->preview->setStreamRunning(stream->running);
+        RobotViewportCameraStreamState* raw = stream.get();
+        connect(stream->preview, &CameraPreviewWidget::streamRunningChanged, this,
+            [this, raw](bool running) {
+                if(running && !raw->info.enabled) {
+                    raw->preview->setStreamRunning(false);
+                    return;
+                }
+                raw->running = running;
+                raw->nextFrame = Clock::time_point();
+                QTimer::singleShot(0, this, [this]() { rebuildCameraStreamsMenu(); });
+            });
+        connect(stream->preview, &CameraPreviewWidget::previewVisibilityChanged, this,
+            [this, raw](bool visible) {
+                raw->visible = visible;
+                QTimer::singleShot(0, this, [this]() { rebuildCameraStreamsMenu(); });
+            });
+        layoutNewCameraPreview(*stream, static_cast<int>(m_cameraStreams.size()));
+        stream->preview->show();
+        m_cameraStreams.push_back(std::move(stream));
+    }
+
+    m_cameraStreamsButton->setVisible(!m_cameraStreams.empty());
+    updateCameraOverlayGeometry();
+    rebuildCameraStreamsMenu();
+}
+
+void RobotViewport::clearCameraStreams()
+{
+    for(auto& stream : m_cameraStreams) {
+        delete stream->preview;
+        stream->preview = nullptr;
+    }
+    m_cameraStreams.clear();
+    m_cameraRoundRobinIndex = 0;
+    if(m_cameraStreamsButton != nullptr) {
+        m_cameraStreamsButton->hide();
+    }
+    if(m_cameraStreamsMenu != nullptr) {
+        m_cameraStreamsMenu->clear();
+    }
+}
+
+void RobotViewport::layoutNewCameraPreview(RobotViewportCameraStreamState& stream, int index)
+{
+    const int margin = 12;
+    const int gap = 8;
+    const int columns = std::max(1, (width() - margin * 2) / 328);
+    const int column = index % columns;
+    const int row = index / columns;
+    stream.preview->move(
+        margin + column * (stream.preview->width() + gap),
+        margin + row * (stream.preview->height() + gap));
+    stream.preview->clampToParent();
+}
+
+void RobotViewport::tileCameraPreviews()
+{
+    int index = 0;
+    for(const auto& stream : m_cameraStreams) {
+        if(stream->preview != nullptr && stream->visible) {
+            layoutNewCameraPreview(*stream, index++);
+        }
+    }
+}
+
+void RobotViewport::updateCameraOverlayGeometry()
+{
+    if(m_cameraStreamsButton != nullptr) {
+        m_cameraStreamsButton->move(12, std::max(12, height() - m_cameraStreamsButton->height() - 12));
+        m_cameraStreamsButton->raise();
+    }
+    for(const auto& stream : m_cameraStreams) {
+        stream->preview->clampToParent();
+    }
+}
+
+void RobotViewport::rebuildCameraStreamsMenu()
+{
+    if(m_cameraStreamsMenu == nullptr) {
+        return;
+    }
+    m_cameraStreamsMenu->clear();
+    const int visibleCount = static_cast<int>(std::count_if(
+        m_cameraStreams.begin(), m_cameraStreams.end(),
+        [](const std::unique_ptr<RobotViewportCameraStreamState>& stream) {
+            return stream != nullptr && stream->visible;
+        }));
+    m_cameraStreamsButton->setText(QStringLiteral("Cameras %1/%2")
+        .arg(visibleCount)
+        .arg(m_cameraStreams.size()));
+    m_cameraStreamsButton->setToolTip(QStringLiteral(
+        "Manage camera previews. Hidden previews can always be reopened here."));
+    QAction* runAll = m_cameraStreamsMenu->addAction(QStringLiteral("Run all"));
+    runAll->setObjectName(QStringLiteral("cameraStreamsRunAllAction"));
+    connect(runAll, &QAction::triggered, this, [this]() { setAllCameraStreamsRunning(true); });
+    QAction* stopAll = m_cameraStreamsMenu->addAction(QStringLiteral("Stop all"));
+    stopAll->setObjectName(QStringLiteral("cameraStreamsStopAllAction"));
+    connect(stopAll, &QAction::triggered, this, [this]() { setAllCameraStreamsRunning(false); });
+    QAction* showAll = m_cameraStreamsMenu->addAction(QStringLiteral("Show all previews"));
+    showAll->setObjectName(QStringLiteral("cameraStreamsShowAllAction"));
+    connect(showAll, &QAction::triggered, this, [this]() { setAllCameraPreviewsVisible(true); });
+    QAction* hideAll = m_cameraStreamsMenu->addAction(QStringLiteral("Hide all previews"));
+    hideAll->setObjectName(QStringLiteral("cameraStreamsHideAllAction"));
+    connect(hideAll, &QAction::triggered, this, [this]() { setAllCameraPreviewsVisible(false); });
+    QAction* tileAll = m_cameraStreamsMenu->addAction(QStringLiteral("Tile previews"));
+    tileAll->setObjectName(QStringLiteral("cameraStreamsTileAction"));
+    connect(tileAll, &QAction::triggered, this, &RobotViewport::tileCameraPreviews);
+    m_cameraStreamsMenu->addSeparator();
+
+    for(const auto& stream : m_cameraStreams) {
+        const QString id = QString::fromStdString(stream->info.attachmentId);
+        QMenu* cameraMenu = m_cameraStreamsMenu->addMenu(
+            QString::fromStdString(stream->info.name.empty() ? stream->info.attachmentId : stream->info.name));
+        QAction* run = cameraMenu->addAction(QStringLiteral("Run"));
+        run->setCheckable(true);
+        run->setChecked(stream->running);
+        run->setEnabled(stream->info.enabled);
+        connect(run, &QAction::toggled, this, [this, id](bool checked) {
+            setCameraStreamRunning(id, checked);
+        });
+        QAction* show = cameraMenu->addAction(QStringLiteral("Show preview"));
+        show->setObjectName(QStringLiteral("cameraPreviewVisibilityAction"));
+        show->setData(id);
+        show->setCheckable(true);
+        show->setChecked(stream->visible);
+        connect(show, &QAction::toggled, this, [this, id](bool checked) {
+            setCameraPreviewVisible(id, checked);
+        });
+        QAction* lock = cameraMenu->addAction(QStringLiteral("Lock position"));
+        lock->setCheckable(true);
+        lock->setChecked(stream->preview->positionLocked());
+        CameraPreviewWidget* preview = stream->preview;
+        connect(lock, &QAction::toggled, preview, &CameraPreviewWidget::setPositionLocked);
+        QAction* resetPosition = cameraMenu->addAction(QStringLiteral("Reset position"));
+        resetPosition->setObjectName(QStringLiteral("cameraPreviewResetPositionAction"));
+        resetPosition->setData(id);
+        connect(resetPosition, &QAction::triggered, this, [this, id]() {
+            RobotViewportCameraStreamState* target = cameraStream(id);
+            if(target == nullptr) {
+                return;
+            }
+            const auto it = std::find_if(m_cameraStreams.begin(), m_cameraStreams.end(),
+                [&](const std::unique_ptr<RobotViewportCameraStreamState>& stream) {
+                    return stream.get() == target;
+                });
+            if(it != m_cameraStreams.end()) {
+                layoutNewCameraPreview(*target, static_cast<int>(std::distance(m_cameraStreams.begin(), it)));
+            }
+        });
+        QAction* resetSize = cameraMenu->addAction(QStringLiteral("Reset size"));
+        resetSize->setObjectName(QStringLiteral("cameraPreviewResetSizeAction"));
+        resetSize->setData(id);
+        connect(resetSize, &QAction::triggered, preview, &CameraPreviewWidget::resetPreviewSize);
+        if(!stream->lastError.isEmpty()) {
+            QAction* retry = cameraMenu->addAction(QStringLiteral("Retry stream"));
+            retry->setObjectName(QStringLiteral("cameraPreviewRetryAction"));
+            retry->setData(id);
+            connect(retry, &QAction::triggered, this, [this, id]() {
+                RobotViewportCameraStreamState* target = cameraStream(id);
+                if(target != nullptr) {
+                    target->lastError.clear();
+                    target->nextFrame = Clock::time_point();
+                    setCameraStreamRunning(id, true);
+                }
+            });
+        }
+    }
+}
+
+double RobotViewport::renderDueCameraStreams()
+{
+    if(m_scene == nullptr || m_cameraStreams.empty()) {
+        return 0.0;
+    }
+    const auto start = Clock::now();
+    const auto now = Clock::now();
+    const std::size_t count = m_cameraStreams.size();
+    int rendered = 0;
+    for(const auto& stream : m_cameraStreams) {
+        if(!stream->info.enabled) {
+            stream->preview->setStatus(CameraPreviewStatus::Disabled);
+        } else if(!stream->running) {
+            stream->preview->setStatus(stream->lastError.isEmpty()
+                ? CameraPreviewStatus::Paused
+                : CameraPreviewStatus::Error, stream->lastError);
+        } else if(!stream->visible) {
+            stream->preview->setStatus(CameraPreviewStatus::Suspended,
+                QStringLiteral("Preview is hidden; rendering is suspended"));
+        } else if(stream->lastFrame != Clock::time_point() &&
+            now - stream->lastFrame > std::chrono::seconds(2)) {
+            stream->preview->setStatus(CameraPreviewStatus::Stale,
+                QStringLiteral("No camera frame received for more than 2 seconds"));
+        }
+    }
+    for(std::size_t offset = 0; offset < count && rendered < 2; ++offset) {
+        const std::size_t index = (m_cameraRoundRobinIndex + offset) % count;
+        RobotViewportCameraStreamState& stream = *m_cameraStreams[index];
+        if(!stream.running || !stream.visible || !stream.info.enabled ||
+            (stream.nextFrame != Clock::time_point() && now < stream.nextFrame)) {
+            continue;
+        }
+
+        const QSize renderSize = stream.preview->requestedRenderSize(stream.info.width, stream.info.height);
+        std::vector<unsigned char> pixels;
+        std::string error;
+        if(m_scene->renderCameraFrame(
+            stream.info.attachmentId,
+            renderSize.width(),
+            renderSize.height(),
+            pixels,
+            &error)) {
+            QImage image(
+                pixels.data(),
+                renderSize.width(),
+                renderSize.height(),
+                QImage::Format_RGBA8888);
+            stream.preview->setFrameImage(image.mirrored(false, true).copy());
+            stream.lastFrame = now;
+            stream.lastError.clear();
+        } else {
+            stream.running = false;
+            stream.lastError = QString::fromStdString(error);
+            stream.preview->setStreamRunning(false);
+            stream.preview->setStatus(CameraPreviewStatus::Error, stream.lastError);
+            LOG_ERROR("rs2026") << "Camera stream stopped: id="
+                << stream.info.attachmentId << ", error=" << error;
+        }
+        const int frameIntervalMs = std::max(1, 1000 / std::max(1, stream.targetFps));
+        stream.nextFrame = now + std::chrono::milliseconds(frameIntervalMs);
+        m_cameraRoundRobinIndex = (index + 1) % count;
+        ++rendered;
+    }
+    return elapsedMilliseconds(start);
 }
 
 void RobotViewport::mousePressEvent(QMouseEvent* event)

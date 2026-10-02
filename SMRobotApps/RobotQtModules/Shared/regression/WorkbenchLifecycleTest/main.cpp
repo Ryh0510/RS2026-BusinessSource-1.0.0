@@ -1,16 +1,21 @@
 #include "RobotQtViewerEventHub.h"
+#include "RobotQtViewerEditSession.h"
+#include "RobotQtViewerSelectionModel.h"
 #include "RobotQtViewerWorkbenchLifecycle.h"
+#include "RobotQtViewerWorkbenchContribution.h"
 #include "RobotQtViewerWorkbenchPackageRegistry.h"
 #include "RobotQtViewerPlatformProfile.h"
 #include "RobotQtViewerWorkbenchTransitionCoordinator.h"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QObject>
 #include <QTemporaryDir>
 
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -39,7 +44,7 @@ namespace
         return false;
     }
 
-    class FakeLifecycle final : public IRobotQtViewerWorkbenchLifecycle
+    class FakeLifecycle : public IRobotQtViewerWorkbenchLifecycle
     {
     public:
         FakeLifecycle(std::string id, std::vector<std::string>& calls)
@@ -116,6 +121,96 @@ namespace
         std::vector<std::string>& m_calls;
     };
 
+    class FakeEditSession final : public IWorkbenchEditSession
+    {
+    public:
+        QString ownerWorkbenchId() const override
+        {
+            return QStringLiteral("smrobot.mode.test");
+        }
+
+        QString taskId() const override
+        {
+            return QStringLiteral("test.edit");
+        }
+
+        RobotQtViewerEditSessionState editSessionState() const override
+        {
+            return state;
+        }
+
+        RobotQtViewerWorkbenchTransitionResult prepareTransition(
+            const RobotQtViewerEditTransitionRequest& request) override
+        {
+            ++prepareCount;
+            lastCause = request.cause;
+            if(onPrepare) {
+                onPrepare();
+            }
+            if(throwOnPrepare) {
+                throw std::runtime_error("edit-session prepare failed");
+            }
+            if(reject) {
+                return workbenchTransitionRejected(QStringLiteral("cancelled"));
+            }
+            state = RobotQtViewerEditSessionState::Clean;
+            return workbenchTransitionSucceeded();
+        }
+
+        void releaseEditSession(std::uint64_t generation) noexcept override
+        {
+            ++releaseCount;
+            releasedGeneration = generation;
+            state = RobotQtViewerEditSessionState::Idle;
+        }
+
+        RobotQtViewerEditSessionState state = RobotQtViewerEditSessionState::Clean;
+        RobotQtViewerWorkbenchTransitionCause lastCause =
+            RobotQtViewerWorkbenchTransitionCause::UserWorkbenchSwitch;
+        bool reject = false;
+        bool throwOnPrepare = false;
+        int prepareCount = 0;
+        int releaseCount = 0;
+        std::uint64_t releasedGeneration = 0;
+        std::function<void()> onPrepare;
+    };
+
+    class FakeLifecycleEditSession final
+        : public FakeLifecycle
+        , public IWorkbenchEditSession
+    {
+    public:
+        FakeLifecycleEditSession(std::string id, std::vector<std::string>& calls)
+            : FakeLifecycle(std::move(id), calls)
+        {
+        }
+
+        QString ownerWorkbenchId() const override
+        {
+            return robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse);
+        }
+
+        QString taskId() const override
+        {
+            return QStringLiteral("test.runtime-contribution");
+        }
+
+        RobotQtViewerEditSessionState editSessionState() const override
+        {
+            return RobotQtViewerEditSessionState::Dirty;
+        }
+
+        RobotQtViewerWorkbenchTransitionResult prepareTransition(
+            const RobotQtViewerEditTransitionRequest&) override
+        {
+            return workbenchTransitionSucceeded();
+        }
+
+        void releaseEditSession(std::uint64_t) noexcept override
+        {
+        }
+    };
+
     RobotQtViewerWorkbenchLifecyclePolicy noExecutionPolicy()
     {
         return {
@@ -130,7 +225,7 @@ namespace
         FakeLifecycle& lifecycle)
     {
         require(
-            registry.bindModeLifecycle(kind, lifecycle, noExecutionPolicy()),
+            registry.bindWorkbenchLifecycle(kind, lifecycle, noExecutionPolicy()),
             "lifecycle binding failed");
     }
 
@@ -176,6 +271,151 @@ namespace
                     .succeeded(),
             "same-mode transition should succeed");
         require(calls.empty(), "same-mode transition invoked lifecycle hooks");
+    }
+
+    void testEditSessionSelectionTransition()
+    {
+        RobotQtViewerEventHub events;
+        RobotQtViewerSelectionModel selection(events);
+        RobotQtViewerEditSessionCoordinator coordinator;
+        FakeEditSession session;
+        require(coordinator.registerSession(session), "edit session registration failed");
+        selection.setEditSessionCoordinator(&coordinator);
+
+        selection.selectRobotLink(
+            QStringLiteral("robot_a"),
+            QStringLiteral("link_a"),
+            QStringLiteral("initial"));
+        session.state = RobotQtViewerEditSessionState::Dirty;
+        session.reject = true;
+        selection.selectRobotLink(
+            QStringLiteral("robot_b"),
+            QStringLiteral("link_b"),
+            QStringLiteral("rejectedSelection"));
+        require(selection.state().robotId == QStringLiteral("robot_a") &&
+                selection.state().linkName == QStringLiteral("link_a"),
+            "rejected selection did not preserve the committed target");
+        require(session.prepareCount == 1 &&
+                session.lastCause == RobotQtViewerWorkbenchTransitionCause::SelectionChange,
+            "selection did not invoke the shared edit-session virtual protocol");
+
+        session.reject = false;
+        selection.selectRobotLink(
+            QStringLiteral("robot_b"),
+            QStringLiteral("link_b"),
+            QStringLiteral("acceptedSelection"));
+        require(selection.state().robotId == QStringLiteral("robot_b") &&
+                selection.state().linkName == QStringLiteral("link_b"),
+            "accepted selection did not commit the target");
+        require(session.prepareCount == 2,
+            "accepted selection did not reuse the edit-session protocol");
+
+        session.state = RobotQtViewerEditSessionState::Dirty;
+        session.reject = true;
+        require(!selection.prepareSelectionChange(QStringLiteral("rejectedPreflight")),
+            "selection preflight ignored edit-session rejection");
+        require(selection.state().robotId == QStringLiteral("robot_b") &&
+                selection.state().linkName == QStringLiteral("link_b"),
+            "selection preflight changed the committed target");
+
+        session.reject = false;
+        require(selection.prepareSelectionChange(QStringLiteral("acceptedPreflight")),
+            "selection preflight did not accept a successful edit-session transition");
+        require(session.prepareCount == 4,
+            "selection preflight did not use the shared edit-session protocol");
+
+        coordinator.releaseProject(7);
+        require(session.releaseCount == 1 && session.releasedGeneration == 7 &&
+                session.state == RobotQtViewerEditSessionState::Idle,
+            "project release did not clear registered edit sessions");
+    }
+
+    void testEditSessionCoordinatorFailureAndReentrancy()
+    {
+        RobotQtViewerEditSessionCoordinator coordinator;
+        FakeEditSession session;
+        require(coordinator.registerSession(session), "edit session registration failed");
+
+        RobotQtViewerWorkbenchTransitionResult nestedResult;
+        session.state = RobotQtViewerEditSessionState::Dirty;
+        session.onPrepare = [&]() {
+            nestedResult = coordinator.prepareTransition({});
+        };
+        const RobotQtViewerWorkbenchTransitionResult outerResult =
+            coordinator.prepareTransition({});
+        require(outerResult.succeeded(), "outer edit-session transition failed");
+        require(!nestedResult.succeeded() &&
+                nestedResult.diagnosticCode ==
+                    QStringLiteral("edit_session.transition.reentrant"),
+            "reentrant edit-session transition was not rejected");
+        require(!coordinator.transitionInProgress(),
+            "edit-session coordinator remained busy after a successful transition");
+
+        session.onPrepare = {};
+        session.state = RobotQtViewerEditSessionState::Dirty;
+        session.throwOnPrepare = true;
+        const RobotQtViewerWorkbenchTransitionResult exceptionResult =
+            coordinator.prepareTransition({});
+        require(!exceptionResult.succeeded() &&
+                exceptionResult.diagnosticCode ==
+                    QStringLiteral("edit_session.transition.exception"),
+            "edit-session exception did not produce the expected failure");
+        require(!coordinator.transitionInProgress(),
+            "edit-session coordinator remained busy after an exception");
+
+        session.throwOnPrepare = false;
+        session.state = RobotQtViewerEditSessionState::Dirty;
+        require(coordinator.prepareTransition({}).succeeded(),
+            "edit-session coordinator did not recover after an exception");
+
+        FakeEditSession secondSession;
+        session.state = RobotQtViewerEditSessionState::Dirty;
+        secondSession.state = RobotQtViewerEditSessionState::Dirty;
+        require(coordinator.registerSession(secondSession),
+            "second edit session registration failed");
+        const RobotQtViewerWorkbenchTransitionResult multipleOwnerResult =
+            coordinator.prepareTransition({});
+        require(!multipleOwnerResult.succeeded() &&
+                multipleOwnerResult.diagnosticCode ==
+                    QStringLiteral("edit_session.multiple_mutation_owners"),
+            "multiple dirty edit-session owners were not rejected");
+        require(session.prepareCount == 3 && secondSession.prepareCount == 0,
+            "multiple-owner failure invoked an edit session");
+    }
+
+    void testReturnToWorkbenchEntrySource()
+    {
+        std::vector<std::string> calls;
+        FakeLifecycle browse("browse", calls);
+        FakeLifecycle motion("motion", calls);
+        FakeLifecycle toolSetup("toolSetup", calls);
+        auto registry = defaultRobotQtViewerWorkbenchPackageRegistry();
+        bind(registry, RobotQtViewerWorkbenchKind::Browse, browse);
+        bind(registry, RobotQtViewerWorkbenchKind::Motion, motion);
+        bind(registry, RobotQtViewerWorkbenchKind::ToolSetup, toolSetup);
+        RobotQtViewerWorkbenchManager manager;
+        RobotQtViewerEventHub events;
+        RobotQtViewerWorkbenchTransitionCoordinator coordinator(registry, manager, events);
+
+        require(coordinator.initializeActiveWorkbench(QStringLiteral("test-return")).succeeded(),
+            "initial activation for Workbench return failed");
+        require(coordinator.requestTransition(
+                    RobotQtViewerWorkbenchKind::Motion,
+                    QStringLiteral("enter-motion"))
+                    .succeeded(),
+            "entering Motion before Tool Setup failed");
+        require(coordinator.requestTransition(
+                    RobotQtViewerWorkbenchKind::ToolSetup,
+                    QStringLiteral("enter-tool-setup"))
+                    .succeeded(),
+            "entering Tool Setup failed");
+        require(coordinator.requestReturn(
+                    robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse),
+                    QStringLiteral("tool-setup-done"))
+                    .succeeded(),
+            "returning from Tool Setup failed");
+        require(manager.activeWorkbench() == RobotQtViewerWorkbenchKind::Motion,
+            "Workbench Done did not return to the entry source");
     }
 
     void testRejectionAndActivationRollback()
@@ -415,17 +655,16 @@ namespace
         const QString packageId = QStringLiteral("smrobot.workbench.test");
         require(catalog.registerPackage(makeRobotQtViewerWorkbenchPackage(
                     packageId,
-                    QStringLiteral("Test Workbench"),
-                    RobotQtViewerWorkbenchPackageSource::BuiltInSource)),
+                    QStringLiteral("Test Workbench"))),
             "profile test package registration failed");
-        require(catalog.registerMode(makeRobotQtViewerWorkbenchMode(
+        require(catalog.registerWorkbench(makeRobotQtViewerWorkbench(
                     packageId,
                     RobotQtViewerWorkbenchKind::Browse,
                     QStringLiteral("browseWorkbench"),
                     10,
                     { QStringLiteral("smrobot.feature.project-assembly") })),
             "profile test Browse registration failed");
-        require(catalog.registerMode(makeRobotQtViewerWorkbenchMode(
+        require(catalog.registerWorkbench(makeRobotQtViewerWorkbench(
                     packageId,
                     RobotQtViewerWorkbenchKind::Motion,
                     QStringLiteral("motionWorkbench"),
@@ -433,7 +672,7 @@ namespace
                     { QStringLiteral("smrobot.feature.robot-run") },
                     { robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse) })),
             "profile test Motion registration failed");
-        require(catalog.registerMode(makeRobotQtViewerWorkbenchMode(
+        require(catalog.registerWorkbench(makeRobotQtViewerWorkbench(
                     packageId,
                     RobotQtViewerWorkbenchKind::Collision,
                     QStringLiteral("collisionWorkbench"),
@@ -455,113 +694,179 @@ namespace
         RobotQtViewerPlatformProfile profile;
         profile.id = QStringLiteral("test-platform");
         profile.displayName = QStringLiteral("Test Platform");
-        profile.requiredFeatureIds = QStringList{
-            QStringLiteral("smrobot.feature.project-assembly") };
-        profile.optionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion),
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Collision)
-        };
-        profile.defaultEnabledOptionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion)
-        };
-        profile.defaultModeId = robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse);
-        profile.modeOrder = QStringList{
+        profile.workbenchIds = QStringList{
             robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse),
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Collision),
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion)
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion),
         };
+        profile.defaultWorkbenchId =
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse);
         return profile;
     }
 
     void testPlatformProfileResolutionAndOverlay()
     {
         RobotQtViewerWorkbenchPackageRegistry catalog = makeProfileCatalog();
+        std::vector<std::string> calls;
+        FakeLifecycle collisionLifecycle("collision", calls);
+        RobotQtViewerNoOpLanguageParticipant collisionLanguage;
+        bind(catalog, RobotQtViewerWorkbenchKind::Collision, collisionLifecycle);
+        require(catalog.bindWorkbenchLanguageParticipant(
+                    RobotQtViewerWorkbenchKind::Collision, collisionLanguage),
+            "Collision language participant binding failed");
+        require(catalog.isWorkbenchReady(RobotQtViewerWorkbenchKind::Collision) &&
+                catalog.isWorkbenchLanguageReady(RobotQtViewerWorkbenchKind::Collision),
+            "Collision Workbench was not ready before Profile filtering");
         const RobotQtViewerPlatformProfile profile = makeProfile();
         RobotQtViewerResolvedPlatformComposition resolved =
             RobotQtViewerPlatformProfileResolver::resolve(catalog, profile);
         require(resolved.succeeded(), "valid platform profile did not resolve");
-        require(resolved.enabledModeIds == QStringList({
-                    robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse),
-                    robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion) }),
-            "default-enabled optional modes were not resolved deterministically");
-
-        RobotQtViewerPlatformUserOverlay overlay;
-        overlay.profileId = profile.id;
-        overlay.enabledOptionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Collision)
-        };
-        overlay.disabledOptionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion)
-        };
-        resolved = RobotQtViewerPlatformProfileResolver::resolve(catalog, profile, overlay);
-        require(resolved.succeeded(), "valid optional overlay did not resolve");
-        require(resolved.enabledModeIds == QStringList({
-                    robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse),
-                    robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Collision) }),
-            "optional overlay did not replace default choices");
-        require(catalog.setEnabledModeIds(resolved.enabledModeIds),
-            "resolved mode set was rejected by the catalog");
-        require(catalog.hasMode(RobotQtViewerWorkbenchKind::Collision) &&
-                !catalog.hasMode(RobotQtViewerWorkbenchKind::Motion),
+        require(resolved.enabledWorkbenchIds == profile.workbenchIds,
+            "resolved Workbench composition differs from the Profile order");
+        require(catalog.setEnabledWorkbenchIds(resolved.enabledWorkbenchIds),
+            "resolved Workbench set was rejected by the catalog");
+        require(catalog.hasWorkbench(RobotQtViewerWorkbenchKind::Motion) &&
+                !catalog.hasWorkbench(RobotQtViewerWorkbenchKind::Collision),
             "catalog filtering did not follow resolved composition");
+        require(catalog.lifecycle(RobotQtViewerWorkbenchKind::Collision) == nullptr &&
+                catalog.languageParticipant(RobotQtViewerWorkbenchKind::Collision) == nullptr,
+            "disabled Workbench retained lifecycle or language runtime bindings");
+    }
+
+    void testRuntimeContributionHost()
+    {
+        auto registry = makeProfileCatalog();
+        const QString browseId =
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse);
+        const QString motionId =
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion);
+        require(registry.setEnabledWorkbenchIds(QStringList{ browseId }),
+            "runtime contribution test catalog filtering failed");
+
+        RobotQtViewerEditSessionCoordinator editSessions;
+        RobotQtViewerWorkbenchContributionHost host(registry, editSessions);
+        QWidget* const browsePanel = reinterpret_cast<QWidget*>(std::uintptr_t{ 1 });
+        int browseFactoryCalls = 0;
+        int disabledFactoryCalls = 0;
+        std::vector<std::string> lifecycleCalls;
+
+        require(host.registerFactory({
+                    browseId,
+                    [&](QWidget*) {
+                        ++browseFactoryCalls;
+                        return std::make_unique<RobotQtViewerBasicWorkbenchRuntimeContribution>(
+                            browseId,
+                            [browsePanel]() { return browsePanel; },
+                            std::make_unique<FakeLifecycleEditSession>(
+                                "browse", lifecycleCalls),
+                            noExecutionPolicy(),
+                            std::make_unique<RobotQtViewerNoOpLanguageParticipant>());
+                    } }),
+            "enabled runtime contribution factory registration failed");
+        require(!host.registerFactory({ browseId, {} }),
+            "duplicate runtime contribution factory was accepted");
+        require(host.registerFactory({
+                    motionId,
+                    [&](QWidget*) {
+                        ++disabledFactoryCalls;
+                        QWidget* const panel =
+                            reinterpret_cast<QWidget*>(std::uintptr_t{ 2 });
+                        return std::make_unique<RobotQtViewerBasicWorkbenchRuntimeContribution>(
+                            motionId,
+                            [panel]() { return panel; },
+                            std::make_unique<FakeLifecycle>("motion", lifecycleCalls),
+                            noExecutionPolicy(),
+                            std::make_unique<RobotQtViewerNoOpLanguageParticipant>());
+                    } }),
+            "disabled runtime contribution factory registration failed");
+
+        QString error;
+        require(host.instantiateEnabled(QStringList{ browseId }, nullptr, &error),
+            "enabled runtime contribution instantiation failed");
+        require(error.isEmpty() && browseFactoryCalls == 1 && disabledFactoryCalls == 0,
+            "runtime contribution construction did not follow enabled Workbenches");
+        require(host.panelForWorkbench(browseId) == browsePanel &&
+                host.hasContribution(browseId) && !host.hasContribution(motionId),
+            "runtime contribution panel resolution failed");
+        require(registry.lifecycle(browseId) != nullptr &&
+                registry.languageParticipant(RobotQtViewerWorkbenchKind::Browse) != nullptr &&
+                editSessions.pendingSessionCount() == 1,
+            "runtime contribution bindings were not registered");
+        require(!host.instantiateEnabled(QStringList{ browseId }, nullptr, &error),
+            "runtime contributions were instantiated twice");
+
+        host.clear();
+        require(registry.lifecycle(browseId) == nullptr &&
+                registry.languageParticipant(RobotQtViewerWorkbenchKind::Browse) == nullptr &&
+                editSessions.pendingSessionCount() == 0,
+            "runtime contribution teardown left registry or edit-session bindings");
+
+        require(!host.instantiateEnabled(QStringList{ browseId, browseId }, nullptr, &error),
+            "duplicate enabled runtime contribution was accepted");
+        require(browseFactoryCalls == 2,
+            "duplicate enabled runtime contribution did not stop transactionally");
+
+        auto missingRegistry = makeProfileCatalog();
+        require(missingRegistry.setEnabledWorkbenchIds(QStringList{ browseId }),
+            "missing-factory test catalog filtering failed");
+        RobotQtViewerEditSessionCoordinator missingSessions;
+        RobotQtViewerWorkbenchContributionHost missingHost(missingRegistry, missingSessions);
+        require(!missingHost.instantiateEnabled(QStringList{ browseId }, nullptr, &error),
+            "missing runtime contribution factory was accepted");
+        require(missingRegistry.lifecycle(browseId) == nullptr,
+            "missing runtime contribution left a lifecycle binding");
+
+        require(missingHost.registerFactory({
+                    browseId,
+                    [](QWidget*) {
+                        return std::unique_ptr<RobotQtViewerWorkbenchRuntimeContribution>();
+                    } }),
+            "incomplete contribution factory registration failed");
+        require(!missingHost.instantiateEnabled(QStringList{ browseId }, nullptr, &error),
+            "incomplete runtime contribution was accepted");
     }
 
     void testPlatformProfileDiagnosticsAndOverlayIo()
     {
         RobotQtViewerWorkbenchPackageRegistry catalog = makeProfileCatalog();
         RobotQtViewerPlatformProfile profile = makeProfile();
-        RobotQtViewerPlatformUserOverlay invalidOverlay;
-        invalidOverlay.profileId = profile.id;
-        invalidOverlay.disabledOptionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse)
-        };
+        profile.workbenchIds.push_back(QStringLiteral("smrobot.mode.not-built"));
         RobotQtViewerResolvedPlatformComposition resolved =
-            RobotQtViewerPlatformProfileResolver::resolve(catalog, profile, invalidOverlay);
-        require(!resolved.succeeded(), "overlay was allowed to disable a non-optional mode");
-
-        profile.requiredFeatureIds = QStringList{
-            QStringLiteral("smrobot.feature.missing") };
-        resolved = RobotQtViewerPlatformProfileResolver::resolve(catalog, profile);
-        require(!resolved.succeeded(), "missing required feature was accepted");
+            RobotQtViewerPlatformProfileResolver::resolve(catalog, profile);
+        require(!resolved.succeeded(), "missing Workbench was accepted");
+        require(hasPlatformDiagnostic(resolved, QStringLiteral("platform.workbench.missing")),
+            "missing Workbench did not produce a diagnostic");
 
         profile = makeProfile();
-        profile.optionalModeIds.push_back(QStringLiteral("smrobot.mode.not-built"));
+        profile.workbenchIds.removeAll(
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse));
+        profile.defaultWorkbenchId =
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion);
         resolved = RobotQtViewerPlatformProfileResolver::resolve(catalog, profile);
-        require(resolved.succeeded(), "missing unused optional mode made the profile fail");
-        require(hasPlatformDiagnostic(resolved, QStringLiteral("platform.mode.optional_missing")),
-            "missing unused optional mode did not produce a warning");
+        require(!resolved.succeeded(), "undeclared Workbench dependency was accepted");
+        require(hasPlatformDiagnostic(
+                    resolved, QStringLiteral("platform.workbench.dependency_not_declared")),
+            "undeclared Workbench dependency did not produce a diagnostic");
 
-        RobotQtViewerPlatformUserOverlay invalidSchemaOverlay;
-        invalidSchemaOverlay.version = 2;
-        invalidSchemaOverlay.profileId = profile.id;
-        resolved = RobotQtViewerPlatformProfileResolver::resolve(
-            catalog, profile, invalidSchemaOverlay);
-        require(!resolved.succeeded(), "unsupported overlay schema version was accepted");
-
-        RobotQtViewerPlatformUserOverlay contradictoryOverlay;
-        contradictoryOverlay.profileId = profile.id;
-        contradictoryOverlay.enabledOptionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion) };
-        contradictoryOverlay.disabledOptionalModeIds =
-            contradictoryOverlay.enabledOptionalModeIds;
-        resolved = RobotQtViewerPlatformProfileResolver::resolve(
-            catalog, profile, contradictoryOverlay);
-        require(!resolved.succeeded(), "contradictory overlay was accepted");
+        profile = makeProfile();
+        profile.workbenchIds.push_back(profile.workbenchIds.front());
+        resolved = RobotQtViewerPlatformProfileResolver::resolve(catalog, profile);
+        require(!resolved.succeeded(), "duplicate Workbench ID was accepted");
+        require(hasPlatformDiagnostic(resolved, QStringLiteral("platform.workbench.duplicate")),
+            "duplicate Workbench ID did not produce a diagnostic");
 
         RobotQtViewerWorkbenchPackageRegistry missingDependencyCatalog;
         const QString dependencyPackageId = QStringLiteral("smrobot.workbench.dependency-test");
         require(missingDependencyCatalog.registerPackage(makeRobotQtViewerWorkbenchPackage(
                     dependencyPackageId,
-                    QStringLiteral("Dependency Test"),
-                    RobotQtViewerWorkbenchPackageSource::BuiltInSource)),
+                    QStringLiteral("Dependency Test"))),
             "dependency test package registration failed");
-        require(missingDependencyCatalog.registerMode(makeRobotQtViewerWorkbenchMode(
+        require(missingDependencyCatalog.registerWorkbench(makeRobotQtViewerWorkbench(
                     dependencyPackageId,
                     RobotQtViewerWorkbenchKind::Browse,
                     QStringLiteral("browseWorkbench"),
                     10)),
             "dependency test Browse registration failed");
-        require(missingDependencyCatalog.registerMode(makeRobotQtViewerWorkbenchMode(
+        require(missingDependencyCatalog.registerWorkbench(makeRobotQtViewerWorkbench(
                     dependencyPackageId,
                     RobotQtViewerWorkbenchKind::Motion,
                     QStringLiteral("motionWorkbench"),
@@ -572,42 +877,88 @@ namespace
         RobotQtViewerPlatformProfile missingDependencyProfile;
         missingDependencyProfile.id = QStringLiteral("dependency-test");
         missingDependencyProfile.displayName = QStringLiteral("Dependency Test");
-        missingDependencyProfile.requiredModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse) };
-        missingDependencyProfile.optionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion) };
-        missingDependencyProfile.defaultEnabledOptionalModeIds =
-            missingDependencyProfile.optionalModeIds;
-        missingDependencyProfile.defaultModeId =
+        missingDependencyProfile.workbenchIds = QStringList{
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse),
+            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Motion)
+        };
+        missingDependencyProfile.defaultWorkbenchId =
             robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse);
         resolved = RobotQtViewerPlatformProfileResolver::resolve(
             missingDependencyCatalog, missingDependencyProfile);
-        require(resolved.succeeded(), "unavailable optional dependency made the profile fail");
-        require(!resolved.containsMode(RobotQtViewerWorkbenchKind::Motion),
-            "mode with a missing dependency remained enabled");
-        require(hasPlatformDiagnostic(resolved, QStringLiteral("platform.mode.dependency_missing")),
-            "missing optional dependency did not produce a warning");
+        require(!resolved.succeeded(), "missing explicit dependency was accepted");
+        require(hasPlatformDiagnostic(
+                    resolved, QStringLiteral("platform.workbench.dependency_not_declared")),
+            "missing explicit dependency did not produce a diagnostic");
 
         QTemporaryDir temporaryDirectory;
-        require(temporaryDirectory.isValid(), "temporary overlay directory creation failed");
-        const std::filesystem::path overlayPath = std::filesystem::u8path(
-            temporaryDirectory.path().toUtf8().constData()) / "test.overlay.json";
-        RobotQtViewerPlatformUserOverlay savedOverlay;
-        savedOverlay.profileId = QStringLiteral("test-platform");
-        savedOverlay.enabledOptionalModeIds = QStringList{
-            robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Collision)
-        };
+        require(temporaryDirectory.isValid(), "temporary profile directory creation failed");
         QString ioError;
-        require(RobotQtViewerPlatformProfileIo::saveOverlay(
-                    overlayPath, savedOverlay, &ioError),
-            "platform overlay save failed");
-        RobotQtViewerPlatformUserOverlay loadedOverlay;
-        require(RobotQtViewerPlatformProfileIo::loadOverlay(
-                    overlayPath, &loadedOverlay, &ioError),
-            "platform overlay load failed");
-        require(loadedOverlay.profileId == savedOverlay.profileId &&
-                loadedOverlay.enabledOptionalModeIds == savedOverlay.enabledOptionalModeIds,
-            "platform overlay round trip changed data");
+        const std::filesystem::path selectionPath = std::filesystem::u8path(
+            temporaryDirectory.path().toUtf8().constData()) / "simulation-platform.json";
+        RobotQtViewerPlatformSelection savedSelection;
+        savedSelection.profileId = QStringLiteral("test-platform");
+        require(RobotQtViewerPlatformProfileIo::saveSelection(
+                    selectionPath, savedSelection, &ioError),
+            "platform selection save failed");
+        RobotQtViewerPlatformSelection loadedSelection;
+        require(RobotQtViewerPlatformProfileIo::loadSelection(
+                    selectionPath, &loadedSelection, &ioError),
+            "platform selection load failed");
+        require(loadedSelection.profileId == savedSelection.profileId,
+            "platform selection round trip changed the profile id");
+
+        const std::filesystem::path profilePath = std::filesystem::u8path(
+            temporaryDirectory.path().toUtf8().constData()) / "test.platform.json";
+        const RobotQtViewerPlatformProfile savedProfile = makeProfile();
+        require(RobotQtViewerPlatformProfileIo::saveProfile(
+                    profilePath, savedProfile, &ioError),
+            "platform profile save failed");
+        RobotQtViewerPlatformProfile loadedProfile;
+        require(RobotQtViewerPlatformProfileIo::loadProfile(
+                    profilePath, &loadedProfile, &ioError),
+            "platform profile load failed");
+        require(loadedProfile.id == savedProfile.id &&
+                loadedProfile.displayName == savedProfile.displayName &&
+                loadedProfile.workbenchIds == savedProfile.workbenchIds &&
+                loadedProfile.defaultWorkbenchId == savedProfile.defaultWorkbenchId,
+            "platform profile round trip changed data");
+
+        const std::filesystem::path legacyProfilePath = std::filesystem::u8path(
+            temporaryDirectory.path().toUtf8().constData()) / "legacy.platform.json";
+        QFile legacyProfileFile(QString::fromStdWString(legacyProfilePath.wstring()));
+        require(legacyProfileFile.open(QIODevice::WriteOnly),
+            "legacy profile fixture could not be written");
+        require(legacyProfileFile.write(
+                    "{\"schema\":\"smrobot.platform-profile\",\"version\":1,"
+                    "\"id\":\"legacy\",\"displayName\":\"Legacy\"}") > 0,
+            "legacy profile fixture write failed");
+        legacyProfileFile.close();
+        require(!RobotQtViewerPlatformProfileIo::loadProfile(
+                    legacyProfilePath, &loadedProfile, &ioError) &&
+                ioError.contains(QStringLiteral("migrated to v2")),
+            "legacy Product Profile did not receive an explicit v2 migration error");
+
+        const std::filesystem::path invalidSelectionPath = std::filesystem::u8path(
+            temporaryDirectory.path().toUtf8().constData()) / "invalid-selection.json";
+        QFile invalidSelectionFile(QString::fromStdWString(invalidSelectionPath.wstring()));
+        require(invalidSelectionFile.open(QIODevice::WriteOnly),
+            "invalid selection fixture could not be written");
+        require(invalidSelectionFile.write("{\"schema\":\"wrong\",\"profileId\":\"base-robot\"}") > 0,
+            "invalid selection fixture write failed");
+        invalidSelectionFile.close();
+        require(!RobotQtViewerPlatformProfileIo::loadSelection(
+                    invalidSelectionPath, &loadedSelection, &ioError),
+            "invalid platform selection was accepted");
+
+        const RobotQtViewerPlatformProfile fallback =
+            makeRobotQtViewerBuiltInBaseProfile(catalog);
+        resolved = RobotQtViewerPlatformProfileResolver::resolve(catalog, fallback);
+        require(resolved.succeeded(), "built-in base profile did not resolve");
+        require(resolved.defaultWorkbenchId ==
+                robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse),
+            "built-in base profile has the wrong default mode");
+        require(resolved.enabledWorkbenchIds.size() == catalog.workbenches().size(),
+            "built-in base profile did not enable every built mode");
     }
 }
 
@@ -615,12 +966,16 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     testSuccessfulTransitionAndResume();
+    testEditSessionSelectionTransition();
+    testEditSessionCoordinatorFailureAndReentrancy();
+    testReturnToWorkbenchEntrySource();
     testRejectionAndActivationRollback();
     testDeactivateAndRollbackFailures();
     testTargetCleanupFailureAndReentrancy();
     testPreparedTransitionContextAndSharedLifecycle();
     testProjectReleaseShutdownAndMissingLifecycle();
     testPlatformProfileResolutionAndOverlay();
+    testRuntimeContributionHost();
     testPlatformProfileDiagnosticsAndOverlayIo();
     std::cout << "Workbench lifecycle tests passed.\n";
     return 0;

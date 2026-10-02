@@ -8,15 +8,19 @@
 #include <QComboBox>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QList>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSizePolicy>
 #include <QSignalBlocker>
 #include <QStringList>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 namespace
@@ -319,9 +323,20 @@ protected:
 ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     : QWidget(parent)
 {
-    auto* toolLayout = new QVBoxLayout(this);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(8);
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setObjectName(QStringLiteral("toolSetupContentScrollArea"));
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* contentWidget = new QWidget(scrollArea);
+    auto* toolLayout = new QVBoxLayout(contentWidget);
     toolLayout->setContentsMargins(10, 10, 10, 10);
     toolLayout->setSpacing(8);
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea, 1);
 
     m_frameEditorTitleLabel = robot_qt_viewer::makePanelTitle("Mount Frame Edit", this);
     m_frameEditorTitleLabel->setVisible(false);
@@ -332,240 +347,119 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     toolLayout->addWidget(m_taskStatusLabel);
 
     m_robotMountCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_robotMountCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_robotMountCombo);
     connect(m_robotMountCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, &ToolSetupWidget::mountSelectionChanged);
-    toolLayout->addWidget(m_robotMountCombo);
-
     m_robotMountDetailsLabel = new QLabel("No mount frame", this);
     m_robotMountDetailsLabel->setWordWrap(true);
     robot_qt_viewer::makeHorizontallyCompressible(m_robotMountDetailsLabel);
-    toolLayout->addWidget(m_robotMountDetailsLabel);
 
     m_robotMountNameLabel = new QLabel("Frame Name", this);
-    toolLayout->addWidget(m_robotMountNameLabel);
     m_robotMountNameEdit = new QLineEdit(this);
     m_robotMountNameEdit->setPlaceholderText("Frame Name");
     robot_qt_viewer::makeHorizontallyCompressible(m_robotMountNameEdit);
     connect(m_robotMountNameEdit, &QLineEdit::textChanged, this, [this](const QString&) {
         markTaskDirty();
     });
-    toolLayout->addWidget(m_robotMountNameEdit);
-
     m_robotMountLinkCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_robotMountLinkCombo);
-    connect(
-        m_robotMountLinkCombo,
+    robot_qt_viewer::configureInspectorEntityCombo(m_robotMountLinkCombo);
+    connect(m_robotMountLinkCombo,
         static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-        this,
-        [this](int) {
-            markTaskDirty();
-        });
-    toolLayout->addWidget(m_robotMountLinkCombo);
+        this, [this](int) { markTaskDirty(); });
 
-    auto* mountButtonRow = new QHBoxLayout();
-    mountButtonRow->setContentsMargins(0, 0, 0, 0);
     m_addRobotMountButton = new QPushButton("Add Link Mount", this);
     m_deleteRobotMountButton = new QPushButton("Delete Selected Mount", this);
-    robot_qt_viewer::configureActionButton(
-        m_addRobotMountButton,
-        robot_qt_viewer::UiActionRole::Accent);
-    robot_qt_viewer::configureActionButton(
-        m_deleteRobotMountButton,
-        robot_qt_viewer::UiActionRole::Destructive);
+    robot_qt_viewer::configureActionButton(m_addRobotMountButton, robot_qt_viewer::UiActionRole::Accent);
+    robot_qt_viewer::configureActionButton(m_deleteRobotMountButton, robot_qt_viewer::UiActionRole::Destructive);
     connect(m_addRobotMountButton, &QPushButton::clicked, this, &ToolSetupWidget::addRobotMountRequested);
     connect(m_deleteRobotMountButton, &QPushButton::clicked, this, &ToolSetupWidget::deleteRobotMountRequested);
-    mountButtonRow->addWidget(m_addRobotMountButton);
-    mountButtonRow->addWidget(m_deleteRobotMountButton);
-    toolLayout->addLayout(mountButtonRow);
 
-    m_robotMountTransformEditor = new ToolTransformEditorWidget(
-        "Mount frame transform: Link -> Mount",
-        this);
+    m_robotMountTransformEditor = new ToolTransformEditorWidget("Mount frame transform: Link -> Mount", this);
     m_robotMountTransformEditor->setMatrixVisible(false);
-    connect(
-        m_robotMountTransformEditor,
-        &ToolTransformEditorWidget::transformChanged,
-        this,
-        [this](const simulation_project::TransformDesc& transform) {
+    connect(m_robotMountTransformEditor, &ToolTransformEditorWidget::transformChanged,
+        this, [this](const simulation_project::TransformDesc& transform) {
             emit mountTransformPreviewChanged(transform);
             markTaskDirty();
         });
-    toolLayout->addWidget(m_robotMountTransformEditor);
 
-    m_attachmentSectionTitle = robot_qt_viewer::makePanelTitle("Attachment", this);
-    toolLayout->addWidget(m_attachmentSectionTitle);
     m_toolAttachmentCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_toolAttachmentCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_toolAttachmentCombo);
     connect(m_toolAttachmentCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, &ToolSetupWidget::attachmentSelectionChanged);
-    toolLayout->addWidget(m_toolAttachmentCombo);
-
     m_toolDetailsLabel = new QLabel("No attachment", this);
     m_toolDetailsLabel->setWordWrap(true);
     robot_qt_viewer::makeHorizontallyCompressible(m_toolDetailsLabel);
-    toolLayout->addWidget(m_toolDetailsLabel);
-
     m_configureToolAttachmentButton = new QPushButton("Edit Attachment", this);
-    robot_qt_viewer::configureActionButton(
-        m_configureToolAttachmentButton,
-        robot_qt_viewer::UiActionRole::Accent);
+    robot_qt_viewer::configureActionButton(m_configureToolAttachmentButton, robot_qt_viewer::UiActionRole::Accent);
     connect(m_configureToolAttachmentButton, &QPushButton::clicked, this, &ToolSetupWidget::configureAttachmentRequested);
-    toolLayout->addWidget(m_configureToolAttachmentButton);
 
     m_attachmentNameEdit = new QLineEdit(this);
     m_attachmentNameEdit->setPlaceholderText("Attachment display name");
     robot_qt_viewer::makeHorizontallyCompressible(m_attachmentNameEdit);
-    connect(m_attachmentNameEdit, &QLineEdit::textChanged, this, [this](const QString&) {
-        markTaskDirty();
-    });
-    toolLayout->addWidget(m_attachmentNameEdit);
-
+    connect(m_attachmentNameEdit, &QLineEdit::textChanged, this, [this](const QString&) { markTaskDirty(); });
     m_attachmentAssetCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_attachmentAssetCombo);
-    connect(
-        m_attachmentAssetCombo,
+    robot_qt_viewer::configureInspectorEntityCombo(m_attachmentAssetCombo);
+    connect(m_attachmentAssetCombo,
         static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-        this,
-        [this](int) {
-            markTaskDirty();
-        });
-    toolLayout->addWidget(m_attachmentAssetCombo);
-
+        this, [this](int) { markTaskDirty(); });
     m_attachmentEnabledCheck = new QCheckBox("Attachment enabled", this);
     robot_qt_viewer::configureInspectorToggle(m_attachmentEnabledCheck);
-    connect(m_attachmentEnabledCheck, &QCheckBox::toggled, this, [this](bool) {
-        markTaskDirty();
-    });
-    toolLayout->addWidget(m_attachmentEnabledCheck);
-
-    m_attachmentOffsetEditor = new ToolTransformEditorWidget(
-        "Attachment offset: Mount -> Asset mount",
-        this);
-    connect(
-        m_attachmentOffsetEditor,
-        &ToolTransformEditorWidget::transformChanged,
-        this,
-        [this](const simulation_project::TransformDesc&) {
-            m_attachmentOffsetDirty = true;
+    connect(m_attachmentEnabledCheck, &QCheckBox::toggled, this, [this](bool) { markTaskDirty(); });
+    m_attachmentOffsetEditor = new ToolTransformEditorWidget("Attachment offset: Mount -> Asset mount", this);
+    connect(m_attachmentOffsetEditor, &ToolTransformEditorWidget::transformChanged,
+        this, [this](const simulation_project::TransformDesc& transform) {
+            emit attachmentOffsetPreviewChanged(transform);
             markTaskDirty();
-            if(m_applyAttachmentOffsetButton != nullptr && m_attachmentOffsetEditor != nullptr) {
-                m_applyAttachmentOffsetButton->setEnabled(m_attachmentOffsetEditor->isEnabled());
-            }
         });
-    toolLayout->addWidget(m_attachmentOffsetEditor);
 
-    m_applyAttachmentOffsetButton = new QPushButton("Apply Attachment Offset", this);
-    robot_qt_viewer::configureActionButton(
-        m_applyAttachmentOffsetButton,
-        robot_qt_viewer::UiActionRole::Primary);
-    m_applyAttachmentOffsetButton->setVisible(false);
-    connect(m_applyAttachmentOffsetButton, &QPushButton::clicked, this, [this]() {
-        if(m_attachmentOffsetEditor == nullptr) {
-            return;
-        }
-        m_attachmentOffsetDirty = false;
-        m_applyAttachmentOffsetButton->setEnabled(false);
-        emit attachmentOffsetApplyRequested(m_attachmentOffsetEditor->transform());
-    });
-    toolLayout->addWidget(m_applyAttachmentOffsetButton);
-
-    m_assetSectionTitle = robot_qt_viewer::makePanelTitle("Attachment Asset", this);
-    toolLayout->addWidget(m_assetSectionTitle);
     m_toolAssetCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_toolAssetCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_toolAssetCombo);
     connect(m_toolAssetCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, &ToolSetupWidget::assetSelectionChanged);
-    toolLayout->addWidget(m_toolAssetCombo);
-
     m_toolAssetDetailsLabel = new QLabel("No attachment asset", this);
     m_toolAssetDetailsLabel->setWordWrap(true);
     robot_qt_viewer::makeHorizontallyCompressible(m_toolAssetDetailsLabel);
-    toolLayout->addWidget(m_toolAssetDetailsLabel);
-
     m_toolAssetEditor = new ToolAssetEditorWidget(this);
-    m_toolAssetEditor->setApplyButtonVisible(true);
-    connect(
-        m_toolAssetEditor,
-        &ToolAssetEditorWidget::applyRequested,
-        this,
-        &ToolSetupWidget::toolAssetApplyRequested);
-    connect(
-        m_toolAssetEditor,
-        &ToolAssetEditorWidget::assetChanged,
-        this,
-        [this](const simulation_project::AttachmentAssetDesc&) {
-            markTaskDirty();
-        });
-    connect(
-        m_toolAssetEditor,
-        &ToolAssetEditorWidget::visualTransformChanged,
-        this,
-        [this](const simulation_project::AttachmentAssetDesc&) {
-            markTaskDirty();
-        });
-    connect(
-        m_toolAssetEditor,
-        &ToolAssetEditorWidget::tcpTransformChanged,
-        this,
-        [this](const simulation_project::AttachmentAssetDesc&) {
-            markTaskDirty();
-        });
-    toolLayout->addWidget(m_toolAssetEditor);
+    const auto previewAssetChange = [this](const simulation_project::AttachmentAssetDesc& asset) {
+        emit attachmentAssetPreviewChanged(asset);
+        markTaskDirty();
+    };
+    connect(m_toolAssetEditor, &ToolAssetEditorWidget::assetChanged, this, previewAssetChange);
+    connect(m_toolAssetEditor, &ToolAssetEditorWidget::visualTransformChanged, this, previewAssetChange);
+    connect(m_toolAssetEditor, &ToolAssetEditorWidget::tcpTransformChanged, this, previewAssetChange);
 
     m_importToolAssetButton = new QPushButton("Import Tool Model...", this);
-    robot_qt_viewer::configureActionButton(
-        m_importToolAssetButton,
-        robot_qt_viewer::UiActionRole::Accent);
-    connect(m_importToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::importToolAssetRequested);
-    toolLayout->addWidget(m_importToolAssetButton);
-
-    m_attachToolAssetButton = new QPushButton("Attach Existing Asset...", this);
-    robot_qt_viewer::configureActionButton(
-        m_attachToolAssetButton,
-        robot_qt_viewer::UiActionRole::Accent);
-    connect(m_attachToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::attachToolAssetRequested);
-    toolLayout->addWidget(m_attachToolAssetButton);
-
+    m_attachToolAssetButton = new QPushButton("Install Existing Device...", this);
+    m_duplicateAssetButton = new QPushButton("Duplicate Device Definition...", this);
+    m_rebindAttachmentButton = new QPushButton("Move / Rebind Installed Device...", this);
     m_editToolAssetButton = new QPushButton("Edit Asset", this);
-    robot_qt_viewer::configureActionButton(
-        m_editToolAssetButton,
-        robot_qt_viewer::UiActionRole::Standard);
+    robot_qt_viewer::configureActionButton(m_importToolAssetButton, robot_qt_viewer::UiActionRole::Accent);
+    robot_qt_viewer::configureActionButton(m_attachToolAssetButton, robot_qt_viewer::UiActionRole::Accent);
+    robot_qt_viewer::configureActionButton(m_duplicateAssetButton, robot_qt_viewer::UiActionRole::Standard);
+    robot_qt_viewer::configureActionButton(m_rebindAttachmentButton, robot_qt_viewer::UiActionRole::Standard);
+    robot_qt_viewer::configureActionButton(m_editToolAssetButton, robot_qt_viewer::UiActionRole::Standard);
+    connect(m_importToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::importToolAssetRequested);
+    connect(m_attachToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::attachToolAssetRequested);
+    connect(m_duplicateAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::duplicateAssetRequested);
+    connect(m_rebindAttachmentButton, &QPushButton::clicked, this, &ToolSetupWidget::rebindAttachmentRequested);
     connect(m_editToolAssetButton, &QPushButton::clicked, this, &ToolSetupWidget::editToolAssetRequested);
-    toolLayout->addWidget(m_editToolAssetButton);
 
     m_frameVisibilitySectionTitle = robot_qt_viewer::makePanelTitle("Frames", this);
-    toolLayout->addWidget(m_frameVisibilitySectionTitle);
     m_showLinkFrameCheck = new QCheckBox("Link frame", this);
     m_showRobotMountFrameCheck = new QCheckBox("Show Mount Frame", this);
     m_showToolMountFrameCheck = new QCheckBox("Asset mount", this);
     m_showVisualFrameCheck = new QCheckBox("Visual frame", this);
     m_showTcpFrameCheck = new QCheckBox("TCP frame", this);
     m_showSensorPreviewCheck = new QCheckBox("Sensor optical / FOV", this);
-
-    const QList<QCheckBox*> frameChecks = {
-        m_showLinkFrameCheck,
-        m_showRobotMountFrameCheck,
-        m_showToolMountFrameCheck,
-        m_showVisualFrameCheck,
-        m_showTcpFrameCheck,
-        m_showSensorPreviewCheck
-    };
+    const QList<QCheckBox*> frameChecks = { m_showLinkFrameCheck, m_showRobotMountFrameCheck,
+        m_showToolMountFrameCheck, m_showVisualFrameCheck, m_showTcpFrameCheck, m_showSensorPreviewCheck };
     for(QCheckBox* check : frameChecks) {
         robot_qt_viewer::configureInspectorToggle(check);
         check->setChecked(true);
         connect(check, &QCheckBox::toggled, this, &ToolSetupWidget::frameVisibilityChanged);
-        toolLayout->addWidget(check);
     }
-    if(m_showLinkFrameCheck != nullptr) {
-        m_showLinkFrameCheck->setChecked(false);
-    }
-    if(m_showRobotMountFrameCheck != nullptr) {
-        m_showRobotMountFrameCheck->setChecked(false);
-    }
-
-    m_objectBindingSectionTitle = robot_qt_viewer::makePanelTitle("Object Binding", this);
-    toolLayout->addWidget(m_objectBindingSectionTitle);
+    m_showLinkFrameCheck->setChecked(false);
+    m_showRobotMountFrameCheck->setChecked(false);
 
     m_bindingSummaryFrame = new QFrame(this);
     m_bindingSummaryFrame->setObjectName(QStringLiteral("ToolSetupBindingSummaryFrame"));
@@ -574,10 +468,7 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     auto* bindingSummaryLayout = new QVBoxLayout(m_bindingSummaryFrame);
     bindingSummaryLayout->setContentsMargins(10, 10, 10, 10);
     bindingSummaryLayout->setSpacing(8);
-    toolLayout->addWidget(m_bindingSummaryFrame);
-
     m_bindingNameTitleLabel = new QLabel("Binding Name", m_bindingSummaryFrame);
-    m_bindingNameTitleLabel->setFont(font());
     bindingSummaryLayout->addWidget(m_bindingNameTitleLabel);
     m_bindingNameValueLabel = new QLabel(m_bindingSummaryFrame);
     m_bindingNameValueLabel->setWordWrap(true);
@@ -590,94 +481,41 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
     m_bindingNameValueLabel->setProperty("inspectorInset", true);
     robot_qt_viewer::makeHorizontallyCompressible(m_bindingNameValueLabel);
     bindingSummaryLayout->addWidget(m_bindingNameValueLabel);
-
     m_objectBindingDiagram = new ObjectBindingDiagramWidget(m_bindingSummaryFrame);
     bindingSummaryLayout->addWidget(m_objectBindingDiagram);
 
-    m_bindingMountCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_bindingMountCombo);
-    m_bindingMountCombo->setToolTip("Robot mount frame");
-    connect(
-        m_bindingMountCombo,
-        static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-        this,
-        [this](int) {
-            if(!m_objectBindingEditorVisible) {
-                return;
-            }
-            emit objectBindingSelectionChanged(
-                currentBindingMountId(),
-                currentBindingObjectId(),
-                currentBindingFrameId());
-        });
-
     m_bindingObjectNameLabel = new QLabel("Object Name", this);
-    m_bindingObjectNameLabel->setFont(font());
-    toolLayout->addWidget(m_bindingObjectNameLabel);
     m_bindingObjectCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_bindingObjectCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_bindingObjectCombo);
     m_bindingObjectCombo->setToolTip("Object to bind");
-    connect(
-        m_bindingObjectCombo,
-        static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-        this,
-        [this](int) {
-            if(!m_objectBindingEditorVisible) {
-                return;
+    connect(m_bindingObjectCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+        this, [this](int) {
+            if(m_taskMode == TaskMode::Binding) {
+                emit objectBindingSelectionChanged(currentBindingMountId(), currentBindingObjectId(), QString());
             }
-            emit objectBindingSelectionChanged(
-                currentBindingMountId(),
-                currentBindingObjectId(),
-                QString());
         });
-    toolLayout->addWidget(m_bindingObjectCombo);
-
     m_bindingObjectFrameLabel = new QLabel("Object Frame", this);
-    m_bindingObjectFrameLabel->setFont(font());
-    toolLayout->addWidget(m_bindingObjectFrameLabel);
     m_bindingFrameCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_bindingFrameCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_bindingFrameCombo);
     m_bindingFrameCombo->setToolTip("Object frame used as attachment mount");
-    connect(
-        m_bindingFrameCombo,
-        static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
-        this,
-        [this](int) {
-            if(!m_objectBindingEditorVisible) {
-                return;
+    connect(m_bindingFrameCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+        this, [this](int) {
+            if(m_taskMode == TaskMode::Binding) {
+                emit objectBindingSelectionChanged(
+                    currentBindingMountId(), currentBindingObjectId(), currentBindingFrameId());
             }
-            emit objectBindingSelectionChanged(
-                currentBindingMountId(),
-                currentBindingObjectId(),
-                currentBindingFrameId());
         });
-    toolLayout->addWidget(m_bindingFrameCombo);
-
-    const QList<QWidget*> diagramBlock = {
-        m_bindingSummaryFrame
-    };
-    int diagramInsertIndex = toolLayout->indexOf(m_robotMountTransformEditor);
-    for(QWidget* widget : diagramBlock) {
-        if(widget == nullptr || diagramInsertIndex < 0) {
-            continue;
-        }
-        toolLayout->removeWidget(widget);
-        toolLayout->insertWidget(diagramInsertIndex, widget);
-        ++diagramInsertIndex;
-    }
-
-    m_objectBindingDetailsLabel = new QLabel("Select object and frame.", this);
-    m_objectBindingDetailsLabel->setWordWrap(true);
-    robot_qt_viewer::makeHorizontallyCompressible(m_objectBindingDetailsLabel);
-    toolLayout->addWidget(m_objectBindingDetailsLabel);
 
     toolLayout->addStretch(1);
 
-    auto* taskButtonRow = new QHBoxLayout();
-    taskButtonRow->setContentsMargins(0, 0, 0, 0);
     m_applyTaskButton = new QPushButton("Apply", this);
     m_cancelTaskButton = new QPushButton("Cancel", this);
-    m_exitTaskButton = new QPushButton("Exit Frame Editor", this);
+    m_applyTaskButton->setObjectName(QStringLiteral("toolSetupApplyTaskButton"));
+    m_cancelTaskButton->setObjectName(QStringLiteral("toolSetupCancelTaskButton"));
+    m_saveProjectButton = new QPushButton("Save Project", this);
+    m_saveProjectButton->setObjectName(QStringLiteral("toolSetupSaveProjectButton"));
+    m_exitTaskButton = new QPushButton("Done", this);
+    m_exitTaskButton->setObjectName(QStringLiteral("toolSetupDoneButton"));
     robot_qt_viewer::configureActionButton(
         m_applyTaskButton,
         robot_qt_viewer::UiActionRole::Primary);
@@ -685,18 +523,115 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
         m_cancelTaskButton,
         robot_qt_viewer::UiActionRole::Standard);
     robot_qt_viewer::configureActionButton(
+        m_saveProjectButton,
+        robot_qt_viewer::UiActionRole::Standard);
+    robot_qt_viewer::configureActionButton(
         m_exitTaskButton,
         robot_qt_viewer::UiActionRole::Standard);
     m_applyTaskButton->setEnabled(false);
     m_cancelTaskButton->setEnabled(true);
-    m_exitTaskButton->setVisible(false);
-    taskButtonRow->addWidget(m_applyTaskButton);
-    taskButtonRow->addWidget(m_cancelTaskButton);
-    taskButtonRow->addWidget(m_exitTaskButton);
-    toolLayout->addLayout(taskButtonRow);
+    auto* commandBar = new QFrame(this);
+    commandBar->setObjectName(QStringLiteral("toolSetupCommandBar"));
+    auto* commandBarLayout = new QGridLayout(commandBar);
+    commandBarLayout->setContentsMargins(10, 8, 10, 8);
+    commandBarLayout->setHorizontalSpacing(8);
+    commandBarLayout->setVerticalSpacing(6);
+    commandBarLayout->addWidget(m_applyTaskButton, 0, 0);
+    commandBarLayout->addWidget(m_cancelTaskButton, 0, 1);
+    commandBarLayout->addWidget(m_saveProjectButton, 1, 0);
+    commandBarLayout->addWidget(m_exitTaskButton, 1, 1);
+    commandBarLayout->setColumnStretch(0, 1);
+    commandBarLayout->setColumnStretch(1, 1);
+    rootLayout->addWidget(commandBar);
+
+    m_setupTabs = new QTabWidget(this);
+    m_setupTabs->setObjectName(QStringLiteral("toolSetupTaskTabs"));
+    m_setupTabs->setDocumentMode(true);
+
+    auto* mountsPage = new QWidget(m_setupTabs);
+    auto* mountsLayout = new QVBoxLayout(mountsPage);
+    mountsLayout->setContentsMargins(6, 8, 6, 8);
+    mountsLayout->setSpacing(8);
+    m_mountBrowseContainer = new QWidget(mountsPage);
+    auto* mountBrowseLayout = new QVBoxLayout(m_mountBrowseContainer);
+    mountBrowseLayout->setContentsMargins(0, 0, 0, 0);
+    mountBrowseLayout->setSpacing(8);
+    mountBrowseLayout->addWidget(m_robotMountCombo);
+    mountBrowseLayout->addWidget(m_robotMountDetailsLabel);
+    auto* mountCommands = new QHBoxLayout();
+    mountCommands->addWidget(m_addRobotMountButton);
+    mountCommands->addWidget(m_deleteRobotMountButton);
+    mountBrowseLayout->addLayout(mountCommands);
+    mountsLayout->addWidget(m_mountBrowseContainer);
+    mountsLayout->addWidget(m_robotMountNameLabel);
+    mountsLayout->addWidget(m_robotMountNameEdit);
+    mountsLayout->addWidget(m_robotMountLinkCombo);
+    mountsLayout->addWidget(m_robotMountTransformEditor);
+    mountsLayout->addStretch(1);
+    m_setupTabs->addTab(mountsPage, QStringLiteral("Mounts"));
+
+    auto* installedPage = new QWidget(m_setupTabs);
+    auto* installedLayout = new QVBoxLayout(installedPage);
+    installedLayout->setContentsMargins(6, 8, 6, 8);
+    installedLayout->setSpacing(8);
+    installedLayout->addWidget(m_toolAttachmentCombo);
+    installedLayout->addWidget(m_toolDetailsLabel);
+    installedLayout->addWidget(m_configureToolAttachmentButton);
+    installedLayout->addWidget(m_attachmentNameEdit);
+    installedLayout->addWidget(m_attachmentAssetCombo);
+    installedLayout->addWidget(m_attachmentEnabledCheck);
+    installedLayout->addWidget(m_attachmentOffsetEditor);
+    installedLayout->addWidget(m_attachToolAssetButton);
+    installedLayout->addWidget(m_rebindAttachmentButton);
+    installedLayout->addStretch(1);
+    m_setupTabs->addTab(installedPage, QStringLiteral("Installed Devices"));
+
+    auto* definitionsPage = new QWidget(m_setupTabs);
+    auto* definitionsLayout = new QVBoxLayout(definitionsPage);
+    definitionsLayout->setContentsMargins(6, 8, 6, 8);
+    definitionsLayout->setSpacing(8);
+    definitionsLayout->addWidget(m_toolAssetCombo);
+    definitionsLayout->addWidget(m_toolAssetDetailsLabel);
+    definitionsLayout->addWidget(m_toolAssetEditor);
+    definitionsLayout->addWidget(m_importToolAssetButton);
+    definitionsLayout->addWidget(m_duplicateAssetButton);
+    definitionsLayout->addWidget(m_editToolAssetButton);
+    definitionsLayout->addStretch(1);
+    m_setupTabs->addTab(definitionsPage, QStringLiteral("Definitions"));
+
+    auto* diagnosticsPage = new QWidget(m_setupTabs);
+    auto* diagnosticsLayout = new QVBoxLayout(diagnosticsPage);
+    diagnosticsLayout->setContentsMargins(6, 8, 6, 8);
+    diagnosticsLayout->setSpacing(8);
+    m_frameVisibilityContainer = new QWidget(diagnosticsPage);
+    auto* frameVisibilityLayout = new QVBoxLayout(m_frameVisibilityContainer);
+    frameVisibilityLayout->setContentsMargins(0, 0, 0, 0);
+    frameVisibilityLayout->setSpacing(8);
+    frameVisibilityLayout->addWidget(m_frameVisibilitySectionTitle);
+    frameVisibilityLayout->addWidget(m_showLinkFrameCheck);
+    frameVisibilityLayout->addWidget(m_showRobotMountFrameCheck);
+    frameVisibilityLayout->addWidget(m_showToolMountFrameCheck);
+    frameVisibilityLayout->addWidget(m_showVisualFrameCheck);
+    frameVisibilityLayout->addWidget(m_showTcpFrameCheck);
+    frameVisibilityLayout->addWidget(m_showSensorPreviewCheck);
+    diagnosticsLayout->addWidget(m_frameVisibilityContainer);
+    diagnosticsLayout->addWidget(m_bindingSummaryFrame);
+    m_bindingEditorContainer = new QWidget(diagnosticsPage);
+    auto* bindingEditorLayout = new QVBoxLayout(m_bindingEditorContainer);
+    bindingEditorLayout->setContentsMargins(0, 0, 0, 0);
+    bindingEditorLayout->setSpacing(8);
+    bindingEditorLayout->addWidget(m_bindingObjectNameLabel);
+    bindingEditorLayout->addWidget(m_bindingObjectCombo);
+    bindingEditorLayout->addWidget(m_bindingObjectFrameLabel);
+    bindingEditorLayout->addWidget(m_bindingFrameCombo);
+    diagnosticsLayout->addWidget(m_bindingEditorContainer);
+    diagnosticsLayout->addStretch(1);
+    m_setupTabs->addTab(diagnosticsPage, QStringLiteral("Diagnostics"));
+
+    toolLayout->insertWidget(2, m_setupTabs, 1);
 
     connect(m_applyTaskButton, &QPushButton::clicked, this, [this]() {
-        if(m_objectBindingEditorVisible) {
+        if(m_taskMode == TaskMode::Binding) {
             emit objectBindingApplyRequested(
                 currentBindingMountId(),
                 currentBindingObjectId(),
@@ -717,18 +652,10 @@ ToolSetupWidget::ToolSetupWidget(QWidget* parent)
             hasToolAsset ? m_toolAssetEditor->asset() : simulation_project::AttachmentAssetDesc());
     });
     connect(m_cancelTaskButton, &QPushButton::clicked, this, &ToolSetupWidget::taskCancelRequested);
+    connect(m_saveProjectButton, &QPushButton::clicked, this, &ToolSetupWidget::saveProjectRequested);
     connect(m_exitTaskButton, &QPushButton::clicked, this, &ToolSetupWidget::taskExitRequested);
 
-    applyFrameEditorLayout();
-    if(m_applyTaskButton != nullptr) {
-        m_applyTaskButton->setVisible(false);
-    }
-    if(m_cancelTaskButton != nullptr) {
-        m_cancelTaskButton->setVisible(false);
-    }
-    if(m_exitTaskButton != nullptr) {
-        m_exitTaskButton->setVisible(false);
-    }
+    applyTaskMode(TaskMode::Selection);
 }
 
 void ToolSetupWidget::setViewModel(const ToolSetupPanelView& view)
@@ -738,6 +665,7 @@ void ToolSetupWidget::setViewModel(const ToolSetupPanelView& view)
 
 void ToolSetupWidget::setDocumentView(const ToolSetupPanelView& view)
 {
+    applyTaskMode(TaskMode::Selection);
     setMountItems(view.mountItems, view.selectedMountId, view.mountItemsEnabled);
     setMountDetails(view.mountDetails);
     setMountFrameNameEditor(
@@ -771,8 +699,13 @@ void ToolSetupWidget::setDocumentView(const ToolSetupPanelView& view)
     setAssetDetails(view.assetDetails, view.assetToolTip);
     setAttachAssetEnabled(view.attachAssetEnabled);
     setEditAssetEnabled(view.editAssetEnabled);
+    if(m_duplicateAssetButton != nullptr) {
+        m_duplicateAssetButton->setEnabled(!view.selectedAssetId.isEmpty());
+    }
+    if(m_rebindAttachmentButton != nullptr) {
+        m_rebindAttachmentButton->setEnabled(!view.selectedAttachmentId.isEmpty());
+    }
     setAssetEditor(view.assetEditorVisible, view.assetEditorEnabled, view.assetEditorAsset);
-    applyFrameEditorLayout();
     if(view.bindingView.visible) {
         setObjectBindingEditor(
             true,
@@ -807,146 +740,48 @@ void ToolSetupWidget::setMountFrameMode(ToolSetupMountFrameMode mode)
         setFrameEditorMode(mode == ToolSetupMountFrameMode::Create);
         return;
     }
-
-    if(m_frameEditorTitleLabel != nullptr) {
-        m_frameEditorTitleLabel->setVisible(false);
-    }
-    if(m_applyTaskButton != nullptr && !m_objectBindingEditorVisible) {
-        m_applyTaskButton->setVisible(false);
-    }
-    if(m_cancelTaskButton != nullptr && !m_objectBindingEditorVisible) {
-        m_cancelTaskButton->setVisible(false);
-    }
-    if(m_exitTaskButton != nullptr) {
-        m_exitTaskButton->setVisible(false);
-    }
+    applyTaskMode(TaskMode::Selection);
 }
 
 void ToolSetupWidget::setFrameEditorMode(bool newMountFrame)
 {
-    m_objectBindingEditorVisible = false;
-    if(m_frameEditorTitleLabel != nullptr) {
-        m_frameEditorTitleLabel->setText(newMountFrame ? "New Mount Frame" : "Mount Frame Editor");
-        m_frameEditorTitleLabel->setVisible(true);
-    }
-    if(m_robotMountNameLabel != nullptr) {
-        m_robotMountNameLabel->setVisible(true);
-        m_robotMountNameLabel->setEnabled(true);
-    }
-    if(m_robotMountNameEdit != nullptr) {
-        m_robotMountNameEdit->setVisible(true);
-        m_robotMountNameEdit->setEnabled(true);
-    }
-    if(m_robotMountLinkCombo != nullptr) {
-        m_robotMountLinkCombo->setVisible(true);
-        m_robotMountLinkCombo->setEnabled(m_robotMountLinkCombo->count() > 1);
-    }
-    if(m_robotMountTransformEditor != nullptr) {
-        m_robotMountTransformEditor->setVisible(true);
-        m_robotMountTransformEditor->setEnabled(true);
-    }
-    if(m_frameVisibilitySectionTitle != nullptr) {
-        m_frameVisibilitySectionTitle->setVisible(true);
-    }
-    if(m_showRobotMountFrameCheck != nullptr) {
-        m_showRobotMountFrameCheck->setVisible(true);
-        m_showRobotMountFrameCheck->setEnabled(true);
-    }
-    if(m_showLinkFrameCheck != nullptr) {
-        m_showLinkFrameCheck->setVisible(false);
-    }
-    if(m_showToolMountFrameCheck != nullptr) {
-        m_showToolMountFrameCheck->setVisible(false);
-    }
-    if(m_showVisualFrameCheck != nullptr) {
-        m_showVisualFrameCheck->setVisible(false);
-    }
-    if(m_showTcpFrameCheck != nullptr) {
-        m_showTcpFrameCheck->setVisible(false);
-    }
-    if(m_showSensorPreviewCheck != nullptr) {
-        m_showSensorPreviewCheck->setVisible(false);
-    }
-    if(m_bindingSummaryFrame != nullptr) {
-        m_bindingSummaryFrame->setVisible(true);
-    }
-    if(m_objectBindingDiagram != nullptr) {
-        m_objectBindingDiagram->setVisible(true);
-    }
-    if(m_bindingNameTitleLabel != nullptr) {
-        m_bindingNameTitleLabel->setVisible(true);
-    }
-    if(m_bindingNameValueLabel != nullptr) {
-        m_bindingNameValueLabel->setVisible(true);
-    }
-    if(m_bindingObjectNameLabel != nullptr) {
-        m_bindingObjectNameLabel->setVisible(false);
-    }
-    if(m_bindingObjectCombo != nullptr) {
-        m_bindingObjectCombo->setVisible(false);
-    }
-    if(m_bindingObjectFrameLabel != nullptr) {
-        m_bindingObjectFrameLabel->setVisible(false);
-    }
-    if(m_bindingFrameCombo != nullptr) {
-        m_bindingFrameCombo->setVisible(false);
-    }
-    if(m_applyTaskButton != nullptr) {
-        m_applyTaskButton->setVisible(true);
-        m_applyTaskButton->setEnabled(true);
-        m_applyTaskButton->setText(newMountFrame ? "Create" : "Apply");
-    }
-    if(m_cancelTaskButton != nullptr) {
-        m_cancelTaskButton->setVisible(true);
-        m_cancelTaskButton->setText("Cancel");
-    }
-    if(m_exitTaskButton != nullptr) {
-        m_exitTaskButton->setVisible(false);
-    }
-    if(m_taskStatusLabel != nullptr) {
-        m_taskStatusLabel->setVisible(false);
-    }
+    applyTaskMode(TaskMode::FrameEdit, newMountFrame);
 }
 
 void ToolSetupWidget::setObjectBindingMode(bool enabled)
 {
-    m_objectBindingEditorVisible = enabled;
-    if(m_frameEditorTitleLabel != nullptr) {
-        m_frameEditorTitleLabel->setText("Bind Object To Mount");
-        m_frameEditorTitleLabel->setVisible(enabled);
+    applyTaskMode(enabled ? TaskMode::Binding : TaskMode::Selection);
+}
+
+void ToolSetupWidget::applyTaskMode(TaskMode mode, bool newMountFrame)
+{
+    m_taskMode = mode;
+    const bool selection = mode == TaskMode::Selection;
+    const bool frameEdit = mode == TaskMode::FrameEdit;
+    const bool binding = mode == TaskMode::Binding;
+
+    m_setupTabs->tabBar()->setVisible(selection);
+    if(frameEdit) {
+        m_setupTabs->setCurrentIndex(0);
+    } else if(binding) {
+        m_setupTabs->setCurrentIndex(3);
     }
-    if(m_applyTaskButton != nullptr) {
-        m_applyTaskButton->setVisible(true);
-        m_applyTaskButton->setText(enabled ? "Apply Binding" : "Apply");
-    }
-    if(m_cancelTaskButton != nullptr) {
-        m_cancelTaskButton->setVisible(true);
-        m_cancelTaskButton->setText(enabled ? "Cancel Binding" : "Cancel");
-    }
-    if(m_exitTaskButton != nullptr) {
-        m_exitTaskButton->setVisible(false);
-    }
-    if(m_taskStatusLabel != nullptr) {
-        m_taskStatusLabel->setVisible(false);
-    }
-    if(enabled) {
-        if(m_robotMountNameLabel != nullptr) {
-            m_robotMountNameLabel->setVisible(false);
-        }
-        if(m_robotMountNameEdit != nullptr) {
-            m_robotMountNameEdit->setVisible(false);
-        }
-        if(m_robotMountTransformEditor != nullptr) {
-            m_robotMountTransformEditor->setVisible(false);
-        }
-        if(m_frameVisibilitySectionTitle != nullptr) {
-            m_frameVisibilitySectionTitle->setVisible(false);
-        }
-        if(m_showRobotMountFrameCheck != nullptr) {
-            m_showRobotMountFrameCheck->setVisible(false);
-        }
-    }
-    applyFrameEditorLayout();
+    m_frameEditorTitleLabel->setVisible(!selection);
+    m_frameEditorTitleLabel->setText(binding
+        ? QStringLiteral("Bind Object To Mount")
+        : (newMountFrame ? QStringLiteral("New Mount Frame") : QStringLiteral("Mount Frame Editor")));
+    m_taskStatusLabel->setVisible(selection);
+    m_mountBrowseContainer->setVisible(selection);
+    m_frameVisibilityContainer->setVisible(selection);
+    m_bindingEditorContainer->setVisible(binding);
+
+    m_applyTaskButton->setText(binding
+        ? QStringLiteral("Apply Binding")
+        : (newMountFrame ? QStringLiteral("Create") : QStringLiteral("Apply")));
+    m_applyTaskButton->setEnabled(frameEdit);
+    m_cancelTaskButton->setText(binding ? QStringLiteral("Cancel Binding") : QStringLiteral("Cancel"));
+    m_cancelTaskButton->setEnabled(!selection);
+    m_exitTaskButton->setText(QStringLiteral("Done"));
 }
 
 void ToolSetupWidget::setMountItems(const QVector<ToolSetupComboItem>& items, const QString& selectedId, bool enabled)
@@ -1168,11 +1003,6 @@ void ToolSetupWidget::setAttachmentOffsetEditor(
             : title);
         m_attachmentOffsetEditor->setTransform(transform);
     }
-    m_attachmentOffsetDirty = false;
-    if(m_applyAttachmentOffsetButton != nullptr) {
-        m_applyAttachmentOffsetButton->setVisible(false);
-        m_applyAttachmentOffsetButton->setEnabled(false);
-    }
 }
 
 bool ToolSetupWidget::hasAttachmentOffsetEditor() const
@@ -1237,7 +1067,6 @@ void ToolSetupWidget::setAssetEditor(
     m_toolAssetEditor->setVisible(visible);
     m_toolAssetEditor->setEnabled(enabled);
     m_toolAssetEditor->setAsset(asset);
-    m_toolAssetEditor->setApplyButtonVisible(false);
 }
 
 bool ToolSetupWidget::hasAssetEditor() const
@@ -1272,11 +1101,9 @@ void ToolSetupWidget::setObjectBindingEditor(
     bool applyEnabled)
 {
     const bool controlsVisible = visible && bindingView.editable;
-    m_objectBindingEditorVisible = visible;
+    Q_UNUSED(mountItems);
+    Q_UNUSED(details);
     m_bindingMountId = selectedMountId;
-    if(m_objectBindingSectionTitle != nullptr) {
-        m_objectBindingSectionTitle->setVisible(false);
-    }
     if(m_bindingSummaryFrame != nullptr) {
         m_bindingSummaryFrame->setVisible(visible);
     }
@@ -1293,34 +1120,13 @@ void ToolSetupWidget::setObjectBindingEditor(
         m_objectBindingDiagram->setVisible(visible && bindingView.visible);
         m_objectBindingDiagram->setBindingView(bindingView);
     }
-    setComboItems(m_bindingMountCombo, mountItems, selectedMountId, controlsVisible);
     setComboItems(m_bindingObjectCombo, objectItems, selectedObjectId, controlsVisible);
     setComboItems(m_bindingFrameCombo, frameItems, selectedFrameId, controlsVisible);
-    if(m_bindingMountCombo != nullptr) {
-        m_bindingMountCombo->setVisible(false);
-    }
-    if(m_bindingObjectNameLabel != nullptr) {
-        m_bindingObjectNameLabel->setVisible(controlsVisible);
-    }
-    if(m_bindingObjectCombo != nullptr) {
-        m_bindingObjectCombo->setVisible(controlsVisible);
-    }
-    if(m_bindingObjectFrameLabel != nullptr) {
-        m_bindingObjectFrameLabel->setVisible(controlsVisible);
-    }
-    if(m_bindingFrameCombo != nullptr) {
-        m_bindingFrameCombo->setVisible(controlsVisible);
-    }
-    if(m_objectBindingDetailsLabel != nullptr) {
-        m_objectBindingDetailsLabel->setVisible(false);
-        m_objectBindingDetailsLabel->setText(details);
-    }
+    m_bindingEditorContainer->setVisible(controlsVisible);
     if(m_applyTaskButton != nullptr && visible) {
-        m_applyTaskButton->setVisible(controlsVisible);
         m_applyTaskButton->setEnabled(applyEnabled);
     }
     if(m_cancelTaskButton != nullptr && visible) {
-        m_cancelTaskButton->setVisible(controlsVisible);
         m_cancelTaskButton->setEnabled(true);
     }
 }
@@ -1352,11 +1158,17 @@ void ToolSetupWidget::setTaskDirty(bool dirty, const QString& message)
     }
     if(m_applyTaskButton != nullptr) {
         const bool mountFrameEditorActive =
-            m_mountTransformEditorVisible && !m_objectBindingEditorVisible;
+            m_mountTransformEditorVisible && m_taskMode != TaskMode::Binding;
         m_applyTaskButton->setEnabled(dirty || mountFrameEditorActive);
     }
     if(m_cancelTaskButton != nullptr) {
         m_cancelTaskButton->setEnabled(true);
+    }
+    if(m_saveProjectButton != nullptr) {
+        m_saveProjectButton->setEnabled(!dirty);
+        m_saveProjectButton->setToolTip(dirty
+            ? QStringLiteral("Apply or cancel the current edit before saving the project")
+            : QStringLiteral("Save all committed project changes"));
     }
 }
 
@@ -1367,57 +1179,6 @@ void ToolSetupWidget::markTaskDirty()
     }
     setTaskDirty(true);
     emit taskDirtyChanged(true);
-}
-
-void ToolSetupWidget::applyFrameEditorLayout()
-{
-    const QList<QWidget*> hiddenWidgets = {
-        m_robotMountCombo,
-        m_robotMountDetailsLabel,
-        m_robotMountLinkCombo,
-        m_addRobotMountButton,
-        m_deleteRobotMountButton,
-        m_attachmentSectionTitle,
-        m_toolAttachmentCombo,
-        m_toolDetailsLabel,
-        m_configureToolAttachmentButton,
-        m_attachmentNameEdit,
-        m_attachmentAssetCombo,
-        m_attachmentEnabledCheck,
-        m_attachmentOffsetEditor,
-        m_applyAttachmentOffsetButton,
-        m_assetSectionTitle,
-        m_toolAssetDetailsLabel,
-        m_toolAssetCombo,
-        m_toolAssetEditor,
-        m_importToolAssetButton,
-        m_attachToolAssetButton,
-        m_editToolAssetButton,
-        m_frameVisibilitySectionTitle,
-        m_showLinkFrameCheck,
-        m_showRobotMountFrameCheck,
-        m_showToolMountFrameCheck,
-        m_showVisualFrameCheck,
-        m_showTcpFrameCheck,
-        m_showSensorPreviewCheck,
-        m_objectBindingSectionTitle,
-        m_bindingSummaryFrame,
-        m_bindingNameTitleLabel,
-        m_bindingNameValueLabel,
-        m_objectBindingDiagram,
-        m_bindingMountCombo,
-        m_bindingObjectNameLabel,
-        m_bindingObjectCombo,
-        m_bindingObjectFrameLabel,
-        m_bindingFrameCombo,
-        m_objectBindingDetailsLabel
-    };
-
-    for(QWidget* widget : hiddenWidgets) {
-        if(widget != nullptr) {
-            widget->setVisible(false);
-        }
-    }
 }
 
 bool ToolSetupWidget::showLinkFrame() const

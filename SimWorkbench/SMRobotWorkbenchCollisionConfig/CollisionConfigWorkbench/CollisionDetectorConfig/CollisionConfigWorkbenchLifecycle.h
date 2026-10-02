@@ -1,11 +1,33 @@
 #pragma once
 
 #include "RobotQtViewerWorkbenchLifecycle.h"
+#include "RobotQtViewerWorkbenchContribution.h"
 #include "RobotQtViewerWorkbenchPackageRegistry.h"
+#include "CollisionConfigWorkbenchShellPort.h"
+
+#include <functional>
+
+class QObject;
+class QWidget;
 
 namespace robot_qt_viewer
 {
     class CollisionWorkbenchModuleController;
+    class CollisionWorkbenchServices;
+    class RobotQtViewerDocumentContext;
+    class RobotQtViewerDocumentViewRegistry;
+
+    struct CollisionConfigWorkbenchComposition
+    {
+        RobotQtViewerDocumentContext* documentContext = nullptr;
+        RobotQtViewerDocumentViewRegistry* documentViewRegistry = nullptr;
+        CollisionWorkbenchServices* appServices = nullptr;
+        std::function<void(const QString&, int)> showStatus;
+        std::function<void()> reloadViewport;
+        std::function<void()> saveProjectAs;
+        std::function<void(const QString&)> setTaskPanelTitle;
+        std::function<void(CollisionConfigWorkbenchShellPort*)> bindShellPort;
+    };
 
     class CollisionConfigWorkbenchLifecycle final : public IRobotQtViewerWorkbenchLifecycle
     {
@@ -31,6 +53,13 @@ namespace robot_qt_viewer
     };
 
     bool registerCollisionConfigWorkbenchContribution(
-        RobotQtViewerWorkbenchPackageRegistry& catalog,
-        RobotQtViewerWorkbenchPackageSource source);
+        RobotQtViewerWorkbenchPackageRegistry& catalog);
+    RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
+        makeCollisionConfigWorkbenchRuntimeContributionFactory(
+            CollisionWorkbenchModuleController& controller,
+            QWidget& taskPanel,
+            QObject& languageRoot);
+    RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
+        makeOwnedCollisionConfigWorkbenchRuntimeContributionFactory(
+            CollisionConfigWorkbenchComposition composition);
 }

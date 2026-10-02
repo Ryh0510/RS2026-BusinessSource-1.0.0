@@ -17,7 +17,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelVariantCommandResult CollisionRequestDocumentFacade::useVariantInDetector(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         const QString& robotId,
         const QString& linkName,
@@ -128,7 +128,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelsCommandResult CollisionRequestDocumentFacade::generateFromVisual(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& robotId,
         const QString& linkName,
         const CollisionRuntimeProxyRequest& request,
@@ -153,7 +153,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelsCommandResult CollisionRequestDocumentFacade::generateFromExistingCollision(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& robotId,
         const QString& linkName,
         const CollisionRuntimeProxyRequest& request,
@@ -178,7 +178,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelsCommandResult CollisionRequestDocumentFacade::generateRobotFromExistingCollision(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& robotId,
         const CollisionRuntimeProxyRequest& request,
         bool replaceOriginal)
@@ -201,7 +201,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelsCommandResult CollisionRequestDocumentFacade::generateMissingFromVisual(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& robotId,
         const CollisionRuntimeProxyRequest& request,
         bool replaceOriginal)
@@ -224,7 +224,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelsCommandResult CollisionRequestDocumentFacade::generateCoacdForLink(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& robotId,
         const QString& linkName)
     {
@@ -245,7 +245,7 @@ namespace robot_qt_viewer
     }
 
     CollisionLinkModelsCommandResult CollisionRequestDocumentFacade::generateCoacdForObject(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& objectId)
     {
         CollisionLinkModelsCommandResult result;

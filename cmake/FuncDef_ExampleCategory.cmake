@@ -75,6 +75,21 @@ function( rs_add_example_category_roots )
     endif()
 endfunction()
 
+function( rs_add_installed_sdk_examples )
+    set( _enabled OFF )
+    if( DEFINED BuildSdkExamples AND BuildSdkExamples )
+        set( _enabled ON )
+    endif()
+    if( DEFINED BuildSdkExamples_${PACKAGE_NAME}
+        AND BuildSdkExamples_${PACKAGE_NAME} )
+        set( _enabled ON )
+    endif()
+
+    if( _enabled AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt" )
+        add_subdirectory( examples )
+    endif()
+endfunction()
+
 function( rs_add_subdirectory_if_targets_available DIR_NAME )
     set( _missing_targets )
     foreach( _required_target ${ARGN} )

@@ -59,41 +59,41 @@ namespace robot_qt_viewer
             const std::vector<CollisionRuntimeDetectorInfo>& runtimeDetectors) const;
 
         CollisionDetectorCommandResult setDetectorEnabled(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId,
             bool enabled);
 
         CollisionDetectorCommandResult applyDetectorProperties(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId,
             const CollisionDetectorPropertiesView& properties);
 
         CollisionDetectorCommandResult applyDetectorQueryContract(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId,
             const CollisionDetectorQueryContractView& contract);
 
         CollisionDetectorCommandResult showOnlyDetectors(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QVector<QString>& detectorIds);
 
         CollisionDetectorCommandResult removeDetector(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId);
 
         CollisionDetectorCommandResult bindDetectorDraftSets(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId,
             const QVector<CollisionDetectorDraftMemberView>& setA,
             const QVector<CollisionDetectorDraftMemberView>& setB);
 
         CollisionDetectorCommandResult removeDetectorPairGenerators(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId,
             const QVector<int>& generatorIndexes);
 
         CollisionDetectorCommandResult clearDetectorPairScope(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId);
 
         CollisionDetectorQueryContractView taskPanelDefaultDetectorContract() const;

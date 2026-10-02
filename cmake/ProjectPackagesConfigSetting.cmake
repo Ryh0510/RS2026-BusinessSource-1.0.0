@@ -295,6 +295,7 @@ message( STATUS "***************************************************************
 #   5. Build Example
 ############################################################
 option( BuildExample "Build examples!" ON )
+option( BuildSdkExamples "Build installed SDK QuickStart examples in the main project" ON )
 option( BuildDiagnostics "Build diagnostic programs" OFF )
 option( BuildFeatureProbes "Build feature probe programs" OFF )
 option( BuildRegression "Build regression executables" OFF )
@@ -303,6 +304,7 @@ option( BuildTutorials "Build tutorial programs" OFF )
 
 foreach( PACKAGE_NAME ${AllBuildPackages} )
     option( BuildExample_${PACKAGE_NAME} "Build examples of package ${PACKAGE_NAME}" OFF )
+    option( BuildSdkExamples_${PACKAGE_NAME} "Build installed SDK QuickStart examples of package ${PACKAGE_NAME}" OFF )
     option( BuildDiagnostics_${PACKAGE_NAME} "Build diagnostic programs of package ${PACKAGE_NAME}" OFF )
     option( BuildFeatureProbes_${PACKAGE_NAME} "Build feature probe programs of package ${PACKAGE_NAME}" OFF )
     option( BuildRegression_${PACKAGE_NAME} "Build regression executables of package ${PACKAGE_NAME}" OFF )

@@ -7,14 +7,18 @@
 
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QSignalBlocker>
+#include <QSpinBox>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -183,6 +187,21 @@ ToolAssetEditorWidget::ToolAssetEditorWidget(QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
 
+    m_tabs = new QTabWidget(this);
+    m_tabs->setObjectName(QStringLiteral("attachmentAssetEditorTabs"));
+    auto* definitionPage = new QWidget(m_tabs);
+    auto* definitionLayout = new QVBoxLayout(definitionPage);
+    definitionLayout->setContentsMargins(8, 8, 8, 8);
+    definitionLayout->setSpacing(10);
+    auto* appearancePage = new QWidget(m_tabs);
+    auto* appearanceLayout = new QVBoxLayout(appearancePage);
+    appearanceLayout->setContentsMargins(8, 8, 8, 8);
+    appearanceLayout->setSpacing(10);
+    auto* diagnosticsPage = new QWidget(m_tabs);
+    auto* diagnosticsLayout = new QVBoxLayout(diagnosticsPage);
+    diagnosticsLayout->setContentsMargins(8, 8, 8, 8);
+    diagnosticsLayout->setSpacing(10);
+
     m_idEdit = new QLineEdit(this);
     m_idEdit->setReadOnly(true);
     m_idEdit->setToolTip("Stable internal id. It is used by project references and is not renamed here.");
@@ -196,31 +215,72 @@ ToolAssetEditorWidget::ToolAssetEditorWidget(QWidget* parent)
     m_typeEdit->setMinimumHeight(28);
     m_idEdit->setMinimumHeight(28);
 
-    auto* infoLayout = new QFormLayout();
-    infoLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-    infoLayout->setVerticalSpacing(8);
-    infoLayout->addRow("Internal id", m_idEdit);
-    infoLayout->addRow("Display name", m_nameEdit);
-    infoLayout->addRow("Type", m_typeEdit);
-    infoLayout->addRow("Visual path", m_visualPathEdit);
-    infoLayout->addRow("Visual scale", m_visualScaleSpin);
-    layout->addLayout(infoLayout);
+    auto* definitionForm = new QFormLayout();
+    definitionForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    definitionForm->setVerticalSpacing(8);
+    definitionForm->addRow("Display name", m_nameEdit);
+    definitionLayout->addLayout(definitionForm);
 
-    auto* sharedAssetHint = new QLabel(
+    auto* appearanceForm = new QFormLayout();
+    appearanceForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    appearanceForm->setVerticalSpacing(8);
+    appearanceForm->addRow("Visual path", m_visualPathEdit);
+    appearanceForm->addRow("Visual scale", m_visualScaleSpin);
+    appearanceLayout->addLayout(appearanceForm);
+
+    auto* diagnosticsForm = new QFormLayout();
+    diagnosticsForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    diagnosticsForm->setVerticalSpacing(8);
+    diagnosticsForm->addRow("Internal id", m_idEdit);
+    diagnosticsForm->addRow("Type", m_typeEdit);
+    diagnosticsLayout->addLayout(diagnosticsForm);
+
+    m_sharedAssetHint = new QLabel(
         "Library asset settings are shared by every tool attachment that references this asset. Use attachment offset for per-robot instance changes.",
-        this);
-    sharedAssetHint->setWordWrap(true);
-    layout->addWidget(sharedAssetHint);
+        diagnosticsPage);
+    m_sharedAssetHint->setWordWrap(true);
+    diagnosticsLayout->addWidget(m_sharedAssetHint);
 
-    m_frameDiagram = new ToolFrameDiagramWidget(this);
-    layout->addWidget(m_frameDiagram);
+    m_frameDiagram = new ToolFrameDiagramWidget(diagnosticsPage);
+    diagnosticsLayout->addWidget(m_frameDiagram);
 
-    m_visualTransformEditor = new ToolTransformEditorWidget("Model/world -> Tool flange {F}", this);
-    m_tcpTransformEditor = new ToolTransformEditorWidget("Model/world -> TCP {TCP}", this);
+    m_visualTransformEditor = new ToolTransformEditorWidget("Model/world -> Tool flange {F}", appearancePage);
+    m_tcpTransformEditor = new ToolTransformEditorWidget("Model/world -> TCP {TCP}", definitionPage);
     m_visualTransformEditor->setMatrixVisible(false);
     m_tcpTransformEditor->setMatrixVisible(false);
-    layout->addWidget(m_visualTransformEditor);
-    layout->addWidget(m_tcpTransformEditor);
+    appearanceLayout->addWidget(m_visualTransformEditor);
+    definitionLayout->addWidget(m_tcpTransformEditor);
+
+    m_cameraGroup = new QGroupBox("Camera Intrinsics", definitionPage);
+    auto* cameraLayout = new QFormLayout(m_cameraGroup);
+    m_cameraWidthSpin = new QSpinBox(m_cameraGroup);
+    m_cameraWidthSpin->setRange(1, 16384);
+    m_cameraHeightSpin = new QSpinBox(m_cameraGroup);
+    m_cameraHeightSpin->setRange(1, 16384);
+    m_cameraFovYSpin = new QDoubleSpinBox(m_cameraGroup);
+    m_cameraFovYSpin->setRange(1.0, 179.0);
+    m_cameraFovYSpin->setDecimals(3);
+    m_cameraNearSpin = new QDoubleSpinBox(m_cameraGroup);
+    m_cameraNearSpin->setRange(0.0001, 10000.0);
+    m_cameraNearSpin->setDecimals(4);
+    m_cameraFarSpin = new QDoubleSpinBox(m_cameraGroup);
+    m_cameraFarSpin->setRange(0.001, 1000000.0);
+    m_cameraFarSpin->setDecimals(3);
+    cameraLayout->addRow("Width", m_cameraWidthSpin);
+    cameraLayout->addRow("Height", m_cameraHeightSpin);
+    cameraLayout->addRow("Vertical FOV", m_cameraFovYSpin);
+    cameraLayout->addRow("Near plane", m_cameraNearSpin);
+    cameraLayout->addRow("Far plane", m_cameraFarSpin);
+    m_cameraGroup->hide();
+    definitionLayout->insertWidget(1, m_cameraGroup);
+
+    definitionLayout->addStretch(1);
+    appearanceLayout->addStretch(1);
+    diagnosticsLayout->addStretch(1);
+    m_tabs->addTab(definitionPage, QStringLiteral("Definition"));
+    m_tabs->addTab(appearancePage, QStringLiteral("Appearance"));
+    m_tabs->addTab(diagnosticsPage, QStringLiteral("Diagnostics"));
+    layout->addWidget(m_tabs);
 
     m_applyButton = new QPushButton("Apply Tool Asset", this);
     robot_qt_viewer::configureActionButton(
@@ -249,6 +309,17 @@ ToolAssetEditorWidget::ToolAssetEditorWidget(QWidget* parent)
         &ToolTransformEditorWidget::transformChanged,
         this,
         &ToolAssetEditorWidget::emitTcpTransformChanged);
+    const auto cameraChanged = [this]() { emitAssetChanged(); };
+    connect(m_cameraWidthSpin, static_cast<void(QSpinBox::*)(int)>(&QSpinBox::valueChanged), this,
+        [cameraChanged](int) { cameraChanged(); });
+    connect(m_cameraHeightSpin, static_cast<void(QSpinBox::*)(int)>(&QSpinBox::valueChanged), this,
+        [cameraChanged](int) { cameraChanged(); });
+    connect(m_cameraFovYSpin, static_cast<void(QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), this,
+        [cameraChanged](double) { cameraChanged(); });
+    connect(m_cameraNearSpin, static_cast<void(QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), this,
+        [cameraChanged](double) { cameraChanged(); });
+    connect(m_cameraFarSpin, static_cast<void(QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), this,
+        [cameraChanged](double) { cameraChanged(); });
     connect(m_applyButton, &QPushButton::clicked, this, [this]() {
         storeUiToAsset();
         if(m_applyButton != nullptr) {
@@ -288,7 +359,12 @@ void ToolAssetEditorWidget::loadAssetToUi()
         m_visualPathEdit,
         m_visualScaleSpin,
         m_visualTransformEditor,
-        m_tcpTransformEditor
+        m_tcpTransformEditor,
+        m_cameraWidthSpin,
+        m_cameraHeightSpin,
+        m_cameraFovYSpin,
+        m_cameraNearSpin,
+        m_cameraFarSpin
     };
     std::vector<std::unique_ptr<QSignalBlocker>> signalBlockers;
     signalBlockers.reserve(static_cast<std::size_t>(blockers.size()));
@@ -302,9 +378,38 @@ void ToolAssetEditorWidget::loadAssetToUi()
     m_nameEdit->setText(QString::fromStdString(m_asset.name));
     m_typeEdit->setText(QString::fromStdString(m_asset.assetType));
     m_visualPathEdit->setText(QString::fromStdString(m_asset.visualPath));
+    const bool cameraAsset = m_asset.assetKind == "sensor" && m_asset.assetType == "camera";
     m_visualScaleSpin->setValue(m_asset.visualScale);
-    m_visualTransformEditor->setTransform(makeModelToFlangeTransform(m_asset));
-    m_tcpTransformEditor->setTransform(makeModelToTcpTransform(m_asset));
+    m_cameraGroup->setVisible(cameraAsset);
+    m_frameDiagram->setVisible(!cameraAsset);
+    m_sharedAssetHint->setText(cameraAsset
+        ? QStringLiteral("Camera definition settings are shared by every installed instance. Use the mounted instance offset to adjust one installation.")
+        : QStringLiteral("Tool definition settings are shared by every installed instance. Use the mounted instance offset to adjust one installation."));
+    m_nameEdit->setToolTip(cameraAsset
+        ? QStringLiteral("Camera definition name shown in Sensors and installed-device lists.")
+        : QStringLiteral("Tool definition name shown in the Tool panel and Scene Explorer."));
+    if(m_applyButton != nullptr) {
+        m_applyButton->setText(cameraAsset
+            ? QStringLiteral("Apply Camera Definition")
+            : QStringLiteral("Apply Tool Definition"));
+    }
+    m_visualTransformEditor->setTitle(cameraAsset
+        ? QStringLiteral("Camera mount -> Visual")
+        : QStringLiteral("Model/world -> Tool flange {F}"));
+    m_tcpTransformEditor->setTitle(cameraAsset
+        ? QStringLiteral("Camera mount -> Optical frame")
+        : QStringLiteral("Model/world -> TCP {TCP}"));
+    m_cameraWidthSpin->setValue(m_asset.sensorIntrinsics.width);
+    m_cameraHeightSpin->setValue(m_asset.sensorIntrinsics.height);
+    m_cameraFovYSpin->setValue(m_asset.sensorIntrinsics.fovY);
+    m_cameraNearSpin->setValue(m_asset.sensorIntrinsics.nearPlane);
+    m_cameraFarSpin->setValue(m_asset.sensorIntrinsics.farPlane);
+    m_visualTransformEditor->setTransform(cameraAsset
+        ? m_asset.assetMountToVisual
+        : makeModelToFlangeTransform(m_asset));
+    m_tcpTransformEditor->setTransform(cameraAsset
+        ? assetTcpTransform(m_asset)
+        : makeModelToTcpTransform(m_asset));
     if(m_frameDiagram != nullptr) {
         const QString assetName = QString::fromStdString(m_asset.name.empty() ? m_asset.id : m_asset.name);
         m_frameDiagram->setAssetName(assetName);
@@ -325,28 +430,44 @@ simulation_project::AttachmentAssetDesc ToolAssetEditorWidget::collectUiAsset() 
     value.visualPath = m_visualPathEdit->text().trimmed().toStdString();
     value.visualScale = m_visualScaleSpin->value();
 
-    const Eigen::Isometry3d modelToFlange = makeTransform(m_visualTransformEditor->transform());
-    const Eigen::Isometry3d modelToTcp = makeTransform(m_tcpTransformEditor->transform());
-    const Eigen::Isometry3d flangeToModel = modelToFlange.inverse();
-    const Eigen::Isometry3d flangeToTcp = flangeToModel * modelToTcp;
-    value.assetMountToVisual = makeTransformDesc(flangeToModel);
+    const bool cameraAsset = value.assetKind == "sensor" && value.assetType == "camera";
+    simulation_project::TransformDesc functionalFrameTransform;
+    if(cameraAsset) {
+        value.assetMountToVisual = m_visualTransformEditor->transform();
+        functionalFrameTransform = m_tcpTransformEditor->transform();
+    } else {
+        const Eigen::Isometry3d modelToFlange = makeTransform(m_visualTransformEditor->transform());
+        const Eigen::Isometry3d modelToTcp = makeTransform(m_tcpTransformEditor->transform());
+        const Eigen::Isometry3d flangeToModel = modelToFlange.inverse();
+        const Eigen::Isometry3d flangeToTcp = flangeToModel * modelToTcp;
+        value.assetMountToVisual = makeTransformDesc(flangeToModel);
+        functionalFrameTransform = makeTransformDesc(flangeToTcp);
+    }
 
     simulation_project::AttachmentFunctionalFrameDesc tcpFrame;
-    tcpFrame.id = value.id + ".tcp";
-    tcpFrame.name = "TCP";
-    tcpFrame.frameType = "tcp";
-    tcpFrame.assetMountToFrame = makeTransformDesc(flangeToTcp);
+    tcpFrame.id = value.id + (cameraAsset ? ".optical" : ".tcp");
+    tcpFrame.name = cameraAsset ? "Optical" : "TCP";
+    tcpFrame.frameType = cameraAsset ? "optical" : "tcp";
+    tcpFrame.assetMountToFrame = functionalFrameTransform;
     tcpFrame.primary = true;
-    bool replaced = false;
-    for(simulation_project::AttachmentFunctionalFrameDesc& frame : value.functionalFrames) {
-        if(frame.primary || frame.frameType == "tcp") {
-            frame = tcpFrame;
-            replaced = true;
-            break;
-        }
-    }
-    if(!replaced) {
-        value.functionalFrames.push_back(tcpFrame);
+    value.functionalFrames.erase(
+        std::remove_if(
+            value.functionalFrames.begin(),
+            value.functionalFrames.end(),
+            [&](const simulation_project::AttachmentFunctionalFrameDesc& frame) {
+                return frame.primary || frame.frameType == "tcp" ||
+                    frame.frameType == "optical";
+            }),
+        value.functionalFrames.end());
+    value.functionalFrames.push_back(tcpFrame);
+    if(cameraAsset) {
+        value.hasSensorIntrinsics = true;
+        value.sensorIntrinsics.model = "pinhole";
+        value.sensorIntrinsics.width = m_cameraWidthSpin->value();
+        value.sensorIntrinsics.height = m_cameraHeightSpin->value();
+        value.sensorIntrinsics.fovY = m_cameraFovYSpin->value();
+        value.sensorIntrinsics.nearPlane = m_cameraNearSpin->value();
+        value.sensorIntrinsics.farPlane = m_cameraFarSpin->value();
     }
     return value;
 }

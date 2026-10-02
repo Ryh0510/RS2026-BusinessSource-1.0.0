@@ -619,7 +619,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::setDetectorEnabled(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         bool enabled)
     {
@@ -640,7 +640,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::applyDetectorProperties(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         const CollisionDetectorPropertiesView& properties)
     {
@@ -661,7 +661,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::applyDetectorQueryContract(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         const CollisionDetectorQueryContractView& contract)
     {
@@ -682,7 +682,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::showOnlyDetectors(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QVector<QString>& detectorIds)
     {
         CollisionDetectorCommandResult result;
@@ -701,7 +701,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::removeDetector(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId)
     {
         CollisionDetectorCommandResult result;
@@ -720,7 +720,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::bindDetectorDraftSets(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         const QVector<CollisionDetectorDraftMemberView>& setA,
         const QVector<CollisionDetectorDraftMemberView>& setB)
@@ -743,7 +743,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::removeDetectorPairGenerators(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         const QVector<int>& generatorIndexes)
     {
@@ -764,7 +764,7 @@ namespace robot_qt_viewer
     }
 
     CollisionDetectorCommandResult CollisionDetectorWorkbenchDocumentFacade::clearDetectorPairScope(
-        RobotQtViewerViewportServices* viewportServices,
+        IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId)
     {
         CollisionDetectorCommandResult result;

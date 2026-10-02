@@ -11,7 +11,7 @@ namespace simulation_project
 
 namespace robot_qt_viewer
 {
-    class RobotQtViewerViewportServices;
+    class IRobotQtViewerCollisionViewportPort;
 }
 
 struct CollisionLinkModelVariantCommandResult
@@ -26,14 +26,14 @@ class CollisionLinkModelVariantCommandController
 {
 public:
     static CollisionLinkModelVariantCommandResult showVariantOnly(
-        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& robotId,
         const QString& linkName,
         const QString& variantId);
 
     static CollisionLinkModelVariantCommandResult useVariantInDetector(
         simulation_project::ProjectDocumentService& service,
-        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
         const QString& detectorId,
         const QString& robotId,
         const QString& linkName,

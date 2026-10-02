@@ -21,13 +21,18 @@ class QMouseEvent;
 class QEvent;
 class QKeyEvent;
 class QTimer;
+class QMenu;
+class QToolButton;
 class QWheelEvent;
+struct RobotViewportCameraStreamState;
 namespace simulation_project
 {
     struct ProjectDocument;
 }
 
-class RobotViewport : public QOpenGLWidget
+class RobotViewport :
+    public QOpenGLWidget,
+    public smrobot::visualization::ICustomMeshScene
 {
     Q_OBJECT
 
@@ -42,6 +47,8 @@ public:
         const std::filesystem::path& basePath);
     std::filesystem::path projectBasePath() const;
     void setDefaultBackgroundColor(const simulation_project::ColorDesc& color);
+    void setEnvironmentPreset(ProjectSceneEnvironmentPreset preset);
+    ProjectSceneEnvironmentPreset environmentPreset() const;
     bool refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
@@ -53,6 +60,10 @@ public:
     bool setPreviewRobotMountTransform(
         const QString& robotMountId,
         const simulation_project::TransformDesc& transform);
+    bool setPreviewMountedAttachmentTransform(
+        const QString& attachmentId,
+        const simulation_project::TransformDesc& transform);
+    bool setPreviewAttachmentAsset(const simulation_project::AttachmentAssetDesc& asset);
     bool setPreviewRobotMountLink(
         const QString& robotMountId,
         const QString& linkName);
@@ -145,6 +156,7 @@ public:
     bool collisionQueriesEnabled() const;
     bool setCollisionQueriesEnabled(bool enabled);
     bool setActiveCollisionDetector(const QString& id);
+    bool refreshCollisionDetectorNearest(const QString& id);
     bool setCollisionDetectorEnabled(const QString& id, bool enabled);
     bool setCollisionDetectorVisible(const QString& id, bool visible);
     bool updateCollisionDetectorRuntimeOptions(const simulation_project::CollisionDetectorDesc& desc);
@@ -226,7 +238,34 @@ public:
         const QString& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true);
     void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
+    smrobot::visualization::CustomMeshResult upsertCustomMesh(
+        const smrobot::visualization::CustomMeshDesc& desc,
+        smrobot::visualization::CustomMeshHandle& handle) override;
+    smrobot::visualization::CustomMeshResult updateCustomMeshGeometry(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::MeshData& mesh) override;
+    smrobot::visualization::CustomMeshResult updateCustomMeshColors(
+        smrobot::visualization::CustomMeshHandle handle,
+        const std::vector<smrobot::visualization::Color4f>& colors) override;
+    smrobot::visualization::CustomMeshResult setCustomMeshTransform(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::TransformMatrix& transform) override;
+    smrobot::visualization::CustomMeshResult setCustomMeshAppearance(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::MeshAppearance& appearance) override;
+    smrobot::visualization::CustomMeshResult setCustomMeshVisible(
+        smrobot::visualization::CustomMeshHandle handle,
+        bool visible) override;
+    smrobot::visualization::CustomMeshResult removeCustomMesh(
+        smrobot::visualization::CustomMeshHandle handle) override;
+    smrobot::visualization::CustomMeshResult clearCustomMeshes(
+        const std::string& ownerId) override;
     void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId = QString());
+    QStringList cameraIds() const;
+    bool setCameraStreamRunning(const QString& cameraId, bool running);
+    bool setCameraPreviewVisible(const QString& cameraId, bool visible);
+    void setAllCameraStreamsRunning(bool running);
+    void setAllCameraPreviewsVisible(bool visible);
 
 signals:
     void robotLinksAvailable(
@@ -272,6 +311,14 @@ private:
     void releaseScene() noexcept;
     bool initializeSceneWithCurrentContext(bool releaseContext);
     void publishRobotLinks();
+    void syncCameraStreams();
+    void clearCameraStreams();
+    void rebuildCameraStreamsMenu();
+    double renderDueCameraStreams();
+    RobotViewportCameraStreamState* cameraStream(const QString& cameraId) const;
+    void layoutNewCameraPreview(RobotViewportCameraStreamState& stream, int index);
+    void tileCameraPreviews();
+    void updateCameraOverlayGeometry();
 
     int m_jointPreviewDegrees = 0;
     QString m_robotName;
@@ -279,9 +326,14 @@ private:
     std::size_t m_jointCount = 0;
     std::unique_ptr<ProjectScene> m_scene;
     simulation_project::ColorDesc m_defaultBackgroundColor;
+    ProjectSceneEnvironmentPreset m_environmentPreset = ProjectSceneEnvironmentPreset::Factory;
     simulation_project::ProjectDocument m_pendingProjectDocument;
     std::filesystem::path m_pendingProjectBasePath;
     QTimer* m_updateTimer = nullptr;
+    QToolButton* m_cameraStreamsButton = nullptr;
+    QMenu* m_cameraStreamsMenu = nullptr;
+    std::vector<std::unique_ptr<RobotViewportCameraStreamState>> m_cameraStreams;
+    std::size_t m_cameraRoundRobinIndex = 0;
     QPoint m_lastMousePos;
     QPoint m_mousePressPos;
     QString m_lastError;

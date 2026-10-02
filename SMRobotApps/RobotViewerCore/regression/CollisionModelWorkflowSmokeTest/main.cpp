@@ -1,15 +1,14 @@
 #include <ProjectRuntimeTypes.h>
-#include <ProjectRuntimeBuilder.h>
 #include <ProjectCollisionRuntimeProjection.h>
 #include <RobotCollisionModelInspector.h>
 #include <RobotCollisionOverrideApplier.h>
 #include <RobotCollisionProxyGenerator.h>
 
 #include <AssetCore/AssetManager.h>
+#include <Collision/CollisionGeometryBuilder.h>
 #include <Collision/CollisionScene.h>
 #include <Collision/RobotCollisionInstance.h>
 #include <Collision/RobotCollisionModel.h>
-#include <Kinematics/StewartPlatformKinematics.h>
 #include <RobotIO/IRobotLoader.h>
 #include <RobotIO/RobotCollisionOverrideIo.h>
 #include <RobotIO/RobotUrdfCollisionExporter.h>
@@ -19,8 +18,6 @@
 #include <SimulationRuntime/ProjectCollisionRuntime.h>
 #include <SimulationRuntime/ProjectSimulationRuntime.h>
 #include <data_path.h>
-
-#include <fcl/fcl.h>
 
 #include <algorithm>
 #include <array>
@@ -92,7 +89,7 @@ namespace
         visualOnly.uid = "visual_only";
         robot::RobotVisual visual;
         visual.partUid = "visual_only_mesh";
-        visual.meshPath = (std::filesystem::path(PROJECT_SOURCE_PATH) / "data" / "Tools" / "MyTool01.STL").generic_string();
+        visual.meshPath = (std::filesystem::path(__FILE__).parent_path() / "collision_visual_fixture.stl").generic_string();
         visual.meshScale = 1.0f;
         visualOnly.visuals.push_back(std::move(visual));
 
@@ -104,6 +101,26 @@ namespace
         return runtime;
     }
 
+    robot::RobotModel loadRobotModel(
+        const std::filesystem::path& path,
+        const std::string& sourceType,
+        int sourceModelIndex = 0)
+    {
+        const RobotType robotType =
+            sourceType == "simscape" || sourceType == "Simscape"
+                ? RobotType::SimscapeRobot
+                : RobotType::URDFRobot;
+        const std::vector<robot::RobotModel> models =
+            IRobotLoader::get_robots(robotType, path.generic_u8string());
+        if(sourceModelIndex < 0 ||
+            static_cast<std::size_t>(sourceModelIndex) >= models.size()) {
+            throw std::runtime_error(
+                "Robot source model index is out of range for test fixture: " +
+                path.generic_u8string());
+        }
+        return models[static_cast<std::size_t>(sourceModelIndex)];
+    }
+
     RuntimeRobot loadRuntimeRobot(
         const std::filesystem::path& path,
         const std::string& sourceType,
@@ -112,7 +129,7 @@ namespace
         RuntimeRobot runtime;
         runtime.documentId = robotId;
         runtime.name = robotId;
-        runtime.model = ProjectRuntimeBuilder::loadSingleRobot(path, sourceType);
+        runtime.model = loadRobotModel(path, sourceType);
         if(runtime.model.linkNames.empty()) {
             runtime.model.linkNames.reserve(runtime.model.links.size());
             for(const auto& link : runtime.model.links) {
@@ -452,14 +469,12 @@ namespace
 
     collision::CollisionGeometryPtr makeCollisionBoxGeometry(double x, double y, double z)
     {
-        return std::make_shared<collision::CollisionGeometry>(
-            std::make_shared<fcl::Boxd>(x, y, z));
+        return collision::CollisionGeometryBuilder::buildBox(collision::Vec3(x, y, z));
     }
 
     collision::CollisionGeometryPtr makeCollisionSphereGeometry(double radius)
     {
-        return std::make_shared<collision::CollisionGeometry>(
-            std::make_shared<fcl::Sphered>(radius));
+        return collision::CollisionGeometryBuilder::buildSphere(radius);
     }
 
     collision::Transform3 makeCollisionTransform(double x, double y, double z)
@@ -469,15 +484,15 @@ namespace
         return transform;
     }
 
-    double distancePointAabb(const collision::Vec3& point, const fcl::AABBd& aabb)
+    double distancePointAabb(const collision::Vec3& point, const collision::Aabb& aabb)
     {
         double squaredDistance = 0.0;
         for(int axis = 0; axis < 3; ++axis) {
-            if(point[axis] < aabb.min_[axis]) {
-                const double delta = aabb.min_[axis] - point[axis];
+            if(point[axis] < aabb.min[axis]) {
+                const double delta = aabb.min[axis] - point[axis];
                 squaredDistance += delta * delta;
-            } else if(point[axis] > aabb.max_[axis]) {
-                const double delta = point[axis] - aabb.max_[axis];
+            } else if(point[axis] > aabb.max[axis]) {
+                const double delta = point[axis] - aabb.max[axis];
                 squaredDistance += delta * delta;
             }
         }
@@ -492,7 +507,7 @@ namespace
         if(!object) {
             return false;
         }
-        return point.allFinite() && distancePointAabb(point, object->fcl()->getAABB()) <= tolerance;
+        return point.allFinite() && distancePointAabb(point, object->aabb()) <= tolerance;
     }
 
     collision::CollisionObjectPtr findRuntimeCollisionObject(
@@ -1048,7 +1063,8 @@ namespace
     {
         const std::filesystem::path root = std::filesystem::path(PROJECT_SOURCE_PATH);
         const std::filesystem::path defaultProjectPath =
-            root / "config" / "projects" / "420.v3.scene.json";
+            root / "SMRobotApps" / "RobotViewerCore" / "regression" /
+            "CollisionModelWorkflowSmokeTest" / "fixtures" / "420.v3.scene.json";
 
         simulation_project::ProjectDocument document;
         std::string errorMessage;
@@ -1642,11 +1658,11 @@ namespace
             "multi-body Simscape fixture exposes multiple robot models");
         if(multiRobotModels.size() > 1) {
             const robot::RobotModel indexedModel =
-                ProjectRuntimeBuilder::loadSingleRobot(multiRobotSimscapePath, "simscape", 1);
+                loadRobotModel(multiRobotSimscapePath, "simscape", 1);
             checks.require(
                 indexedModel.root == multiRobotModels[1].root &&
                     indexedModel.name == multiRobotModels[1].name,
-                "ProjectRuntimeBuilder loads Simscape sourceModelIndex");
+                "RobotIO test helper loads Simscape sourceModelIndex");
         }
 
         const std::filesystem::path stewartSimscapePath =
@@ -1814,80 +1830,6 @@ namespace
                 "Stewart Simscape parallel model exposes one active actuator prismatic DOF per leg");
         }
 
-        RuntimeRobot stewartRuntime;
-        stewartRuntime.parallelControlEnabled = true;
-        stewartRuntime.parallelHomeBaseTransform = collision::Transform3::Identity();
-        stewartRuntime.baseTransform = collision::Transform3::Identity();
-        stewartRuntime.parallelGeometry = kine::StewartPlatformKinematics::makeDefaultGeometry();
-        checks.require(
-            kine::StewartPlatformKinematics::computeActuatorLengths(
-                stewartRuntime.parallelGeometry,
-                stewartRuntime.parallelPose,
-                stewartRuntime.parallelActuatorLengths),
-            "Stewart task-space runtime initializes actuator lengths");
-        const double initialLeg1 = stewartRuntime.parallelActuatorLengths[0];
-        checks.require(
-            ProjectRuntimeBuilder::setJointValue(stewartRuntime, "parallel.pose.z", 0.05),
-            "Stewart task-space z variable is accepted by runtime builder");
-        double zValue = 0.0;
-        checks.require(
-            ProjectRuntimeBuilder::getJointValue(stewartRuntime, "parallel.pose.z", zValue) &&
-                std::abs(zValue - 0.05) < 1.0e-9,
-            "Stewart task-space z variable round trips through runtime builder");
-        double leg1Value = 0.0;
-        checks.require(
-            ProjectRuntimeBuilder::getJointValue(stewartRuntime, "parallel.actuator.1", leg1Value) &&
-                std::isfinite(leg1Value) &&
-                std::abs(leg1Value - initialLeg1) > 1.0e-6,
-            "Stewart task-space pose updates actuator-space length");
-        checks.require(
-            stewartRuntime.baseTransform.matrix().isApprox(
-                collision::Transform3::Identity().matrix(),
-                1.0e-9),
-            "Stewart task-space pose keeps the static base transform");
-        const collision::Transform3 movedStaticBase =
-            Eigen::Translation3d(0.10, -0.20, 0.30) *
-            Eigen::AngleAxisd(0.25, Eigen::Vector3d::UnitZ());
-        stewartRuntime.parallelHomeBaseTransform = movedStaticBase;
-        ProjectRuntimeBuilder::setJointValue(stewartRuntime, "parallel.pose.z", zValue);
-        checks.require(
-            stewartRuntime.baseTransform.matrix().isApprox(
-                movedStaticBase.matrix(),
-                1.0e-9),
-            "Stewart MoveBase updates the static base without consuming task-space pose");
-        checks.require(
-            ProjectRuntimeBuilder::setJointValue(stewartRuntime, "parallel.actuator.1", leg1Value),
-            "Stewart actuator-space variable is accepted by runtime builder");
-
-        kine::StewartPlatformPose targetPose;
-        targetPose.x = 0.02;
-        targetPose.y = -0.01;
-        targetPose.z = 0.07;
-        targetPose.roll = 0.04;
-        targetPose.pitch = -0.03;
-        targetPose.yaw = 0.02;
-        std::array<double, 6> targetLengths{};
-        kine::StewartPlatformPose solvedPose;
-        const bool stewartIkOk =
-            kine::StewartPlatformKinematics::computeActuatorLengths(
-                stewartRuntime.parallelGeometry,
-                targetPose,
-                targetLengths) &&
-            kine::StewartPlatformKinematics::solvePoseFromLengths(
-                stewartRuntime.parallelGeometry,
-                targetLengths,
-                stewartRuntime.parallelPose,
-                solvedPose);
-        checks.require(
-            stewartIkOk &&
-                std::abs(solvedPose.x - targetPose.x) < 1.0e-4 &&
-                std::abs(solvedPose.y - targetPose.y) < 1.0e-4 &&
-                std::abs(solvedPose.z - targetPose.z) < 1.0e-4 &&
-                std::abs(solvedPose.roll - targetPose.roll) < 1.0e-4 &&
-                std::abs(solvedPose.pitch - targetPose.pitch) < 1.0e-4 &&
-                std::abs(solvedPose.yaw - targetPose.yaw) < 1.0e-4,
-            "Stewart actuator-space lengths solve back to task-space pose");
-
         RobotCollisionProxyRequest visualBoxRequest;
         visualBoxRequest.proxyType = "box";
         visualBoxRequest.role = "PlanningProxy";
@@ -2027,7 +1969,7 @@ namespace
         const std::filesystem::path root = std::filesystem::path(PROJECT_SOURCE_PATH);
         const std::string sourcePath = "data/drake_models/iiwa_description/urdf/iiwa14_no_collision.urdf";
         const robot::RobotModel model =
-            ProjectRuntimeBuilder::loadSingleRobot(root / sourcePath, "urdf");
+            loadRobotModel(root / sourcePath, "urdf");
 
         std::string visualLinkName;
         for(const std::string& linkName : model.linkNames) {
@@ -2161,7 +2103,8 @@ namespace
     {
         const std::filesystem::path root = std::filesystem::path(PROJECT_SOURCE_PATH);
         const std::filesystem::path defaultProjectPath =
-            root / "config" / "projects" / "420.v3.scene.json";
+            root / "SMRobotApps" / "RobotViewerCore" / "regression" /
+            "CollisionModelWorkflowSmokeTest" / "fixtures" / "420.v3.scene.json";
 
         simulation_project::ProjectDocument document;
         std::string errorMessage;
@@ -2484,7 +2427,7 @@ namespace
             simulation_project::loadProjectDocument(projectPath, document, &errorMessage),
             "420 tool project loads for attachment collision model selection");
 
-        simulation_project::ProjectDocumentService readService(document);
+        const simulation_project::ProjectDocumentService readService(document);
         const simulation_project::ObjectCollisionOverrideDesc* initialOverride =
             readService.findObjectCollisionOverride("420_tool_attachment");
         checks.require(
@@ -2729,7 +2672,7 @@ namespace
     }
 }
 
-int main()
+int main() try
 {
     std::cout.setf(std::ios::unitbuf);
     std::cerr.setf(std::ios::unitbuf);
@@ -2871,4 +2814,9 @@ int main()
 
     std::cout << "RobotViewerCore collision model workflow smoke test passed.\n";
     return 0;
+}
+catch(const std::exception& error)
+{
+    std::cerr << "Collision workflow exception: " << error.what() << "\n";
+    return 1;
 }

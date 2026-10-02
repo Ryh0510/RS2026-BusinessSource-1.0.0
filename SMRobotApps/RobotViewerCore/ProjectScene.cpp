@@ -3,7 +3,15 @@
 #include "ProjectCollisionRuntimeProjection.h"
 #include "ProjectRuntimeBuilder.h"
 #include "ProjectRuntimeTypes.h"
+#include "ProjectSceneCameraSystem.h"
+#include "ProjectSceneAttachmentVisualSystem.h"
+#include "ProjectSceneCollisionPresentationSystem.h"
+#include "ProjectSceneDocumentProjectionSystem.h"
+#include "ProjectSceneEnvironmentSystem.h"
+#include "ProjectSceneInteractionSystem.h"
+#include "ProjectSceneStewartPresentationSystem.h"
 #include "ProjectScenePickingService.h"
+#include "ProjectScenePreviewOverlayState.h"
 #include "RobotCollisionModelInspector.h"
 #include "RobotCollisionOverrideApplier.h"
 #include "RobotCollisionProxyGenerator.h"
@@ -13,13 +21,13 @@
 #include <AssetCore/AssetManager.h>
 #include <AssetCore/ModelAssetLeaseCache.h>
 #include <Collision/CollisionDebugDrawBuilder.h>
-#include <CameraCore/CameraFactory.h>
 #include <Collision/CollisionGeometryBuilder.h>
 #include <Collision/CollisionScene.h>
 #include <Collision/RobotCollisionInstance.h>
 #include <Collision/RobotCollisionModel.h>
 #include <CustomLog/CustomLog.h>
 #include <GLRuntime/GLRuntime.h>
+#include <RenderCore/Geometry.h>
 #include <RenderCore/Material.h>
 #include <RenderCore/Model.h>
 #include <RenderCore/ModelManager.h>
@@ -31,14 +39,15 @@
 #include <RobotRenderBridge/MountedAttachmentVisualBridge.h>
 #include <RobotRenderBridge/RobotVisualBridge.h>
 #include <SceneCore/CameraNode.h>
-#include <SceneCore/CollisionOverlayRenderConfig.h>
 #include <SceneCore/DefaultLighting.h>
+#include <SceneCore/MaterialRenderState.h>
 #include <SceneCore/ModelNode.h>
 #include <SceneCore/Renderer.h>
 #include <SceneCore/RenderPass/AxisPass.h>
 #include <SceneCore/RenderPass/GridPass.h>
 #include <SceneCore/RenderPass/MeshPass.h>
 #include <SceneCore/RenderPass/PointCloudPass.h>
+#include <SceneCore/RenderPass/PlanarShadowPass.h>
 #include <SceneCore/RenderPass/PrimitivePass.h>
 #include <SceneCore/RenderPass/TrajectoryPass.h>
 #include <SimulationProject/AssetResolver.h>
@@ -48,7 +57,10 @@
 #include <SimulationProject/RuntimePaths.h>
 #include <SimulationProject/ProjectV3View.h>
 #include <SimulationRuntime/AttachmentCollisionPolicy.h>
+#include <SimulationRuntime/ProjectCollisionQueryService.h>
+#include <SimulationRuntime/ProjectParallelMechanismRuntime.h>
 #include <SimulationRuntime/ProjectSelectionState.h>
+#include <SimulationRuntime/ProjectSimulationRuntime.h>
 #include <SimulationRuntime/RuntimeMountedAttachment.h>
 #include <Utility/MathConvert.hpp>
 #include <data_path.h>
@@ -56,6 +68,7 @@
 #include <Eigen/Geometry>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <array>
 #include <chrono>
@@ -83,6 +96,10 @@ using namespace collision;
 namespace
 {
     using ProjectCollisionDetectorRuntime = ProjectCollisionDetectorViewRuntime;
+    using VisibleCollisionVariantFilter =
+        ProjectSceneCollisionPresentationSystem::VisibleVariantFilter;
+    using CollisionGeometryOverlayCache =
+        ProjectSceneCollisionPresentationSystem::GeometryOverlayCache;
 
     constexpr double kPi = 3.14159265358979323846;
     constexpr float kCollisionPreviewRed = 0.20f;
@@ -92,6 +109,107 @@ namespace
     constexpr float kCollisionPreviewVisibleAlpha = 0.34f;
     constexpr float kCollisionPreviewBlend = 0.34f;
     constexpr float kCollisionPreviewVisualDarken = 0.74f;
+
+    std::string customMeshKey(const std::string& ownerId, const std::string& meshId)
+    {
+        return std::to_string(ownerId.size()) + ":" + ownerId + meshId;
+    }
+
+    std::shared_ptr<rendercore::Geometry> makeCustomMeshGeometry(
+        const smrobot::visualization::MeshData& mesh)
+    {
+        std::vector<rendercore::VertexRGBA> vertices(mesh.positions.size());
+        for(std::size_t index = 0; index < mesh.positions.size(); ++index) {
+            rendercore::VertexRGBA& vertex = vertices[index];
+            const auto& position = mesh.positions[index];
+            vertex.position[0] = position.x;
+            vertex.position[1] = position.y;
+            vertex.position[2] = position.z;
+            if(index < mesh.normals.size()) {
+                const auto& normal = mesh.normals[index];
+                vertex.normal[0] = normal.x;
+                vertex.normal[1] = normal.y;
+                vertex.normal[2] = normal.z;
+            }
+            else {
+                vertex.normal[0] = 0.0f;
+                vertex.normal[1] = 0.0f;
+                vertex.normal[2] = 1.0f;
+            }
+            if(index < mesh.texcoords.size()) {
+                const auto& texcoord = mesh.texcoords[index];
+                vertex.texcoord[0] = texcoord.x;
+                vertex.texcoord[1] = texcoord.y;
+            }
+            if(index < mesh.colors.size()) {
+                const auto& color = mesh.colors[index];
+                vertex.color[0] = color.r;
+                vertex.color[1] = color.g;
+                vertex.color[2] = color.b;
+                vertex.color[3] = color.a;
+            }
+        }
+
+        std::vector<unsigned int> indices;
+        indices.reserve(mesh.indices.size());
+        for(std::uint32_t index : mesh.indices) {
+            indices.push_back(static_cast<unsigned int>(index));
+        }
+        return std::make_shared<rendercore::Geometry>(vertices, indices);
+    }
+
+    scenecore::MaterialRenderState customMeshRenderState(
+        const smrobot::visualization::MeshAppearance& appearance)
+    {
+        scenecore::MaterialRenderState state;
+        switch(appearance.blend) {
+        case smrobot::visualization::MeshBlendMode::Opaque:
+            state.blend = scenecore::MaterialBlendMode::Opaque;
+            break;
+        case smrobot::visualization::MeshBlendMode::AlphaBlend:
+            state.blend = scenecore::MaterialBlendMode::AlphaBlend;
+            break;
+        case smrobot::visualization::MeshBlendMode::Auto:
+            state.blend = scenecore::MaterialBlendMode::Auto;
+            break;
+        }
+        switch(appearance.cull) {
+        case smrobot::visualization::MeshCullMode::None:
+            state.cull = scenecore::MaterialCullMode::None;
+            break;
+        case smrobot::visualization::MeshCullMode::Back:
+            state.cull = scenecore::MaterialCullMode::Back;
+            break;
+        case smrobot::visualization::MeshCullMode::Front:
+            state.cull = scenecore::MaterialCullMode::Front;
+            break;
+        }
+        state.depthTest = appearance.depthTest;
+        state.depthWrite = appearance.depthWrite;
+        state.renderOrder = appearance.renderOrder;
+        return state;
+    }
+
+    void applyCustomMeshAppearance(
+        rendercore::Material& material,
+        const smrobot::visualization::MeshAppearance& appearance)
+    {
+        material.type = appearance.shading == smrobot::visualization::MeshShadingMode::Unlit
+            ? rendercore::MaterialType::Unlit
+            : rendercore::MaterialType::PBR;
+        material.baseColor = Eigen::Vector4f(
+            appearance.baseColor.r,
+            appearance.baseColor.g,
+            appearance.baseColor.b,
+            appearance.baseColor.a);
+        material.emissiveColor = Eigen::Vector3f(
+            appearance.emissiveColor.x,
+            appearance.emissiveColor.y,
+            appearance.emissiveColor.z);
+        material.metallic = appearance.metallic;
+        material.roughness = appearance.roughness;
+        scenecore::setMaterialRenderState(&material, customMeshRenderState(appearance));
+    }
 
     Eigen::Vector3f gammaToLinear(const Eigen::Vector3f& color)
     {
@@ -154,29 +272,6 @@ namespace
     {
         return std::to_string(robotInstance) + "|" + linkName;
     }
-
-    struct VisibleCollisionVariantFilter
-    {
-        std::string robotId;
-        std::string linkName;
-        std::string variantId;
-        std::unordered_set<std::string> elementNames;
-    };
-
-    struct CollisionGeometryOverlayCache
-    {
-        bool valid = false;
-        std::uint64_t version = 0;
-        std::string key;
-        CollisionDebugDrawData data;
-
-        void clear()
-        {
-            valid = false;
-            key.clear();
-            data.clear();
-        }
-    };
 
     std::filesystem::path pathFromUtf8(const std::string& path)
     {
@@ -473,153 +568,7 @@ namespace
         return result;
     }
 
-    std::shared_ptr<scenecore::CameraNode> createMainCamera(scenecore::SceneGraph& graph)
-    {
-        auto camera = cameracore::CameraFactory::createOrbitCamera();
-        camera->setUpAxis(cameracore::UpAxis::Z_UP);
-
-        auto node = std::make_shared<scenecore::CameraNode>(camera, "mainCameraNode");
-        graph.addNode(node);
-        graph.registerNode(node);
-        return node;
-    }
-
-    struct CameraSceneBounds
-    {
-        bool valid = false;
-        Vec3 min = Vec3::Zero();
-        Vec3 max = Vec3::Zero();
-
-        void includePoint(const Vec3& point)
-        {
-            if(!valid) {
-                min = point;
-                max = point;
-                valid = true;
-                return;
-            }
-            min = min.cwiseMin(point);
-            max = max.cwiseMax(point);
-        }
-
-        void includeAabb(const fcl::AABBd& aabb)
-        {
-            includePoint(aabb.min_);
-            includePoint(aabb.max_);
-        }
-
-        void includeTransformedBounds(
-            const Transform3& transform,
-            const Vec3& localMin,
-            const Vec3& localMax)
-        {
-            for(int x = 0; x < 2; ++x) {
-                for(int y = 0; y < 2; ++y) {
-                    for(int z = 0; z < 2; ++z) {
-                        const Vec3 local(
-                            x == 0 ? localMin.x() : localMax.x(),
-                            y == 0 ? localMin.y() : localMax.y(),
-                            z == 0 ? localMin.z() : localMax.z());
-                        includePoint(transform * local);
-                    }
-                }
-            }
-        }
-
-        Vec3 center() const
-        {
-            if(!valid) {
-                return Vec3::Zero();
-            }
-            return (min + max) * 0.5;
-        }
-
-        double radius() const
-        {
-            if(!valid) {
-                return 2.0;
-            }
-            return std::max(0.5, (max - min).norm() * 0.5);
-        }
-    };
-
-    Eigen::Vector3f cameraDirection(ProjectSceneCameraView view)
-    {
-        switch(view) {
-        case ProjectSceneCameraView::Front:
-            return Eigen::Vector3f(0.0f, -1.0f, 0.0f);
-        case ProjectSceneCameraView::Back:
-            return Eigen::Vector3f(0.0f, 1.0f, 0.0f);
-        case ProjectSceneCameraView::Left:
-            return Eigen::Vector3f(-1.0f, 0.0f, 0.0f);
-        case ProjectSceneCameraView::Right:
-            return Eigen::Vector3f(1.0f, 0.0f, 0.0f);
-        case ProjectSceneCameraView::Top:
-            return Eigen::Vector3f(0.0f, 0.0f, 1.0f);
-        case ProjectSceneCameraView::Bottom:
-            return Eigen::Vector3f(0.0f, 0.0f, -1.0f);
-        case ProjectSceneCameraView::Home:
-        case ProjectSceneCameraView::Isometric:
-        default:
-            return Eigen::Vector3f(1.0f, -1.0f, 0.75f).normalized();
-        }
-    }
-
-    Eigen::Vector3f cameraUp(ProjectSceneCameraView view)
-    {
-        switch(view) {
-        case ProjectSceneCameraView::Top:
-            return Eigen::Vector3f(0.0f, 1.0f, 0.0f);
-        case ProjectSceneCameraView::Bottom:
-            return Eigen::Vector3f(0.0f, -1.0f, 0.0f);
-        default:
-            return Eigen::Vector3f(0.0f, 0.0f, 1.0f);
-        }
-    }
-
-    struct CameraLookAtState
-    {
-        Eigen::Vector3f position = Eigen::Vector3f(0.0f, -5.0f, 3.0f);
-        Eigen::Vector3f target = Eigen::Vector3f::Zero();
-        Eigen::Vector3f up = Eigen::Vector3f(0.0f, 0.0f, 1.0f);
-        bool valid = false;
-    };
-
-    CameraLookAtState makeCameraLookAtState(
-        const CameraSceneBounds& bounds,
-        ProjectSceneCameraView view,
-        double distanceScale)
-    {
-        const Vec3 center = bounds.center();
-        const double radius = bounds.radius();
-        constexpr double kVerticalFovDegrees = 45.0;
-        const double fovRadians = kVerticalFovDegrees * kPi / 180.0;
-        const double distance = std::max(2.5, radius / std::sin(fovRadians * 0.5) * distanceScale);
-
-        CameraLookAtState state;
-        state.target = Eigen::Vector3f(
-            static_cast<float>(center.x()),
-            static_cast<float>(center.y()),
-            static_cast<float>(center.z()));
-        state.position = state.target + cameraDirection(view) * static_cast<float>(distance);
-        state.up = cameraUp(view);
-        state.valid = true;
-        return state;
-    }
-
-    CameraLookAtState interpolateCameraLookAt(
-        const CameraLookAtState& start,
-        const CameraLookAtState& end,
-        double t)
-    {
-        const float weight = static_cast<float>(std::clamp(t, 0.0, 1.0));
-        CameraLookAtState state;
-        state.position = start.position + (end.position - start.position) * weight;
-        state.target = start.target + (end.target - start.target) * weight;
-        state.up = (start.up + (end.up - start.up) * weight).normalized();
-        state.valid = true;
-        return state;
-    }
+    using CameraSceneBounds = ProjectSceneCameraSystem::Bounds;
 
     int parseObjIndex(const std::string& token)
     {
@@ -1609,23 +1558,6 @@ namespace
         }
     }
 
-    void mergeDistanceResult(CollisionResult& target, const CollisionResult& distanceResult)
-    {
-        if(distanceResult.minDistance != std::numeric_limits<double>::max()) {
-            target.minDistance = distanceResult.minDistance;
-        }
-
-        if(distanceResult.hasNearestPoints) {
-            target.nearestObjectA = distanceResult.nearestObjectA;
-            target.nearestObjectB = distanceResult.nearestObjectB;
-            target.nearestInfoA = distanceResult.nearestInfoA;
-            target.nearestInfoB = distanceResult.nearestInfoB;
-            target.nearestPointA = distanceResult.nearestPointA;
-            target.nearestPointB = distanceResult.nearestPointB;
-            target.hasNearestPoints = true;
-        }
-    }
-
     std::size_t visualizableContactCount(const CollisionResult& result)
     {
         return static_cast<std::size_t>(std::count_if(
@@ -1859,948 +1791,6 @@ namespace
             }
             setSceneObjectHighlighted(object, highlighted);
         }
-    }
-
-    std::vector<std::string> jointNames(const robot::RobotModel& model)
-    {
-        std::vector<std::string> names;
-        names.reserve(model.joints.size());
-        for(const auto& joint : model.joints) {
-            names.push_back(joint.name);
-        }
-        return names;
-    }
-
-    std::string jointTypeName(robot::JointType type)
-    {
-        switch(type) {
-        case robot::JointType::Revolute:
-            return "revolute";
-        case robot::JointType::Prismatic:
-            return "prismatic";
-        default:
-            return "fixed";
-        }
-    }
-
-    std::vector<ProjectScene::RobotJointInfo> movableJointInfos(const robot::RobotModel& model)
-    {
-        std::vector<ProjectScene::RobotJointInfo> joints;
-        for(const auto& joint : model.joints) {
-            if(joint.dofIndex < 0) {
-                continue;
-            }
-
-            joints.push_back(ProjectScene::RobotJointInfo{
-                joint.name,
-                jointTypeName(joint.type) });
-        }
-        return joints;
-    }
-
-    std::vector<ProjectScene::RobotJointInfo> parallelControlJointInfos()
-    {
-        return {
-            { "parallel.pose.x", "prismatic" },
-            { "parallel.pose.y", "prismatic" },
-            { "parallel.pose.z", "prismatic" },
-            { "parallel.pose.roll", "revolute" },
-            { "parallel.pose.pitch", "revolute" },
-            { "parallel.pose.yaw", "revolute" },
-            { "parallel.actuator.1", "prismatic" },
-            { "parallel.actuator.2", "prismatic" },
-            { "parallel.actuator.3", "prismatic" },
-            { "parallel.actuator.4", "prismatic" },
-            { "parallel.actuator.5", "prismatic" },
-            { "parallel.actuator.6", "prismatic" }
-        };
-    }
-
-    std::vector<std::string> parallelControlJointNames()
-    {
-        std::vector<std::string> names;
-        const std::vector<ProjectScene::RobotJointInfo> controls =
-            parallelControlJointInfos();
-        names.reserve(controls.size());
-        for(const ProjectScene::RobotJointInfo& control : controls) {
-            names.push_back(control.jointName);
-        }
-        return names;
-    }
-
-    std::string lowerCopy(std::string value)
-    {
-        std::transform(
-            value.begin(),
-            value.end(),
-            value.begin(),
-            [](unsigned char ch) {
-                return static_cast<char>(std::tolower(ch));
-            });
-        return value;
-    }
-
-    bool isStewartSimscapeRobotDesc(const simulation_project::RobotDesc& robotDesc)
-    {
-        const std::string sourceType = lowerCopy(robotDesc.sourceType);
-        const std::string sourcePath = lowerCopy(robotDesc.sourcePath);
-        return sourceType.find("simscape") != std::string::npos &&
-            sourcePath.find("stewart") != std::string::npos;
-    }
-
-    const std::string& stewartUpperActuatorMarker()
-    {
-        static const std::string marker =
-            "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8A\xE6\xAE\xB5";
-        return marker;
-    }
-
-    const std::string& stewartLowerActuatorMarker()
-    {
-        static const std::string marker =
-            "\xE6\x89\xA7\xE8\xA1\x8C\xE5\x99\xA8\xE4\xB8\x8B\xE6\xAE\xB5";
-        return marker;
-    }
-
-    const std::string& stewartHookeMarker()
-    {
-        static const std::string marker =
-            "\xE8\x99\x8E\xE5\x85\x8B\xE9\x93\xB0";
-        return marker;
-    }
-
-    const std::string& stewartTopPlatformMarker()
-    {
-        static const std::string marker =
-            "\xE4\xB8\x8A\xE5\x8A\xA8\xE5\xB9\xB3\xE5\x8F\xB0";
-        return marker;
-    }
-
-    const std::string& stewartPayloadMarker()
-    {
-        static const std::string marker =
-            "\xE5\xB7\xA5\xE4\xBB\xB6";
-        return marker;
-    }
-
-    int legIndexAfterMarker(const std::string& linkName, const std::string& marker)
-    {
-        const std::size_t markerPos = linkName.find(marker);
-        if(markerPos == std::string::npos) {
-            return -1;
-        }
-
-        for(std::size_t index = markerPos + marker.size(); index < linkName.size(); ++index) {
-            const char ch = linkName[index];
-            if(ch >= '1' && ch <= '6') {
-                return ch - '1';
-            }
-        }
-        return -1;
-    }
-
-    int actuatorLegIndexFromLinkName(const std::string& linkName)
-    {
-        return legIndexAfterMarker(linkName, stewartUpperActuatorMarker());
-    }
-
-    bool robotModelHasLinkContaining(const robot::RobotModel& model, const std::string& marker)
-    {
-        return std::any_of(
-            model.linkNames.begin(),
-            model.linkNames.end(),
-            [&](const std::string& linkName) {
-                return linkName.find(marker) != std::string::npos;
-            });
-    }
-
-    bool isStewartSimscapePlatformModel(
-        const simulation_project::RobotDesc& robotDesc,
-        const robot::RobotModel& model)
-    {
-        if(!isStewartSimscapeRobotDesc(robotDesc)) {
-            return false;
-        }
-
-        std::array<bool, 6> upperLinksFound{};
-        for(const std::string& linkName : model.linkNames) {
-            const int legIndex = actuatorLegIndexFromLinkName(linkName);
-            if(legIndex >= 0 && legIndex < 6) {
-                upperLinksFound[static_cast<std::size_t>(legIndex)] = true;
-            }
-        }
-
-        return robotModelHasLinkContaining(
-                   model,
-                   "\xE4\xB8\x8B\xE5\xAE\x9A\xE5\xB9\xB3\xE5\x8F\xB0") &&
-            std::all_of(
-                upperLinksFound.begin(),
-                upperLinksFound.end(),
-                [](bool found) { return found; });
-    }
-
-    bool isStewartSimscapeFollowerFragment(
-        const simulation_project::RobotDesc& robotDesc,
-        const robot::RobotModel& model)
-    {
-        return isStewartSimscapeRobotDesc(robotDesc) &&
-            !isStewartSimscapePlatformModel(robotDesc, model) &&
-            robotModelHasLinkContaining(model, stewartUpperActuatorMarker());
-    }
-
-    bool sameStewartSource(const RuntimeRobot& a, const RuntimeRobot& b)
-    {
-        return lowerCopy(a.sourceType) == lowerCopy(b.sourceType) &&
-            lowerCopy(a.sourcePath) == lowerCopy(b.sourcePath) &&
-            lowerCopy(a.sourceType).find("simscape") != std::string::npos &&
-            lowerCopy(a.sourcePath).find("stewart") != std::string::npos;
-    }
-
-    int stewartLegIndexFromLinkName(const std::string& linkName)
-    {
-        const int upperIndex = legIndexAfterMarker(linkName, stewartUpperActuatorMarker());
-        if(upperIndex >= 0) {
-            return upperIndex;
-        }
-
-        const int lowerIndex = legIndexAfterMarker(linkName, stewartLowerActuatorMarker());
-        if(lowerIndex >= 0) {
-            return lowerIndex;
-        }
-
-        return legIndexAfterMarker(linkName, stewartHookeMarker());
-    }
-
-    std::string findFirstLinkContaining(const robot::RobotModel& model, const std::string& token)
-    {
-        for(const std::string& linkName : model.linkNames) {
-            if(linkName.find(token) != std::string::npos) {
-                return linkName;
-            }
-        }
-        return std::string();
-    }
-
-    std::string findFirstLinkForLeg(
-        const robot::RobotModel& model,
-        const std::string& marker,
-        int legIndex)
-    {
-        for(const std::string& linkName : model.linkNames) {
-            if(legIndexAfterMarker(linkName, marker) == legIndex) {
-                return linkName;
-            }
-        }
-        return std::string();
-    }
-
-    bool linkExists(const robot::RobotModel& model, const std::string& linkName)
-    {
-        return !linkName.empty() && model.links.find(linkName) != model.links.end();
-    }
-
-    bool isStewartInternalPlatformDrivenLink(const std::string& linkName)
-    {
-        return linkName.find(stewartTopPlatformMarker()) != std::string::npos ||
-            linkName.find(stewartPayloadMarker()) != std::string::npos;
-    }
-
-    bool jointTouchesLegMarker(
-        const robot::RobotJoint& joint,
-        const std::string& marker,
-        int legIndex)
-    {
-        return legIndexAfterMarker(joint.parent, marker) == legIndex ||
-            legIndexAfterMarker(joint.child, marker) == legIndex;
-    }
-
-    bool jointAnchorWorld(
-        const RuntimeRobot& runtime,
-        const robot::RobotJoint& joint,
-        collision::Vec3& anchor)
-    {
-        if(!runtime.instance || !linkExists(runtime.model, joint.parent)) {
-            return false;
-        }
-
-        const collision::Transform3 worldParent =
-            runtime.instance->getLinkTransform(joint.parent);
-        anchor = (worldParent * joint.T_parent_joint).translation();
-        return true;
-    }
-
-    void collectJointAnchorsForLeg(
-        const RuntimeRobot& runtime,
-        const std::string& marker,
-        int legIndex,
-        std::vector<collision::Vec3>& anchors)
-    {
-        for(const robot::RobotJoint& joint : runtime.model.joints) {
-            if(!jointTouchesLegMarker(joint, marker, legIndex)) {
-                continue;
-            }
-
-            collision::Vec3 anchor = collision::Vec3::Zero();
-            if(jointAnchorWorld(runtime, joint, anchor)) {
-                anchors.push_back(anchor);
-            }
-        }
-    }
-
-    void collectLinkOriginAnchorForLeg(
-        const RuntimeRobot& runtime,
-        const std::string& marker,
-        int legIndex,
-        std::vector<collision::Vec3>& anchors)
-    {
-        const std::string link = findFirstLinkForLeg(runtime.model, marker, legIndex);
-        if(!link.empty() && runtime.instance) {
-            anchors.push_back(runtime.instance->getLinkTransform(link).translation());
-        }
-    }
-
-    bool chooseLowestLocalZAnchor(
-        const std::vector<collision::Vec3>& anchors,
-        const collision::Transform3& referenceInverse,
-        collision::Vec3& anchor)
-    {
-        if(anchors.empty()) {
-            return false;
-        }
-
-        auto bestIt = anchors.begin();
-        double bestZ = (referenceInverse * *bestIt).z();
-        for(auto it = std::next(anchors.begin()); it != anchors.end(); ++it) {
-            const double z = (referenceInverse * *it).z();
-            if(z < bestZ) {
-                bestZ = z;
-                bestIt = it;
-            }
-        }
-
-        anchor = *bestIt;
-        return true;
-    }
-
-    bool chooseFarthestAnchor(
-        const std::vector<collision::Vec3>& anchors,
-        const collision::Vec3& reference,
-        collision::Vec3& anchor)
-    {
-        if(anchors.empty()) {
-            return false;
-        }
-
-        auto bestIt = anchors.begin();
-        double bestDistance = (*bestIt - reference).squaredNorm();
-        for(auto it = std::next(anchors.begin()); it != anchors.end(); ++it) {
-            const double distance = (*it - reference).squaredNorm();
-            if(distance > bestDistance) {
-                bestDistance = distance;
-                bestIt = it;
-            }
-        }
-
-        anchor = *bestIt;
-        return true;
-    }
-
-    int findStewartFollowerActuatorDofIndex(const RuntimeRobot& follower, int legIndex)
-    {
-        for(const robot::RobotJoint& joint : follower.model.joints) {
-            if(joint.type != robot::JointType::Prismatic || joint.dofIndex < 0) {
-                continue;
-            }
-
-            if(jointTouchesLegMarker(joint, stewartLowerActuatorMarker(), legIndex) &&
-                jointTouchesLegMarker(joint, stewartUpperActuatorMarker(), legIndex)) {
-                return joint.dofIndex;
-            }
-        }
-
-        for(const robot::RobotJoint& joint : follower.model.joints) {
-            if(joint.type != robot::JointType::Prismatic || joint.dofIndex < 0) {
-                continue;
-            }
-
-            if(stewartLegIndexFromLinkName(joint.parent) == legIndex ||
-                stewartLegIndexFromLinkName(joint.child) == legIndex) {
-                return joint.dofIndex;
-            }
-        }
-        return -1;
-    }
-
-    std::array<int, 2> findStewartBaseRevoluteDofIndices(
-        const RuntimeRobot& platform,
-        int legIndex,
-        const std::string& lowerLink)
-    {
-        std::array<int, 2> result{ { -1, -1 } };
-        std::unordered_map<std::string, const robot::RobotJoint*> parentJointByChild;
-        for(const robot::RobotJoint& joint : platform.model.joints) {
-            if(joint.isLoop) {
-                continue;
-            }
-            parentJointByChild.emplace(joint.child, &joint);
-        }
-
-        std::unordered_set<std::string> visited;
-        std::string link = lowerLink;
-        while(!link.empty() && link != platform.model.root && visited.insert(link).second) {
-            const auto parentIt = parentJointByChild.find(link);
-            if(parentIt == parentJointByChild.end()) {
-                break;
-            }
-
-            const robot::RobotJoint* joint = parentIt->second;
-            if(joint->type == robot::JointType::Revolute && joint->dofIndex >= 0) {
-                if(result[0] < 0) {
-                    result[0] = joint->dofIndex;
-                } else if(result[1] < 0 && result[0] != joint->dofIndex) {
-                    result[1] = joint->dofIndex;
-                    return result;
-                }
-            }
-            link = joint->parent;
-        }
-
-        for(const robot::RobotJoint& joint : platform.model.joints) {
-            if(joint.type != robot::JointType::Revolute || joint.dofIndex < 0) {
-                continue;
-            }
-            if(!jointTouchesLegMarker(joint, stewartHookeMarker(), legIndex) ||
-                jointTouchesLegMarker(joint, stewartUpperActuatorMarker(), legIndex)) {
-                continue;
-            }
-
-            if(result[0] < 0) {
-                result[0] = joint.dofIndex;
-            } else if(result[1] < 0 && result[0] != joint.dofIndex) {
-                result[1] = joint.dofIndex;
-                break;
-            }
-        }
-        return result;
-    }
-
-    void setStewartLegJointValues(
-        robotinstance::RobotInstance& instance,
-        const StewartLegRuntimeControl& leg,
-        double q0,
-        double q1,
-        double travel)
-    {
-        if(leg.baseRevoluteDofIndices[0] >= 0) {
-            instance.setJoint(static_cast<std::size_t>(leg.baseRevoluteDofIndices[0]), q0);
-        }
-        if(leg.baseRevoluteDofIndices[1] >= 0) {
-            instance.setJoint(static_cast<std::size_t>(leg.baseRevoluteDofIndices[1]), q1);
-        }
-        if(leg.actuatorDofIndex >= 0) {
-            instance.setJoint(static_cast<std::size_t>(leg.actuatorDofIndex), travel);
-        }
-    }
-
-    double wrapAngleNear(double value, double reference)
-    {
-        constexpr double kPi = 3.14159265358979323846;
-        constexpr double kTwoPi = 2.0 * kPi;
-        while(value - reference > kPi) {
-            value -= kTwoPi;
-        }
-        while(reference - value > kPi) {
-            value += kTwoPi;
-        }
-        return value;
-    }
-
-    double squaredAngleDistance(double value, double reference)
-    {
-        const double diff = wrapAngleNear(value, reference) - reference;
-        return diff * diff;
-    }
-
-    collision::Vec3 stewartLegPlatformAnchorWorld(
-        const RuntimeRobot& platform,
-        const StewartLegRuntimeControl& leg)
-    {
-        if(!platform.instance || leg.upperLink.empty()) {
-            return collision::Vec3::Zero();
-        }
-
-        return platform.instance->getLinkTransform(leg.upperLink) *
-            leg.platformAnchorLocalInUpperLink;
-    }
-
-    collision::Vec3 stewartTargetPlatformAnchorWorld(
-        const RuntimeRobot& platform,
-        int legIndex)
-    {
-        const collision::Transform3 poseTransform =
-            kine::StewartPlatformKinematics::poseTransform(platform.parallelPose);
-        const collision::Vec3 localAnchor =
-            poseTransform *
-            platform.parallelGeometry.platformAnchors[static_cast<std::size_t>(legIndex)];
-        return platform.parallelHomeBaseTransform * localAnchor;
-    }
-
-    bool solveStewartLegControl(
-        RuntimeRobot& platform,
-        StewartLegRuntimeControl& leg)
-    {
-        if(!platform.instance || !leg.enabled || leg.legIndex < 0 || leg.legIndex >= 6) {
-            return false;
-        }
-
-        const std::size_t legArrayIndex = static_cast<std::size_t>(leg.legIndex);
-        const double targetLength = platform.parallelActuatorLengths[legArrayIndex];
-        const double travel =
-            leg.actuatorSign *
-            (targetLength - leg.homeLength);
-        double q0 = 0.0;
-        double q1 = 0.0;
-        const auto& state = platform.instance->getState();
-        if(leg.baseRevoluteDofIndices[0] >= 0 &&
-            static_cast<std::size_t>(leg.baseRevoluteDofIndices[0]) < state.q.size()) {
-            q0 = state.q[static_cast<std::size_t>(leg.baseRevoluteDofIndices[0])];
-        }
-        if(leg.baseRevoluteDofIndices[1] >= 0 &&
-            static_cast<std::size_t>(leg.baseRevoluteDofIndices[1]) < state.q.size()) {
-            q1 = state.q[static_cast<std::size_t>(leg.baseRevoluteDofIndices[1])];
-        }
-        const double seedQ0 = q0;
-        const double seedQ1 = q1;
-        double bestQ0 = q0;
-        double bestQ1 = q1;
-        double bestScore = std::numeric_limits<double>::max();
-        const collision::Vec3 target = stewartTargetPlatformAnchorWorld(platform, leg.legIndex);
-
-        constexpr double kStep = 1.0e-5;
-        constexpr double kTolerance = 1.0e-5;
-        constexpr double kContinuityWeight = 1.0e-4;
-        constexpr int kMaxIterations = 12;
-
-        for(int iteration = 0; iteration < kMaxIterations; ++iteration) {
-            setStewartLegJointValues(*platform.instance, leg, q0, q1, travel);
-            platform.instance->update();
-            const collision::Vec3 residual =
-                stewartLegPlatformAnchorWorld(platform, leg) - target;
-            const double residualNorm = residual.norm();
-            const double continuityCost =
-                kContinuityWeight *
-                (squaredAngleDistance(q0, seedQ0) +
-                    squaredAngleDistance(q1, seedQ1));
-            const double score = residualNorm + continuityCost;
-            if(score < bestScore) {
-                bestScore = score;
-                bestQ0 = q0;
-                bestQ1 = q1;
-            }
-            if(residualNorm <= kTolerance) {
-                return true;
-            }
-
-            Eigen::Matrix<double, 3, 2> jacobian;
-            for(int column = 0; column < 2; ++column) {
-                double probeQ0 = q0;
-                double probeQ1 = q1;
-                if(column == 0) {
-                    probeQ0 += kStep;
-                } else {
-                    probeQ1 += kStep;
-                }
-
-                setStewartLegJointValues(*platform.instance, leg, probeQ0, probeQ1, travel);
-                platform.instance->update();
-                jacobian.col(column) =
-                    (stewartLegPlatformAnchorWorld(platform, leg) -
-                        (target + residual)) /
-                    kStep;
-            }
-
-            const Eigen::Matrix2d normal =
-                jacobian.transpose() * jacobian +
-                Eigen::Matrix2d::Identity() * (1.0e-8 + kContinuityWeight);
-            const Eigen::Vector2d prior(
-                wrapAngleNear(q0, seedQ0) - seedQ0,
-                wrapAngleNear(q1, seedQ1) - seedQ1);
-            const Eigen::Vector2d delta =
-                normal.ldlt().solve(
-                    jacobian.transpose() * residual +
-                    kContinuityWeight * prior);
-            if(!std::isfinite(delta.x()) || !std::isfinite(delta.y())) {
-                break;
-            }
-
-            q0 = wrapAngleNear(q0 - std::clamp(delta.x(), -0.25, 0.25), seedQ0);
-            q1 = wrapAngleNear(q1 - std::clamp(delta.y(), -0.25, 0.25), seedQ1);
-        }
-
-        setStewartLegJointValues(*platform.instance, leg, bestQ0, bestQ1, travel);
-        platform.instance->update();
-        const double finalError =
-            (stewartLegPlatformAnchorWorld(platform, leg) - target).norm();
-        if(finalError > 5.0e-3) {
-            LOG_WARNING("rs2026") << "Stewart leg IK residual is high: robot="
-                << platform.documentId
-                << ", leg=" << (leg.legIndex + 1)
-                << ", residual=" << finalError << " m";
-        }
-        return true;
-    }
-
-    void solveStewartInternalLegControls(RuntimeRobot& platform)
-    {
-        if(!platform.parallelControlEnabled || !platform.instance) {
-            return;
-        }
-
-        for(StewartLegRuntimeControl& leg : platform.parallelLegControls) {
-            solveStewartLegControl(platform, leg);
-        }
-    }
-
-    double distanceBetweenLinks(
-        const RuntimeRobot& follower,
-        const std::string& a,
-        const std::string& b)
-    {
-        if(!follower.instance || a.empty() || b.empty()) {
-            return 0.0;
-        }
-
-        return (follower.instance->getLinkTransform(a).translation() -
-            follower.instance->getLinkTransform(b).translation()).norm();
-    }
-
-    double calibrateStewartFollowerActuatorSign(
-        RuntimeRobot& follower,
-        int dofIndex,
-        const std::string& baseLink,
-        const std::string& platformLink)
-    {
-        if(!follower.instance || dofIndex < 0) {
-            return 1.0;
-        }
-
-        constexpr double kProbe = 1.0e-4;
-        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), 0.0);
-        follower.instance->update();
-        const double homeDistance = distanceBetweenLinks(follower, baseLink, platformLink);
-
-        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), kProbe);
-        follower.instance->update();
-        const double probeDistance = distanceBetweenLinks(follower, baseLink, platformLink);
-
-        follower.instance->setJoint(static_cast<std::size_t>(dofIndex), 0.0);
-        follower.instance->update();
-
-        return probeDistance >= homeDistance ? 1.0 : -1.0;
-    }
-
-    double calibrateStewartInternalActuatorSign(
-        RuntimeRobot& platform,
-        const StewartLegRuntimeControl& leg)
-    {
-        if(!platform.instance ||
-            leg.actuatorDofIndex < 0 ||
-            leg.legIndex < 0 ||
-            leg.legIndex >= 6) {
-            return 1.0;
-        }
-
-        const std::size_t dofIndex = static_cast<std::size_t>(leg.actuatorDofIndex);
-        const auto& state = platform.instance->getState();
-        const double oldQ = dofIndex < state.q.size() ? state.q[dofIndex] : 0.0;
-        const std::size_t legArrayIndex = static_cast<std::size_t>(leg.legIndex);
-        const collision::Vec3 baseAnchorWorld =
-            platform.parallelHomeBaseTransform *
-            platform.parallelGeometry.baseAnchors[legArrayIndex];
-
-        constexpr double kProbe = 1.0e-4;
-        platform.instance->setJoint(dofIndex, 0.0);
-        platform.instance->update();
-        const double homeDistance =
-            (stewartLegPlatformAnchorWorld(platform, leg) - baseAnchorWorld).norm();
-
-        platform.instance->setJoint(dofIndex, kProbe);
-        platform.instance->update();
-        const double probeDistance =
-            (stewartLegPlatformAnchorWorld(platform, leg) - baseAnchorWorld).norm();
-
-        platform.instance->setJoint(dofIndex, oldQ);
-        platform.instance->update();
-
-        return probeDistance >= homeDistance ? 1.0 : -1.0;
-    }
-
-    Eigen::Matrix4d makeLegFollowerAffine(
-        const collision::Transform3& platformHomeTransform,
-        const kine::StewartPlatformPose& pose,
-        const collision::Vec3& homeStart,
-        const collision::Vec3& homeEnd)
-    {
-        const Eigen::Vector3d currentStart = homeStart;
-        const Eigen::Vector3d currentEnd =
-            kine::StewartPlatformKinematics::poseTransform(pose) * homeEnd;
-
-        const Eigen::Vector3d homeVector = homeEnd - homeStart;
-        const Eigen::Vector3d currentVector = currentEnd - currentStart;
-        const double homeLength = homeVector.norm();
-        const double currentLength = currentVector.norm();
-        if(homeLength < 1.0e-9 || currentLength < 1.0e-9) {
-            return Eigen::Matrix4d::Identity();
-        }
-
-        const Eigen::Vector3d homeAxis = homeVector / homeLength;
-        const Eigen::Quaterniond rotation =
-            Eigen::Quaterniond::FromTwoVectors(homeVector, currentVector).normalized();
-        const Eigen::Matrix3d stretch =
-            Eigen::Matrix3d::Identity() +
-            ((currentLength / homeLength) - 1.0) *
-                (homeAxis * homeAxis.transpose());
-        const Eigen::Matrix3d linear = rotation.toRotationMatrix() * stretch;
-
-        Eigen::Matrix4d local = Eigen::Matrix4d::Identity();
-        local.block<3, 3>(0, 0) = linear;
-        local.block<3, 1>(0, 3) = currentStart - linear * homeStart;
-
-        return platformHomeTransform.matrix() *
-            local *
-            platformHomeTransform.inverse().matrix();
-    }
-
-    void captureStewartFollowerDrivenLinks(RuntimeRobot& follower, int legIndex)
-    {
-        follower.parallelFollowerDrivenLinks.clear();
-        follower.parallelFollowerHomeLinkTransforms.clear();
-
-        if(!follower.instance) {
-            return;
-        }
-
-        for(const std::string& linkName : follower.model.linkNames) {
-            if(linkName == follower.model.root || linkName == follower.model.base_link) {
-                continue;
-            }
-            if(stewartLegIndexFromLinkName(linkName) != legIndex) {
-                continue;
-            }
-
-            follower.parallelFollowerDrivenLinks.push_back(linkName);
-            follower.parallelFollowerHomeLinkTransforms[linkName] =
-                follower.instance->getLinkTransform(linkName);
-        }
-    }
-
-    void configureStewartInternalActuatorDofs(RuntimeRobot& platform)
-    {
-        platform.parallelActuatorDofIndices.fill(-1);
-        platform.parallelActuatorSigns.fill(1.0);
-        if(!platform.instance) {
-            return;
-        }
-
-        for(int legIndex = 0; legIndex < 6; ++legIndex) {
-            const std::string upperLink = findFirstLinkForLeg(
-                platform.model,
-                stewartUpperActuatorMarker(),
-                legIndex);
-            if(upperLink.empty()) {
-                continue;
-            }
-
-            std::string baseLink = findFirstLinkForLeg(
-                platform.model,
-                stewartLowerActuatorMarker(),
-                legIndex);
-            if(baseLink.empty()) {
-                baseLink = findFirstLinkForLeg(
-                    platform.model,
-                    stewartHookeMarker(),
-                    legIndex);
-            }
-
-            const int dofIndex = findStewartFollowerActuatorDofIndex(platform, legIndex);
-            const std::size_t index = static_cast<std::size_t>(legIndex);
-            platform.parallelActuatorDofIndices[index] = dofIndex;
-
-            StewartLegRuntimeControl& leg = platform.parallelLegControls[index];
-            leg.enabled = dofIndex >= 0;
-            leg.legIndex = legIndex;
-            leg.lowerLink = baseLink;
-            leg.upperLink = upperLink;
-            leg.baseRevoluteDofIndices =
-                findStewartBaseRevoluteDofIndices(platform, legIndex, baseLink);
-            leg.actuatorDofIndex = dofIndex;
-            leg.actuatorSign = 1.0;
-            leg.homeLength = platform.parallelActuatorHomeLengths[index];
-            leg.platformAnchorLocalInUpperLink = collision::Vec3::Zero();
-            if(!upperLink.empty()) {
-                const collision::Vec3 homePlatformAnchorWorld =
-                    platform.parallelHomeBaseTransform *
-                    platform.parallelGeometry.platformAnchors[index];
-                leg.platformAnchorLocalInUpperLink =
-                    platform.instance->getLinkTransform(upperLink).inverse() *
-                    homePlatformAnchorWorld;
-            }
-            platform.parallelActuatorSigns[index] =
-                calibrateStewartInternalActuatorSign(platform, leg);
-            leg.actuatorSign = platform.parallelActuatorSigns[index];
-
-            if(leg.enabled &&
-                (leg.baseRevoluteDofIndices[0] < 0 || leg.baseRevoluteDofIndices[1] < 0)) {
-                leg.enabled = false;
-                LOG_WARNING("rs2026") << "Stewart leg IK disabled because base revolute DOFs are incomplete: robot="
-                    << platform.documentId
-                    << ", leg=" << (legIndex + 1)
-                    << ", dof0=" << leg.baseRevoluteDofIndices[0]
-                    << ", dof1=" << leg.baseRevoluteDofIndices[1];
-            }
-        }
-    }
-
-    void captureStewartInternalPlatformVisuals(RuntimeRobot& platform)
-    {
-        platform.parallelInternalPlatformVisualsEnabled = false;
-        platform.parallelInternalPlatformDrivenLinks.clear();
-        platform.parallelInternalPlatformHomeLocalTransforms.clear();
-
-        if(!platform.instance) {
-            return;
-        }
-
-        const collision::Transform3 baseInverse =
-            platform.parallelHomeBaseTransform.inverse();
-        for(const std::string& linkName : platform.model.linkNames) {
-            if(!isStewartInternalPlatformDrivenLink(linkName)) {
-                continue;
-            }
-
-            platform.parallelInternalPlatformDrivenLinks.push_back(linkName);
-            platform.parallelInternalPlatformHomeLocalTransforms[linkName] =
-                baseInverse * platform.instance->getLinkTransform(linkName);
-        }
-
-        platform.parallelInternalPlatformVisualsEnabled =
-            !platform.parallelInternalPlatformDrivenLinks.empty();
-    }
-
-    void applyStewartInternalPlatformVisualOverride(RuntimeRobot& platform)
-    {
-        if(!platform.parallelControlEnabled ||
-            !platform.parallelInternalPlatformVisualsEnabled ||
-            !platform.visualBridge) {
-            return;
-        }
-
-        const collision::Transform3 poseTransform =
-            kine::StewartPlatformKinematics::poseTransform(platform.parallelPose);
-        for(const std::string& linkName : platform.parallelInternalPlatformDrivenLinks) {
-            const auto homeIt =
-                platform.parallelInternalPlatformHomeLocalTransforms.find(linkName);
-            if(homeIt == platform.parallelInternalPlatformHomeLocalTransforms.end()) {
-                continue;
-            }
-
-            const auto node = platform.visualBridge->linkNode(linkName);
-            if(!node) {
-                continue;
-            }
-
-            const collision::Transform3 linkTransform =
-                platform.parallelHomeBaseTransform * poseTransform * homeIt->second;
-            node->setLocal(math::eigenToGlm(linkTransform.matrix()));
-            if(platform.collisionInstance) {
-                platform.collisionInstance->setLinkTransform(linkName, linkTransform);
-            }
-        }
-    }
-
-    void applyStewartFollowerVisualOverride(
-        const RuntimeRobot& platform,
-        RuntimeRobot& follower)
-    {
-        if(!platform.parallelControlEnabled ||
-            !follower.parallelFollowerEnabled ||
-            !follower.parallelFollowerAnchorsValid ||
-            !follower.visualBridge ||
-            follower.parallelFollowerDrivenLinks.empty()) {
-            return;
-        }
-
-        const Eigen::Matrix4d followerAffine = makeLegFollowerAffine(
-            platform.parallelHomeBaseTransform,
-            platform.parallelPose,
-            follower.parallelFollowerHomeBaseAnchor,
-            follower.parallelFollowerHomePlatformAnchor);
-
-        for(const std::string& linkName : follower.parallelFollowerDrivenLinks) {
-            const auto homeIt = follower.parallelFollowerHomeLinkTransforms.find(linkName);
-            if(homeIt == follower.parallelFollowerHomeLinkTransforms.end()) {
-                continue;
-            }
-
-            const auto node = follower.visualBridge->linkNode(linkName);
-            if(!node) {
-                continue;
-            }
-
-            const Eigen::Matrix4d linkTransform =
-                followerAffine * homeIt->second.matrix();
-            node->setLocal(math::eigenToGlm(linkTransform));
-        }
-    }
-
-    void configureParallelControlIfNeeded(
-        RuntimeRobot& runtime,
-        const simulation_project::RobotDesc& robotDesc,
-        const robot::RobotModel& model)
-    {
-        if(!isStewartSimscapePlatformModel(robotDesc, model)) {
-            return;
-        }
-
-        runtime.parallelControlEnabled = true;
-        runtime.parallelHomeBaseTransform = runtime.baseTransform;
-        runtime.parallelGeometry = kine::StewartPlatformKinematics::makeDefaultGeometry();
-        runtime.parallelPose = kine::StewartPlatformPose();
-
-        std::string error;
-        if(!kine::StewartPlatformKinematics::computeActuatorLengths(
-               runtime.parallelGeometry,
-               runtime.parallelPose,
-               runtime.parallelActuatorLengths,
-               &error)) {
-            runtime.parallelControlEnabled = false;
-            LOG_WARNING("rs2026") << "Failed to initialize Stewart platform control: robot="
-                << robotDesc.id << ", error=" << error;
-            return;
-        }
-        runtime.parallelActuatorHomeLengths = runtime.parallelActuatorLengths;
-
-        LOG_INFO("rs2026") << "Stewart platform task-space control enabled: robot="
-            << robotDesc.id
-            << ", sourceModelIndex=" << robotDesc.sourceModelIndex;
-    }
-
-    void configureParallelFollowerIfNeeded(
-        RuntimeRobot& runtime,
-        const simulation_project::RobotDesc& robotDesc,
-        const robot::RobotModel& model)
-    {
-        if(!isStewartSimscapeFollowerFragment(robotDesc, model)) {
-            return;
-        }
-
-        runtime.parallelFollowerEnabled = true;
-        runtime.parallelFollowerLegIndex = -1;
-        runtime.parallelFollowerHomeTransform = runtime.baseTransform;
-
-        LOG_INFO("rs2026") << "Stewart platform follower candidate enabled: robot="
-            << robotDesc.id
-            << ", sourceModelIndex=" << robotDesc.sourceModelIndex;
     }
 
     RuntimeRobot* findRuntimeRobot(
@@ -3042,11 +2032,11 @@ namespace
 
     void setCandidateAabb(
         ProjectScenePickCandidate& candidate,
-        const fcl::AABBd& aabb)
+        const collision::Aabb& aabb)
     {
         candidate.hasAabb = true;
-        candidate.aabbMin = aabb.min_;
-        candidate.aabbMax = aabb.max_;
+        candidate.aabbMin = aabb.min;
+        candidate.aabbMax = aabb.max;
         candidate.center = (candidate.aabbMin + candidate.aabbMax) * 0.5;
         candidate.radius = (candidate.aabbMax - candidate.aabbMin).norm() * 0.5;
     }
@@ -3177,7 +2167,9 @@ namespace
         runtime.options.enableNearestPoints = desc.nearestPoints;
         runtime.options.enableDistance = desc.distance;
         runtime.options.maxContacts = static_cast<std::size_t>(std::max(0, desc.maxContacts));
-        runtime.options.distanceThreshold = desc.distanceThreshold;
+        runtime.options.distanceThreshold = desc.distanceThreshold == 0.0
+            ? std::numeric_limits<double>::max()
+            : desc.distanceThreshold;
         runtime.visualization = makeVisualizationOptions(desc.visualization);
         runtime.hasResult = false;
         runtime.lastResult.clear();
@@ -3200,49 +2192,6 @@ namespace
     }
 
     using ToolAttachmentHighlightState = robot_render::MountedAttachmentHighlightState;
-
-    struct RuntimeToolAttachmentVisual
-    {
-        std::string documentId;
-        std::string name;
-        std::string robotId;
-        std::string linkName;
-        std::string robotMountId;
-        std::string toolAssetId;
-        std::string assetKind;
-        std::string assetType;
-        std::string functionalFrameType;
-        std::filesystem::path visualPath;
-        double visualScale = 1.0;
-        collision::Transform3 linkToMount = collision::Transform3::Identity();
-        collision::Transform3 mountToAssetMount = collision::Transform3::Identity();
-        collision::Transform3 assetMountToVisual = collision::Transform3::Identity();
-        collision::Transform3 assetMountToTcp = collision::Transform3::Identity();
-        collision::Transform3 worldLink = collision::Transform3::Identity();
-        collision::Transform3 worldRobotMount = collision::Transform3::Identity();
-        collision::Transform3 worldToolMount = collision::Transform3::Identity();
-        collision::Transform3 worldVisual = collision::Transform3::Identity();
-        collision::Transform3 worldTcp = collision::Transform3::Identity();
-        bool visible = true;
-        bool enabled = true;
-        bool hasSensorIntrinsics = false;
-        simulation_project::SensorIntrinsicsDesc sensorIntrinsics;
-        robot_render::MountedAttachmentVisual visual;
-        std::size_t collisionObjectIndex = std::numeric_limits<std::size_t>::max();
-    };
-
-    struct RuntimeToolAssetPreview
-    {
-        simulation_project::AttachmentAssetDesc asset;
-        std::filesystem::path basePath;
-        std::filesystem::path visualPath;
-        collision::Transform3 mountToVisual = collision::Transform3::Identity();
-        collision::Transform3 mountToTcp = collision::Transform3::Identity();
-        std::shared_ptr<scenecore::SceneNode> rootNode;
-        std::shared_ptr<scenecore::ModelNode> modelNode;
-        glm::mat4 modelBaseLocal = glm::mat4(1.0f);
-        glm::mat4 modelLocal = glm::mat4(1.0f);
-    };
 
     simulation_project::RobotMountDesc* findRobotMountDesc(
         simulation_project::ProjectDocument& document,
@@ -3692,67 +2641,115 @@ namespace
 
 struct ProjectScene::Impl
 {
-    struct ObjectCollisionVariantMeshPreview
+    using ObjectCollisionVariantMeshPreview =
+        ProjectSceneCollisionPresentationSystem::ObjectVariantMeshPreview;
+    using ObjectCollisionVariantMeshPreviewCache =
+        ProjectSceneCollisionPresentationSystem::ObjectVariantMeshPreviewCache;
+
+    struct RuntimeCustomMesh
     {
-        std::shared_ptr<VisibleModelNode> node;
-        glm::mat4 targetLocal = glm::mat4(1.0f);
-        bool configured = false;
+        smrobot::visualization::CustomMeshHandle handle;
+        smrobot::visualization::CustomMeshDesc descriptor;
+        std::shared_ptr<rendercore::Geometry> geometry;
+        std::shared_ptr<rendercore::Material> material;
+        std::shared_ptr<rendercore::Model> model;
+        std::shared_ptr<scenecore::ModelNode> node;
     };
 
-    struct ObjectCollisionVariantMeshPreviewCache
-    {
-        std::vector<ObjectCollisionVariantMeshPreview> previews;
-        std::uint64_t revision = 0;
-    };
+    ~Impl();
 
     bool initialized = false;
-    bool showCollisionGeometry = false;
-    bool reportedCollision = false;
-    std::size_t lastContactCount = static_cast<std::size_t>(-1);
-    std::size_t lastIncludePairCount = static_cast<std::size_t>(-1);
-    std::uint64_t collisionQueryFrame = 0;
     double lastRobotPoseUpdateMs = 0.0;
-    double lastCollisionWorldUpdateMs = 0.0;
-    double lastCollisionOverlayMs = 0.0;
-    double lastCollisionOverlayHighlightMs = 0.0;
-    double lastCollisionOverlayDebugBuildMs = 0.0;
-    double lastCollisionOverlayVariantFilterMs = 0.0;
-    double lastCollisionOverlayDebugSubmitMs = 0.0;
-    double lastCollisionOverlayAuxFramesMs = 0.0;
-    std::size_t lastCollisionOverlayDetectorCount = 0;
-    std::size_t lastCollisionOverlayGeometryCount = 0;
-    std::size_t lastCollisionOverlayContactCount = 0;
-    std::size_t lastCollisionOverlayNearestCount = 0;
-    std::size_t lastCollisionOverlayPrimitiveEstimate = 0;
-    std::size_t lastCollisionOverlayLineEstimate = 0;
-    simulation_runtime::ProjectSelectionState selectionState;
-    ProjectSceneInteractionMode interactionMode = ProjectSceneInteractionMode::Browse;
-    std::string activePreviewRobotMountId;
-    std::vector<MaterialOverride> selectionOverrides;
-    std::vector<MaterialOverride> pairPreviewOverrides;
+    ProjectSceneCollisionPresentationSystem collisionPresentationSystem;
+    bool& showCollisionGeometry =
+        collisionPresentationSystem.state().showGeometry;
+    bool& reportedCollision =
+        collisionPresentationSystem.state().reportedCollision;
+    std::size_t& lastContactCount =
+        collisionPresentationSystem.state().lastContactCount;
+    std::size_t& lastIncludePairCount =
+        collisionPresentationSystem.state().lastIncludePairCount;
+    std::uint64_t& collisionQueryFrame =
+        collisionPresentationSystem.state().queryFrame;
+    double& lastCollisionWorldUpdateMs =
+        collisionPresentationSystem.state().frameMetrics.worldUpdateMs;
+    double& lastCollisionOverlayMs =
+        collisionPresentationSystem.state().frameMetrics.overlayMs;
+    double& lastCollisionOverlayHighlightMs =
+        collisionPresentationSystem.state().frameMetrics.overlayHighlightMs;
+    double& lastCollisionOverlayDebugBuildMs =
+        collisionPresentationSystem.state().frameMetrics.overlayDebugBuildMs;
+    double& lastCollisionOverlayVariantFilterMs =
+        collisionPresentationSystem.state().frameMetrics.overlayVariantFilterMs;
+    double& lastCollisionOverlayDebugSubmitMs =
+        collisionPresentationSystem.state().frameMetrics.overlayDebugSubmitMs;
+    double& lastCollisionOverlayAuxFramesMs =
+        collisionPresentationSystem.state().frameMetrics.overlayAuxFramesMs;
+    std::size_t& lastCollisionOverlayDetectorCount =
+        collisionPresentationSystem.state().frameMetrics.overlayDetectorCount;
+    std::size_t& lastCollisionOverlayGeometryCount =
+        collisionPresentationSystem.state().frameMetrics.overlayGeometryCount;
+    std::size_t& lastCollisionOverlayContactCount =
+        collisionPresentationSystem.state().frameMetrics.overlayContactCount;
+    std::size_t& lastCollisionOverlayNearestCount =
+        collisionPresentationSystem.state().frameMetrics.overlayNearestCount;
+    std::size_t& lastCollisionOverlayPrimitiveEstimate =
+        collisionPresentationSystem.state().frameMetrics.overlayPrimitiveEstimate;
+    std::size_t& lastCollisionOverlayLineEstimate =
+        collisionPresentationSystem.state().frameMetrics.overlayLineEstimate;
+    ProjectSceneInteractionSystem interactionSystem;
     int width = 1;
     int height = 1;
-    cameracore::CameraControllerPtr controller;
     assetcore::ModelAssetLeaseCache modelAssetCache;
     rendercore::GeometryResourceCache geometryResourceCache;
     std::string assetCorrelationId;
     scenecore::SceneGraph sceneGraph;
     scenecore::Renderer renderer;
-    std::shared_ptr<scenecore::CameraNode> mainCameraNode;
-    std::shared_ptr<scenecore::MeshPass> collisionMeshPass;
-    std::shared_ptr<scenecore::PrimitivePass> collisionPrimitivePass;
-    std::shared_ptr<scenecore::TrajectoryPass> collisionLinePass;
-    simulation_project::ProjectDocument projectDocument;
-    bool projectDocumentSet = false;
+    ProjectSceneEnvironmentSystem environmentSystem;
+    std::shared_ptr<scenecore::PrimitivePass> environmentPass;
+    std::shared_ptr<scenecore::GridPass> gridPass;
+    std::shared_ptr<scenecore::PlanarShadowPass> planarShadowPass;
+    ProjectSceneCameraSystem cameraSystem;
+    std::shared_ptr<scenecore::MeshPass>& collisionMeshPass =
+        collisionPresentationSystem.state().meshPass;
+    std::shared_ptr<scenecore::PrimitivePass>& collisionPrimitivePass =
+        collisionPresentationSystem.state().primitivePass;
+    std::shared_ptr<scenecore::TrajectoryPass>& collisionLinePass =
+        collisionPresentationSystem.state().linePass;
+    std::unique_ptr<simulation_project::ProjectDocument> pendingProjectDocument;
     std::filesystem::path projectBasePath;
-    std::vector<RuntimeRobot> robots;
-    std::vector<RuntimeSceneObject> objects;
-    simulation_runtime::RuntimeMountedAttachmentGraph mountedAttachments;
-    std::vector<RuntimeToolAttachmentVisual> toolAttachments;
-    bool toolAssetPreviewSet = false;
-    RuntimeToolAssetPreview toolAssetPreview;
-    std::size_t activeToolAttachmentIndex = static_cast<std::size_t>(-1);
-    std::string activeToolFrameRobotId;
+    std::unique_ptr<simulation_runtime::ProjectSimulationRuntime> simulationRuntime;
+    simulation_runtime::ProjectParallelMechanismRuntime parallelRuntime;
+    ProjectScenePreviewOverlayState previewOverlay;
+    ProjectSceneDocumentProjectionSystem documentProjectionSystem;
+    std::vector<RuntimeRobot>& robots = documentProjectionSystem.robots();
+    std::vector<RuntimeSceneObject>& objects = documentProjectionSystem.objects();
+    ProjectSceneAttachmentVisualSystem attachmentVisualSystem;
+    ProjectSceneStewartPresentationSystem stewartPresentationSystem;
+    CollisionScene& collisionScene =
+        collisionPresentationSystem.state().scene;
+    std::vector<ProjectCollisionDetectorRuntime>& collisionDetectors =
+        collisionPresentationSystem.state().detectors;
+    bool& collisionQueriesEnabled =
+        collisionPresentationSystem.state().queriesEnabled;
+    bool& collisionRuntimeBuilt =
+        collisionPresentationSystem.state().runtimeBuilt;
+    bool& collisionRuntimeBuildInProgress =
+        collisionPresentationSystem.state().runtimeBuildInProgress;
+    std::string& activeCollisionDetectorId =
+        collisionPresentationSystem.state().activeDetectorId;
+    std::unordered_map<std::string, std::string>& visibleCollisionVariantIds =
+        collisionPresentationSystem.state().visibleVariantIds;
+    std::unordered_map<std::string, VisibleCollisionVariantFilter>&
+        visibleCollisionVariantFilters =
+            collisionPresentationSystem.state().visibleVariantFilters;
+    std::unordered_map<std::string, VisibleCollisionVariantFilter>&
+        visibleCollisionVariantFiltersByRuntimeLink =
+            collisionPresentationSystem.state().visibleVariantFiltersByRuntimeLink;
+    CollisionGeometryOverlayCache& collisionGeometryOverlayCache =
+        collisionPresentationSystem.state().geometryOverlayCache;
+    std::uint64_t& collisionGeometryOverlayCacheVersion =
+        collisionPresentationSystem.state().geometryOverlayCacheVersion;
     std::string sprayRangeRobotId;
     bool sprayRangeVisible = false;
     std::string endEffectorTraceRobotId;
@@ -3765,64 +2762,36 @@ struct ProjectScene::Impl
         std::vector<std::uint32_t> indices;
     };
     std::unordered_map<std::string, std::vector<SpraySurfaceMesh>> spraySurfaceMeshes;
-    std::string selectedJointFrameRobotId;
-    std::string selectedJointFrameName;
-    std::string selectedObjectFrameObjectId;
-    std::string selectedObjectFrameId;
     bool trajectoryControlPointMarkersVisible = true;
     std::string trajectoryControlPointOverlayId;
     std::vector<collision::Transform3> trajectoryControlPointOverlay;
-    ProjectScene::ToolFrameVisibility toolFrameVisibility;
-    bool previewSelectedLinkFrameVisible = false;
-    bool previewRobotMountFrameVisible = false;
-    std::vector<std::string> pinnedRobotMountFrameIds;
-    std::vector<ProjectScene::RobotLinkGroup> robotLinks;
-    std::vector<ProjectScene::SceneObjectGroup> sceneObjects;
-    std::vector<ProjectScene::PointCloudGroup> pointClouds;
-    CollisionScene collisionScene;
-    std::vector<ProjectCollisionDetectorRuntime> collisionDetectors;
-    bool collisionQueriesEnabled = false;
-    bool collisionRuntimeBuilt = false;
-    bool collisionRuntimeBuildInProgress = false;
-    std::string activeCollisionDetectorId;
-    std::unordered_map<std::string, std::string> visibleCollisionVariantIds;
-    std::unordered_map<std::string, VisibleCollisionVariantFilter> visibleCollisionVariantFilters;
-    std::unordered_map<std::string, VisibleCollisionVariantFilter> visibleCollisionVariantFiltersByRuntimeLink;
-    CollisionGeometryOverlayCache collisionGeometryOverlayCache;
-    std::uint64_t collisionGeometryOverlayCacheVersion = 1;
     simulation_project::ColorDesc defaultBackgroundColor;
     Eigen::Vector4f backgroundColor = Eigen::Vector4f(0.05f, 0.06f, 0.08f, 1.0f);
-    bool mountFrameLinkFocusActive = false;
-    std::string mountFrameFocusRobotId;
-    std::string mountFrameFocusLinkName;
-    bool objectFrameObjectFocusActive = false;
-    std::string objectFrameFocusObjectId;
-    bool mountedAttachmentFocusActive = false;
-    std::string mountedAttachmentFocusId;
-    bool previewObjectCollisionModelActive = false;
-    std::string previewObjectCollisionModelObjectId;
-    std::string previewObjectCollisionModelVariantId;
-    std::unordered_map<std::string, ObjectCollisionVariantMeshPreviewCache>
-        objectCollisionVariantMeshPreviews;
-    std::uint64_t objectCollisionVariantMeshPreviewRevision = 1;
-    CameraLookAtState cameraLookAt;
-    bool cameraAnimationActive = false;
-    CameraLookAtState cameraAnimationStart;
-    CameraLookAtState cameraAnimationEnd;
-    double cameraAnimationElapsed = 0.0;
-    double cameraAnimationDuration = 0.45;
-    double lastCameraAnimationUpdateTime = -1.0;
+    bool& previewObjectCollisionModelActive =
+        collisionPresentationSystem.state().objectPreviewActive;
+    std::string& previewObjectCollisionModelObjectId =
+        collisionPresentationSystem.state().objectPreviewObjectId;
+    std::string& previewObjectCollisionModelVariantId =
+        collisionPresentationSystem.state().objectPreviewVariantId;
+    std::unordered_map<std::string, ObjectCollisionVariantMeshPreviewCache>&
+        objectCollisionVariantMeshPreviews =
+            collisionPresentationSystem.state().objectVariantMeshPreviews;
+    std::uint64_t& objectCollisionVariantMeshPreviewRevision =
+        collisionPresentationSystem.state().objectVariantMeshPreviewRevision;
+    std::unordered_map<std::uint64_t, RuntimeCustomMesh> customMeshes;
+    std::unordered_map<std::string, std::uint64_t> customMeshKeys;
+    std::uint64_t nextCustomMeshHandle = 1;
 
     bool initializeOpenGlRuntime();
     void applyCollisionOverlayRenderConfig();
+    bool hasProjectDocument() const;
+    const simulation_project::ProjectDocument& document() const;
+    simulation_project::ProjectDocument effectivePreviewDocument() const;
     void ensureProjectDocument();
     CameraSceneBounds fullSceneBounds() const;
     CameraSceneBounds robotLinkBounds(const std::string& robotId, const std::string& linkName) const;
     CameraSceneBounds sceneObjectBounds(const std::string& objectId) const;
     CameraSceneBounds mountedAttachmentBounds(const std::string& attachmentId) const;
-    void applyCameraLookAt(const CameraLookAtState& state);
-    void animateCameraTo(const CameraLookAtState& state, double duration);
-    void updateCameraAnimation(double timeSeconds);
     void applyMountFrameLinkFocusVisibility();
     void invalidateCollisionRuntime();
     std::vector<simulation_runtime::RuntimeAttachmentRobotContext> attachmentRobotContexts() const;
@@ -3832,13 +2801,6 @@ struct ProjectScene::Impl
     void buildProjectPointClouds();
     void buildProjectToolAttachments();
     void syncProjectToolAttachments();
-    void configureStewartGroups();
-    void syncStewartFollowers(const RuntimeRobot& platform);
-    void syncAllStewartFollowers();
-    void setStewartPlatformBaseTransform(RuntimeRobot& platform, const collision::Transform3& baseTransform);
-    void applyStewartInternalPlatformVisualOverrides(RuntimeRobot& platform);
-    void applyStewartFollowerVisualOverrides(const RuntimeRobot& platform);
-    void applyAllStewartFollowerVisualOverrides();
     void ensureToolAttachmentCollisionObjects();
     bool ensureCollisionRuntimeBuilt();
     void registerRuntimeCollisionObjects();
@@ -3883,14 +2845,12 @@ std::string ProjectScene::Impl::visibleCollisionVariantId(
     const std::string& robotId,
     const std::string& linkName) const
 {
-    const auto it = visibleCollisionVariantIds.find(collisionVariantSelectionKey(robotId, linkName));
-    return it != visibleCollisionVariantIds.end() ? it->second : std::string();
+    return collisionPresentationSystem.visibleVariantId(robotId, linkName);
 }
 
 void ProjectScene::Impl::invalidateCollisionGeometryOverlayCache()
 {
-    collisionGeometryOverlayCache.clear();
-    ++collisionGeometryOverlayCacheVersion;
+    collisionPresentationSystem.invalidateGeometryOverlayCache();
 }
 
 void ProjectScene::Impl::filterCollisionDebugDrawByVisibleVariants(CollisionDebugDrawData& data) const
@@ -4009,6 +2969,7 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     }
 
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
@@ -4016,16 +2977,29 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     rendercore::ShaderLibrary::initialize();
     renderer.initialize();
 
-    mainCameraNode = createMainCamera(sceneGraph);
-    scenecore::DefaultLighting::createDefaultLighting(sceneGraph, 0.6f);
-    controller = cameracore::CameraFactory::createOrbitController(mainCameraNode->camera());
+    scenecore::DefaultLighting::createDefaultLighting(sceneGraph, 0.16f);
+    if(!cameraSystem.initialize(sceneGraph)) {
+        return false;
+    }
 
     collisionMeshPass = std::make_shared<scenecore::MeshPass>(rendercore::ShaderLibrary::getShader("MLRobotUBO"));
     collisionPrimitivePass = std::make_shared<scenecore::PrimitivePass>();
     collisionLinePass = std::make_shared<scenecore::TrajectoryPass>();
     applyCollisionOverlayRenderConfig();
 
-    renderer.addPass(std::make_shared<scenecore::GridPass>(scenecore::GridType::FadedInfiniteGrid));
+    environmentPass = std::make_shared<scenecore::PrimitivePass>();
+    scenecore::RenderFilter environmentFilter;
+    environmentFilter.layerMask = scenecore::renderLayerMask({ scenecore::RenderLayer::VisualMesh });
+    environmentFilter.categoryMask = scenecore::renderCategoryMask({ scenecore::RenderCategory::Environment });
+    environmentFilter.featureMask = scenecore::renderFeatureMask({ scenecore::RenderFeature::Visual });
+    environmentPass->setFilter(environmentFilter);
+    renderer.addPass(environmentPass);
+    gridPass = std::make_shared<scenecore::GridPass>(scenecore::GridType::FadedInfiniteGrid);
+    gridPass->setEnabled(environmentSystem.showsGrid());
+    renderer.addPass(gridPass);
+    planarShadowPass = std::make_shared<scenecore::PlanarShadowPass>();
+    planarShadowPass->setEnabled(environmentSystem.hasGround());
+    renderer.addPass(planarShadowPass);
     renderer.addPass(std::make_shared<scenecore::MeshPass>(rendercore::ShaderLibrary::getShader("MLRobotUBO")));
     renderer.addPass(collisionMeshPass);
     renderer.addPass(std::make_shared<scenecore::PointCloudPass>());
@@ -4037,46 +3011,77 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
 
 void ProjectScene::Impl::applyCollisionOverlayRenderConfig()
 {
-    scenecore::CollisionOverlayRenderConfig overlayConfig;
-    overlayConfig.depthMode = scenecore::OverlayDepthMode::AlwaysOnTop;
+    robot_render::CollisionOverlayOptions overlayOptions;
+    overlayOptions.depthMode = scenecore::OverlayDepthMode::AlwaysOnTop;
 
     if(!showCollisionGeometry) {
-        overlayConfig.showExact = false;
-        overlayConfig.showSimplified = false;
-        overlayConfig.showSafety = false;
-        overlayConfig.showPlanningProxy = false;
+        overlayOptions.showExact = false;
+        overlayOptions.showSimplified = false;
+        overlayOptions.showSafety = false;
+        overlayOptions.showPlanningProxy = false;
     }
 
     if(collisionPrimitivePass) {
-        collisionPrimitivePass->setCollisionOverlayConfig(overlayConfig);
+        collisionPrimitivePass->setOverlayConfig(
+            robot_render::CollisionRenderBridge::primitiveOverlayConfig(overlayOptions));
     }
     if(collisionMeshPass) {
-        collisionMeshPass->setCollisionOverlayConfig(overlayConfig);
+        collisionMeshPass->setOverlayConfig(
+            robot_render::CollisionRenderBridge::geometryOverlayConfig(overlayOptions));
     }
     if(collisionLinePass) {
-        collisionLinePass->setCollisionOverlayConfig(overlayConfig);
+        collisionLinePass->setOverlayConfig(
+            robot_render::CollisionRenderBridge::lineOverlayConfig(overlayOptions));
     }
 }
 
 void ProjectScene::Impl::ensureProjectDocument()
 {
     const std::filesystem::path projectPath = simulation_project::RuntimePaths::applicationRoot();
-    if(!projectDocumentSet) {
+    if(!hasProjectDocument()) {
         const std::filesystem::path defaultProjectFile =
             simulation_project::RuntimePaths::configRoot() / "projects" / "420.scene.20260625.json";
 
+        auto loadedDocument = std::make_unique<simulation_project::ProjectDocument>();
         std::string loadError;
-        if(!simulation_project::loadProjectDocument(defaultProjectFile, projectDocument, &loadError)) {
+        if(!simulation_project::loadProjectDocument(
+               defaultProjectFile,
+               *loadedDocument,
+               &loadError)) {
             throw std::runtime_error("Failed to load default scene project: " + loadError);
         }
+        pendingProjectDocument = std::move(loadedDocument);
         projectBasePath = projectPath;
     } else if(projectBasePath.empty()) {
         projectBasePath = projectPath;
     }
 }
 
+bool ProjectScene::Impl::hasProjectDocument() const
+{
+    return simulationRuntime != nullptr || pendingProjectDocument != nullptr;
+}
+
+const simulation_project::ProjectDocument& ProjectScene::Impl::document() const
+{
+    if(pendingProjectDocument) {
+        return *pendingProjectDocument;
+    }
+    if(simulationRuntime) {
+        return simulationRuntime->document();
+    }
+    static const simulation_project::ProjectDocument emptyDocument;
+    return emptyDocument;
+}
+
+simulation_project::ProjectDocument ProjectScene::Impl::effectivePreviewDocument() const
+{
+    return previewOverlay.apply(document());
+}
+
 CameraSceneBounds ProjectScene::Impl::fullSceneBounds() const
 {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
     CameraSceneBounds bounds;
     bounds.includePoint(Vec3::Zero());
 
@@ -4090,7 +3095,7 @@ CameraSceneBounds ProjectScene::Impl::fullSceneBounds() const
         if(robot.collisionInstance) {
             for(const auto& objectItem : robot.collisionInstance->objects()) {
                 if(objectItem.second) {
-                    bounds.includeAabb(objectItem.second->fcl()->getAABB());
+                    bounds.includeAabb(objectItem.second->aabb());
                 }
             }
         }
@@ -4105,11 +3110,11 @@ CameraSceneBounds ProjectScene::Impl::fullSceneBounds() const
                 object.pointCloudLocalBoundsMax);
         }
         if(object.collisionObject) {
-            bounds.includeAabb(object.collisionObject->fcl()->getAABB());
+            bounds.includeAabb(object.collisionObject->aabb());
         }
         for(const RuntimeSceneCollisionObject& collisionObject : object.collisionObjects) {
             if(collisionObject.collisionObject) {
-                bounds.includeAabb(collisionObject.collisionObject->fcl()->getAABB());
+                bounds.includeAabb(collisionObject.collisionObject->aabb());
             }
         }
     }
@@ -4148,7 +3153,7 @@ CameraSceneBounds ProjectScene::Impl::robotLinkBounds(
 
             const LinkInfo* info = robot->collisionInstance->getLinkInfo(objectItem.second->id());
             if(info != nullptr && info->linkName == linkName) {
-                bounds.includeAabb(objectItem.second->fcl()->getAABB());
+                bounds.includeAabb(objectItem.second->aabb());
             }
         }
     }
@@ -4172,11 +3177,11 @@ CameraSceneBounds ProjectScene::Impl::sceneObjectBounds(const std::string& objec
             object->pointCloudLocalBoundsMax);
     }
     if(object->collisionObject) {
-        bounds.includeAabb(object->collisionObject->fcl()->getAABB());
+        bounds.includeAabb(object->collisionObject->aabb());
     }
     for(const RuntimeSceneCollisionObject& collisionObject : object->collisionObjects) {
         if(collisionObject.collisionObject) {
-            bounds.includeAabb(collisionObject.collisionObject->fcl()->getAABB());
+            bounds.includeAabb(collisionObject.collisionObject->aabb());
         }
     }
     return bounds;
@@ -4184,6 +3189,7 @@ CameraSceneBounds ProjectScene::Impl::sceneObjectBounds(const std::string& objec
 
 CameraSceneBounds ProjectScene::Impl::mountedAttachmentBounds(const std::string& attachmentId) const
 {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
     CameraSceneBounds bounds;
     const RuntimeToolAttachmentVisual* attachment = nullptr;
     for(const RuntimeToolAttachmentVisual& candidate : toolAttachments) {
@@ -4220,73 +3226,17 @@ CameraSceneBounds ProjectScene::Impl::mountedAttachmentBounds(const std::string&
     return bounds;
 }
 
-void ProjectScene::Impl::applyCameraLookAt(const CameraLookAtState& state)
-{
-    if(!state.valid || !mainCameraNode || !mainCameraNode->camera()) {
-        return;
-    }
-
-    mainCameraNode->camera()->lookAt(state.position, state.target, state.up);
-    cameraLookAt = state;
-}
-
-void ProjectScene::Impl::animateCameraTo(const CameraLookAtState& state, double duration)
-{
-    if(!state.valid || !mainCameraNode || !mainCameraNode->camera()) {
-        return;
-    }
-
-    if(!cameraLookAt.valid) {
-        cameraLookAt.position = mainCameraNode->camera()->position();
-        cameraLookAt.target = Vec3::Zero().cast<float>();
-        cameraLookAt.up = Eigen::Vector3f(0.0f, 0.0f, 1.0f);
-        cameraLookAt.valid = true;
-    } else {
-        cameraLookAt.position = mainCameraNode->camera()->position();
-    }
-
-    cameraAnimationStart = cameraLookAt;
-    cameraAnimationEnd = state;
-    cameraAnimationElapsed = 0.0;
-    cameraAnimationDuration = std::max(0.05, duration);
-    lastCameraAnimationUpdateTime = -1.0;
-    cameraAnimationActive = true;
-}
-
-void ProjectScene::Impl::updateCameraAnimation(double timeSeconds)
-{
-    if(!cameraAnimationActive) {
-        return;
-    }
-
-    if(lastCameraAnimationUpdateTime < 0.0) {
-        lastCameraAnimationUpdateTime = timeSeconds;
-    }
-    const double delta = std::max(0.0, timeSeconds - lastCameraAnimationUpdateTime);
-    lastCameraAnimationUpdateTime = timeSeconds;
-    cameraAnimationElapsed += delta;
-
-    const double linearT = cameraAnimationDuration > 0.0
-        ? std::clamp(cameraAnimationElapsed / cameraAnimationDuration, 0.0, 1.0)
-        : 1.0;
-    const double smoothT = linearT * linearT * (3.0 - 2.0 * linearT);
-    applyCameraLookAt(interpolateCameraLookAt(cameraAnimationStart, cameraAnimationEnd, smoothT));
-    if(linearT >= 1.0) {
-        cameraAnimationActive = false;
-        applyCameraLookAt(cameraAnimationEnd);
-    }
-}
-
 void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
 {
+    auto& toolAttachments = attachmentVisualSystem.visuals();
     const bool showFullScene =
-        !mountFrameLinkFocusActive &&
-        !objectFrameObjectFocusActive &&
-        !mountedAttachmentFocusActive;
+        !cameraSystem.mountFrameLinkFocusActive() &&
+        !cameraSystem.objectFrameObjectFocusActive() &&
+        !cameraSystem.mountedAttachmentFocusActive();
     for(RuntimeRobot& robot : robots) {
         const bool focusedRobot =
-            mountFrameLinkFocusActive &&
-            robot.documentId == mountFrameFocusRobotId;
+            cameraSystem.mountFrameLinkFocusActive() &&
+            robot.documentId == cameraSystem.mountFrameFocusRobotId();
         if(robot.visualBridge && robot.visualBridge->rootNode()) {
             robot.visualBridge->rootNode()->setVisible(showFullScene || focusedRobot);
         }
@@ -4300,24 +3250,25 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
             if(linkNode) {
                 linkNode->setVisible(
                     showFullScene ||
-                    (focusedRobot && linkName == mountFrameFocusLinkName));
+                    (focusedRobot && linkName == cameraSystem.mountFrameFocusLinkName()));
             }
         }
     }
 
     for(RuntimeSceneObject& object : objects) {
-        bool visible = objectFrameObjectFocusActive && object.documentId == objectFrameFocusObjectId;
+        bool visible = cameraSystem.objectFrameObjectFocusActive() &&
+            object.documentId == cameraSystem.objectFrameFocusObjectId();
         if(showFullScene) {
             if(object.pointCloudNode) {
                 visible = true;
                 if(const simulation_project::PointCloudDesc* pointCloud =
-                    findPointCloudDesc(projectDocument, object.documentId)) {
+                    findPointCloudDesc(document(), object.documentId)) {
                     visible = pointCloud->visualization.visible;
                 }
             } else if(object.visualNode) {
                 visible = true;
                 if(const simulation_project::SceneObjectDesc* sceneObject =
-                    findSceneObjectDesc(projectDocument, object.documentId)) {
+                    findSceneObjectDesc(document(), object.documentId)) {
                     visible = sceneObject->visible;
                 }
             }
@@ -4333,7 +3284,8 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
     for(RuntimeToolAttachmentVisual& attachment : toolAttachments) {
         bool attachmentVisible = showFullScene
             ? attachment.visible
-            : (mountedAttachmentFocusActive && attachment.documentId == mountedAttachmentFocusId);
+            : (cameraSystem.mountedAttachmentFocusActive() &&
+                attachment.documentId == cameraSystem.mountedAttachmentFocusId());
         robot_render::MountedAttachmentVisualBridge::setVisible(
             attachment.visual,
             attachmentVisible);
@@ -4342,6 +3294,7 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
 
 void ProjectScene::Impl::invalidateCollisionRuntime()
 {
+    auto& toolAttachments = attachmentVisualSystem.visuals();
     collisionRuntimeBuilt = false;
     collisionRuntimeBuildInProgress = false;
     collisionScene = CollisionScene();
@@ -4398,377 +3351,55 @@ std::vector<simulation_runtime::RuntimeAttachmentRobotContext> ProjectScene::Imp
 
 bool ProjectScene::Impl::rebuildMountedAttachmentGraph()
 {
+    if(previewOverlay.empty()) {
+        if(!simulationRuntime) {
+            return false;
+        }
+        attachmentVisualSystem.useMountedGraph(
+            simulationRuntime->mountedAttachmentGraph());
+        return true;
+    }
+
+    auto& mountedAttachments = attachmentVisualSystem.previewGraph();
+    const simulation_project::ProjectDocument previewDocument =
+        effectivePreviewDocument();
     const simulation_project::AssetResolveContext resolveContext =
         ProjectRuntimeBuilder::makeAssetResolveContext(
             projectBasePath,
-            projectDocument);
+            previewDocument);
     const simulation_runtime::Result result =
-        mountedAttachments.load(projectDocument, resolveContext, attachmentRobotContexts());
+        mountedAttachments.load(
+            previewDocument,
+            resolveContext,
+            attachmentRobotContexts());
     if(!result.success) {
         std::cerr << "Failed to build mounted attachment runtime graph: "
             << result.message << "\n";
         mountedAttachments.clear();
         return false;
     }
+    attachmentVisualSystem.usePreviewGraph();
     return true;
-}
-
-void ProjectScene::Impl::syncStewartFollowers(const RuntimeRobot& platform)
-{
-    if(!platform.parallelControlEnabled) {
-        return;
-    }
-
-    for(RuntimeRobot& follower : robots) {
-        if(!follower.parallelFollowerEnabled ||
-            !follower.parallelFollowerAnchorsValid ||
-            follower.documentId == platform.documentId ||
-            !sameStewartSource(platform, follower)) {
-            continue;
-        }
-
-        const std::size_t legIndex =
-            static_cast<std::size_t>(follower.parallelFollowerLegIndex);
-        if(follower.parallelFollowerActuatorDofIndex >= 0 && legIndex < 6) {
-            const double targetLength = platform.parallelActuatorLengths[legIndex];
-            const double travel =
-                follower.parallelFollowerActuatorSign *
-                (targetLength - follower.parallelFollowerHomeLength);
-            follower.instance->setJoint(
-                static_cast<std::size_t>(follower.parallelFollowerActuatorDofIndex),
-                travel);
-        }
-
-        follower.baseTransform = follower.parallelFollowerHomeTransform;
-    }
-}
-
-void ProjectScene::Impl::configureStewartGroups()
-{
-    for(RuntimeRobot& platform : robots) {
-        if(!platform.parallelControlEnabled) {
-            continue;
-        }
-
-        kine::StewartPlatformGeometry importedGeometry = platform.parallelGeometry;
-        std::array<bool, 6> baseAnchorsFound{};
-        std::array<bool, 6> platformAnchorsFound{};
-        std::array<std::vector<collision::Vec3>, 6> baseAnchorCandidates;
-        std::array<std::vector<collision::Vec3>, 6> baseFallbackAnchorCandidates;
-        std::array<std::vector<collision::Vec3>, 6> platformAnchorCandidates;
-
-        const collision::Transform3 platformHomeInverse =
-            platform.parallelHomeBaseTransform.inverse();
-
-        for(RuntimeRobot& candidate : robots) {
-            if(!sameStewartSource(platform, candidate) ||
-                !candidate.instance) {
-                continue;
-            }
-
-            for(int legIndex = 0; legIndex < 6; ++legIndex) {
-                const std::size_t index = static_cast<std::size_t>(legIndex);
-                collectJointAnchorsForLeg(
-                    candidate,
-                    stewartLowerActuatorMarker(),
-                    legIndex,
-                    baseAnchorCandidates[index]);
-                collectJointAnchorsForLeg(
-                    candidate,
-                    stewartHookeMarker(),
-                    legIndex,
-                    baseFallbackAnchorCandidates[index]);
-                collectJointAnchorsForLeg(
-                    candidate,
-                    stewartUpperActuatorMarker(),
-                    legIndex,
-                    platformAnchorCandidates[index]);
-            }
-        }
-
-        for(int legIndex = 0; legIndex < 6; ++legIndex) {
-            const std::size_t index = static_cast<std::size_t>(legIndex);
-            if(baseAnchorCandidates[index].empty()) {
-                baseAnchorCandidates[index] = baseFallbackAnchorCandidates[index];
-            }
-            if(baseAnchorCandidates[index].empty()) {
-                for(RuntimeRobot& candidate : robots) {
-                    if(!sameStewartSource(platform, candidate) ||
-                        !candidate.instance) {
-                        continue;
-                    }
-                    collectLinkOriginAnchorForLeg(
-                        candidate,
-                        stewartLowerActuatorMarker(),
-                        legIndex,
-                        baseAnchorCandidates[index]);
-                }
-            }
-            if(baseAnchorCandidates[index].empty()) {
-                for(RuntimeRobot& candidate : robots) {
-                    if(!sameStewartSource(platform, candidate) ||
-                        !candidate.instance) {
-                        continue;
-                    }
-                    collectLinkOriginAnchorForLeg(
-                        candidate,
-                        stewartHookeMarker(),
-                        legIndex,
-                        baseAnchorCandidates[index]);
-                }
-            }
-            if(platformAnchorCandidates[index].empty()) {
-                for(RuntimeRobot& candidate : robots) {
-                    if(!sameStewartSource(platform, candidate) ||
-                        !candidate.instance) {
-                        continue;
-                    }
-                    collectLinkOriginAnchorForLeg(
-                        candidate,
-                        stewartUpperActuatorMarker(),
-                        legIndex,
-                        platformAnchorCandidates[index]);
-                }
-            }
-
-            collision::Vec3 baseAnchorWorld = collision::Vec3::Zero();
-            if(chooseLowestLocalZAnchor(
-                   baseAnchorCandidates[index],
-                   platformHomeInverse,
-                   baseAnchorWorld)) {
-                importedGeometry.baseAnchors[index] =
-                    platformHomeInverse * baseAnchorWorld;
-                baseAnchorsFound[index] = true;
-            }
-
-            collision::Vec3 platformAnchorWorld = collision::Vec3::Zero();
-            if(baseAnchorsFound[index] &&
-                chooseFarthestAnchor(
-                    platformAnchorCandidates[index],
-                    baseAnchorWorld,
-                    platformAnchorWorld)) {
-                importedGeometry.platformAnchors[index] =
-                    platformHomeInverse * platformAnchorWorld;
-                platformAnchorsFound[index] = true;
-            }
-        }
-
-        for(RuntimeRobot& follower : robots) {
-            if(!follower.parallelFollowerEnabled ||
-                follower.documentId == platform.documentId ||
-                !sameStewartSource(platform, follower) ||
-                !follower.instance) {
-                continue;
-            }
-
-            const std::string upperLink = findFirstLinkContaining(
-                follower.model,
-                stewartUpperActuatorMarker());
-            if(upperLink.empty()) {
-                continue;
-            }
-
-            const int legIndex = actuatorLegIndexFromLinkName(upperLink);
-            if(legIndex < 0 || legIndex >= 6) {
-                continue;
-            }
-            const std::size_t index = static_cast<std::size_t>(legIndex);
-            if(!baseAnchorsFound[index] || !platformAnchorsFound[index]) {
-                continue;
-            }
-
-            std::string baseLink = findFirstLinkForLeg(
-                follower.model,
-                stewartLowerActuatorMarker(),
-                legIndex);
-            if(baseLink.empty()) {
-                baseLink = findFirstLinkForLeg(
-                    follower.model,
-                    stewartHookeMarker(),
-                    legIndex);
-            }
-
-            follower.parallelFollowerLegIndex = legIndex;
-            follower.parallelFollowerHomeTransform = follower.baseTransform;
-            follower.parallelFollowerHomeBaseAnchor = importedGeometry.baseAnchors[index];
-            follower.parallelFollowerHomePlatformAnchor = importedGeometry.platformAnchors[index];
-            follower.parallelFollowerAnchorsValid = true;
-            follower.parallelFollowerHomeLength =
-                (follower.parallelFollowerHomePlatformAnchor -
-                    follower.parallelFollowerHomeBaseAnchor).norm();
-            follower.parallelFollowerActuatorDofIndex =
-                findStewartFollowerActuatorDofIndex(follower, legIndex);
-            follower.parallelFollowerActuatorSign =
-                calibrateStewartFollowerActuatorSign(
-                    follower,
-                    follower.parallelFollowerActuatorDofIndex,
-                    baseLink,
-                    upperLink);
-            captureStewartFollowerDrivenLinks(follower, legIndex);
-            LOG_INFO("rs2026") << "Stewart follower configured: platform="
-                << platform.documentId
-                << ", follower=" << follower.documentId
-                << ", leg=" << (legIndex + 1)
-                << ", homeLength=" << follower.parallelFollowerHomeLength << " m"
-                << ", actuatorDof=" << follower.parallelFollowerActuatorDofIndex
-                << ", actuatorSign=" << follower.parallelFollowerActuatorSign
-                << ", drivenLinks=" << follower.parallelFollowerDrivenLinks.size();
-        }
-
-        const bool hasAllAnchors =
-            std::all_of(baseAnchorsFound.begin(), baseAnchorsFound.end(), [](bool found) {
-                return found;
-            }) &&
-            std::all_of(platformAnchorsFound.begin(), platformAnchorsFound.end(), [](bool found) {
-                return found;
-            });
-        if(!hasAllAnchors) {
-            LOG_WARNING("rs2026") << "Stewart imported geometry incomplete: robot="
-                << platform.documentId;
-            continue;
-        }
-
-        platform.parallelGeometry = importedGeometry;
-        std::string error;
-        if(!kine::StewartPlatformKinematics::computeActuatorLengths(
-               platform.parallelGeometry,
-               platform.parallelPose,
-               platform.parallelActuatorLengths,
-               &error)) {
-            LOG_WARNING("rs2026") << "Failed to initialize imported Stewart geometry: robot="
-                << platform.documentId << ", error=" << error;
-        } else {
-            platform.parallelActuatorHomeLengths = platform.parallelActuatorLengths;
-            configureStewartInternalActuatorDofs(platform);
-            captureStewartInternalPlatformVisuals(platform);
-            const auto lengthRange = std::minmax_element(
-                platform.parallelActuatorLengths.begin(),
-                platform.parallelActuatorLengths.end());
-            LOG_INFO("rs2026") << "Stewart imported actuator home length range: robot="
-                << platform.documentId
-                << ", min=" << *lengthRange.first << " m"
-                << ", max=" << *lengthRange.second << " m"
-                << ", internalPlatformLinks="
-                << platform.parallelInternalPlatformDrivenLinks.size();
-        }
-    }
-}
-
-void ProjectScene::Impl::syncAllStewartFollowers()
-{
-    for(const RuntimeRobot& platform : robots) {
-        syncStewartFollowers(platform);
-    }
-}
-
-void ProjectScene::Impl::setStewartPlatformBaseTransform(
-    RuntimeRobot& platform,
-    const collision::Transform3& baseTransform)
-{
-    if(!platform.parallelControlEnabled) {
-        platform.baseTransform = baseTransform;
-        ProjectRuntimeBuilder::updateRobotPose(platform);
-        return;
-    }
-
-    platform.parallelHomeBaseTransform = baseTransform;
-    platform.baseTransform = platform.parallelHomeBaseTransform;
-    solveStewartInternalLegControls(platform);
-    ProjectRuntimeBuilder::updateRobotPose(platform);
-    applyStewartInternalPlatformVisualOverrides(platform);
-    syncStewartFollowers(platform);
-    for(RuntimeRobot& follower : robots) {
-        if(follower.parallelFollowerEnabled && sameStewartSource(platform, follower)) {
-            follower.parallelFollowerHomeTransform = baseTransform;
-            follower.baseTransform = baseTransform;
-            ProjectRuntimeBuilder::updateRobotPose(follower);
-        }
-    }
-    applyStewartFollowerVisualOverrides(platform);
-}
-
-void ProjectScene::Impl::applyStewartInternalPlatformVisualOverrides(RuntimeRobot& platform)
-{
-    applyStewartInternalPlatformVisualOverride(platform);
-}
-
-void ProjectScene::Impl::applyStewartFollowerVisualOverrides(const RuntimeRobot& platform)
-{
-    if(!platform.parallelControlEnabled) {
-        return;
-    }
-
-    for(RuntimeRobot& follower : robots) {
-        if(!follower.parallelFollowerEnabled ||
-            follower.documentId == platform.documentId ||
-            !sameStewartSource(platform, follower)) {
-            continue;
-        }
-
-        applyStewartFollowerVisualOverride(platform, follower);
-    }
-}
-
-void ProjectScene::Impl::applyAllStewartFollowerVisualOverrides()
-{
-    for(RuntimeRobot& platform : robots) {
-        applyStewartInternalPlatformVisualOverrides(platform);
-        applyStewartFollowerVisualOverrides(platform);
-    }
 }
 
 void ProjectScene::Impl::buildProjectRobots()
 {
     const auto buildStart = std::chrono::steady_clock::now();
     const RobotCollisionLinkSelectionMap collisionLinkSelection =
-        buildRobotCollisionLinkSelection(projectDocument);
+        buildRobotCollisionLinkSelection(document());
     const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
-        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
-    uint64_t runtimeId = 1;
-    robots.reserve(projectDocument.robots.size());
-    for(const auto& robotDesc : projectDocument.robots) {
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(document());
+    robots.reserve(document().robots.size());
+    for(const auto& robotDesc : document().robots) {
         const auto robotStart = std::chrono::steady_clock::now();
-        robots.emplace_back();
-        RuntimeRobot& runtime = robots.back();
-        runtime.runtimeId = runtimeId++;
-        runtime.documentId = robotDesc.id;
-        runtime.name = robotDesc.name;
-        runtime.sourceType = robotDesc.sourceType;
-        runtime.sourcePath = robotDesc.sourcePath;
-        runtime.sourceModelIndex = robotDesc.sourceModelIndex;
-        runtime.baseTransform = ProjectRuntimeBuilder::makeTransform(robotDesc.baseTransform);
-        runtime.collisionEnabled = robotDesc.collisionEnabled;
-
-        const simulation_project::AssetResolveContext robotResolveContext =
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument);
-        std::filesystem::path robotPath;
-        if(robotDesc.sourcePath.find("://") != std::string::npos
-            && !simulation_project::AssetResolver::isAppGeneratedAssetReference(
-                robotDesc.sourcePath)) {
-            const assetcore::AssetResolveResult resolveResult =
-                simulation_project::AssetResolver::resolveProjectReference(
-                    robotResolveContext,
-                    robotDesc.sourcePath);
-            if(!resolveResult.success()) {
-                throw std::runtime_error(
-                    "Robot asset URI resolution failed: " + robotDesc.sourcePath
-                    + (resolveResult.diagnostic.empty()
-                        ? std::string()
-                        : " (" + resolveResult.diagnostic + ")"));
-            }
-            robotPath = resolveResult.resolvedPath;
-        } else {
-            robotPath = simulation_project::AssetResolver::resolveProjectPath(
-                robotResolveContext,
-                robotDesc.sourcePath);
+        simulation_runtime::ProjectParallelRobotState* parallelRobot =
+            parallelRuntime.robot(robotDesc.id);
+        if(parallelRobot == nullptr) {
+            throw std::runtime_error(
+                "Parallel runtime is missing robot: " + robotDesc.id);
         }
-        runtime.model = ProjectRuntimeBuilder::loadSingleRobot(
-            robotPath,
-            robotDesc.sourceType,
-            robotDesc.sourceModelIndex,
-            simulation_project::AssetResolver::urdfPackageRootsForReference(
-                robotResolveContext,
-                robotDesc.sourcePath));
+        robots.emplace_back(*parallelRobot);
+        RuntimeRobot& runtime = robots.back();
         runtime.sprayNozzleLinkName = integratedSprayNozzleLinkName(runtime.model);
         runtime.sprayNozzleLocalTransform = inferIntegratedSprayNozzleLocalTransform(
             runtime.model,
@@ -4796,13 +3427,6 @@ void ProjectScene::Impl::buildProjectRobots()
                     nozzleNormal)
                     .toRotationMatrix();
         }
-        configureParallelControlIfNeeded(runtime, robotDesc, runtime.model);
-        configureParallelFollowerIfNeeded(runtime, robotDesc, runtime.model);
-        RobotCollisionOverrideApplier::apply(projectDocument, robotDesc, projectBasePath, runtime.model);
-        runtime.instance = std::make_shared<robotinstance::RobotInstance>(runtime.model, robotDesc.id);
-        runtime.instance->setBaseTransform(runtime.baseTransform);
-        ProjectRuntimeBuilder::applyInitialJoints(*runtime.instance, robotDesc.initialJoints);
-        runtime.instance->update();
         runtime.visualBridge = std::make_shared<robot_render::RobotVisualBridge>(
             runtime.instance,
             sceneGraph,
@@ -4813,7 +3437,7 @@ void ProjectScene::Impl::buildProjectRobots()
             const auto selectionIt = collisionLinkSelection.find(runtime.documentId);
             buildRobotCollision(
                 runtime,
-                projectDocument,
+                document(),
                 runtime.model,
                 sceneGraph,
                 showCollisionGeometry,
@@ -4831,33 +3455,12 @@ void ProjectScene::Impl::buildProjectRobots()
                 << ", collisionObjects=" << (runtime.collisionInstance ? runtime.collisionInstance->objects().size() : 0);
         }
 
-        if(!runtime.parallelFollowerEnabled) {
-            robotLinks.push_back(ProjectScene::RobotLinkGroup{
-                runtime.documentId,
-                runtime.name,
-                runtime.model.linkNames,
-                runtime.parallelControlEnabled
-                    ? parallelControlJointNames()
-                    : jointNames(runtime.model),
-                runtime.parallelControlEnabled
-                    ? parallelControlJointInfos()
-                    : movableJointInfos(runtime.model) });
-        }
         LOG_DEBUG("rs2026") << "Project robot build: robot=" << runtime.documentId
             << ", links=" << runtime.model.linkNames.size()
             << ", elapsedMs=" << elapsedMilliseconds(robotStart);
     }
-    configureStewartGroups();
-    syncAllStewartFollowers();
-    for(RuntimeRobot& runtime : robots) {
-        if(runtime.parallelControlEnabled) {
-            solveStewartInternalLegControls(runtime);
-            ProjectRuntimeBuilder::updateRobotPose(runtime);
-        } else if(runtime.parallelFollowerEnabled) {
-            ProjectRuntimeBuilder::updateRobotPose(runtime);
-        }
-    }
-    applyAllStewartFollowerVisualOverrides();
+    documentProjectionSystem.rebuildRobotCatalog();
+    stewartPresentationSystem.applyAllVisualOverrides(robots);
     LOG_DEBUG("rs2026") << "Project robots build: count=" << robots.size()
         << ", elapsedMs=" << elapsedMilliseconds(buildStart);
 }
@@ -4866,23 +3469,34 @@ void ProjectScene::Impl::buildProjectObjects()
 {
     const auto buildStart = std::chrono::steady_clock::now();
     const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
-        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(document());
     uint64_t runtimeId = 100000;
-    objects.reserve(projectDocument.objects.size());
+    objects.reserve(document().objects.size());
 
-    for(const auto& objectDesc : projectDocument.objects) {
+    for(const auto& objectDesc : document().objects) {
         const auto objectStart = std::chrono::steady_clock::now();
+        simulation_runtime::RuntimeSceneObject* simulationObject =
+            simulationRuntime ? simulationRuntime->object(objectDesc.id) : nullptr;
+        if(simulationObject == nullptr) {
+            throw std::runtime_error(
+                "Simulation runtime is missing scene object: " + objectDesc.id);
+        }
         RuntimeSceneObject runtime = ProjectRuntimeBuilder::buildSceneObject(
             objectDesc,
-            projectDocument.collision,
+            document().collision,
             runtimeId++,
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument),
+            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, document()),
             sceneGraph,
             collisionRuntimeBuilt,
             collisionBuildPlan.explicitObjectModels(objectDesc.id),
             &modelAssetCache,
             &geometryResourceCache,
             assetCorrelationId);
+        runtime.simulationObject = simulationObject;
+        runtime.runtimeId = simulationObject->runtimeId;
+        runtime.transform = simulationObject->transform;
+        runtime.collisionEnabled = simulationObject->collisionEnabled;
+        ProjectRuntimeBuilder::updateSceneObjectPose(runtime);
 
         if(collisionRuntimeBuilt && runtime.collisionEnabled && !runtime.collisionObjects.empty()) {
             for(const RuntimeSceneCollisionObject& collisionObject : runtime.collisionObjects) {
@@ -4914,31 +3528,31 @@ void ProjectScene::Impl::buildProjectObjects()
             LOG_DEBUG("rs2026") << "Scene object collision disabled: object=" << runtime.documentId;
         }
 
-        sceneObjects.push_back(ProjectScene::SceneObjectGroup{
-            runtime.documentId,
-            runtime.name });
+        documentProjectionSystem.appendSceneObjectCatalog(runtime);
 
         LOG_DEBUG("rs2026") << "Project scene object build: object=" << runtime.documentId
             << ", collisionObjects=" << runtime.collisionObjects.size()
             << ", elapsedMs=" << elapsedMilliseconds(objectStart);
         objects.push_back(std::move(runtime));
     }
-    LOG_DEBUG("rs2026") << "Project scene objects build: count=" << projectDocument.objects.size()
+    LOG_DEBUG("rs2026") << "Project scene objects build: count=" << document().objects.size()
         << ", elapsedMs=" << elapsedMilliseconds(buildStart);
 }
 
 void ProjectScene::Impl::buildProjectPointClouds()
 {
     const auto buildStart = std::chrono::steady_clock::now();
-    uint64_t runtimeId = 400000;
-    pointClouds.reserve(projectDocument.pointClouds.size());
-
-    for(const simulation_project::PointCloudDesc& pointCloudDesc : projectDocument.pointClouds) {
+    for(const simulation_project::PointCloudDesc& pointCloudDesc : document().pointClouds) {
         const auto pointCloudStart = std::chrono::steady_clock::now();
+        simulation_runtime::RuntimePointCloud* simulationPointCloud =
+            simulationRuntime ? simulationRuntime->pointCloud(pointCloudDesc.id) : nullptr;
+        if(simulationPointCloud == nullptr) {
+            throw std::runtime_error(
+                "Simulation runtime is missing point cloud: " + pointCloudDesc.id);
+        }
         RuntimeSceneObject runtime = ProjectRuntimeBuilder::buildPointCloud(
+            *simulationPointCloud,
             pointCloudDesc,
-            runtimeId++,
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument),
             sceneGraph);
 
         if(collisionRuntimeBuilt && runtime.collisionEnabled && !runtime.collisionObjects.empty()) {
@@ -4962,16 +3576,14 @@ void ProjectScene::Impl::buildProjectPointClouds()
                 << ", collisionObjects=" << runtime.collisionObjects.size();
         }
 
-        pointClouds.push_back(ProjectScene::PointCloudGroup{
-            runtime.documentId,
-            runtime.name });
+        documentProjectionSystem.appendPointCloudCatalog(runtime);
 
         LOG_DEBUG("rs2026") << "Project point cloud build: pointCloud=" << runtime.documentId
             << ", collisionObjects=" << runtime.collisionObjects.size()
             << ", elapsedMs=" << elapsedMilliseconds(pointCloudStart);
         objects.push_back(std::move(runtime));
     }
-    LOG_DEBUG("rs2026") << "Project point clouds build: count=" << projectDocument.pointClouds.size()
+    LOG_DEBUG("rs2026") << "Project point clouds build: count=" << document().pointClouds.size()
         << ", elapsedMs=" << elapsedMilliseconds(buildStart);
 }
 
@@ -5037,15 +3649,15 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
     collisionRuntimeBuildInProgress = true;
 
     const RobotCollisionLinkSelectionMap collisionLinkSelection =
-        buildRobotCollisionLinkSelection(projectDocument);
+        buildRobotCollisionLinkSelection(document());
     const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
-        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(document());
     std::size_t robotCollisionCount = 0;
     for(RuntimeRobot& runtime : robots) {
         const auto selectionIt = collisionLinkSelection.find(runtime.documentId);
         buildRobotCollision(
             runtime,
-            projectDocument,
+            document(),
             runtime.model,
             sceneGraph,
             showCollisionGeometry,
@@ -5060,15 +3672,15 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
     std::size_t objectCollisionCount = 0;
     for(RuntimeSceneObject& runtime : objects) {
         const simulation_project::SceneObjectDesc* objectDesc =
-            findSceneObjectDesc(projectDocument, runtime.documentId);
+            findSceneObjectDesc(document(), runtime.documentId);
         if(objectDesc == nullptr) {
             continue;
         }
         if(ProjectRuntimeBuilder::ensureSceneObjectCollisionObjects(
             runtime,
             *objectDesc,
-            projectDocument.collision,
-            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, projectDocument),
+            document().collision,
+            ProjectRuntimeBuilder::makeAssetResolveContext(projectBasePath, document()),
             collisionBuildPlan.explicitObjectModels(runtime.documentId),
             &modelAssetCache,
             assetCorrelationId)) {
@@ -5078,7 +3690,7 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
 
     ensureToolAttachmentCollisionObjects();
     registerRuntimeCollisionObjects();
-    collisionDetectors = buildProjectCollisionDetectorViewRuntimes(projectDocument, robots, objects);
+    collisionDetectors = buildProjectCollisionDetectorViewRuntimes(document(), robots, objects);
     collisionRuntimeBuilt = true;
     collisionRuntimeBuildInProgress = false;
     invalidateCollisionGeometryOverlayCache();
@@ -5094,8 +3706,10 @@ bool ProjectScene::Impl::ensureCollisionRuntimeBuilt()
 
 void ProjectScene::Impl::buildProjectToolAttachments()
 {
+    const auto& mountedAttachments = attachmentVisualSystem.mountedGraph();
+    auto& toolAttachments = attachmentVisualSystem.visuals();
     const simulation_project::ProjectV3View view =
-        simulation_project::buildProjectV3View(projectDocument);
+        simulation_project::buildProjectV3View(document());
 
     std::size_t firstEnabled = static_cast<std::size_t>(-1);
     std::size_t firstVisible = static_cast<std::size_t>(-1);
@@ -5143,11 +3757,11 @@ void ProjectScene::Impl::buildProjectToolAttachments()
         if(!runtime.visualPath.empty()) {
             assetcore::ModelAssetLeaseRequest request;
             request.resolveContext = assetcore::AssetResolver::defaultContext(projectBasePath);
-            if(!projectDocument.assetStore.directory.empty()) {
+            if(!document().assetStore.directory.empty()) {
                 request.resolveContext.projectAssetRootPath =
-                    projectBasePath / projectDocument.assetStore.directory;
+                    projectBasePath / document().assetStore.directory;
             }
-            request.resolveContext.assetSearchPaths = projectDocument.assetSearchPaths;
+            request.resolveContext.assetSearchPaths = document().assetSearchPaths;
             request.source = pathToUtf8(runtime.visualPath);
             request.scale = static_cast<float>(runtime.visualScale);
             request.consumer = "mountedAttachment:" + runtime.documentId;
@@ -5209,15 +3823,15 @@ void ProjectScene::Impl::buildProjectToolAttachments()
             << " | key=" << assetKey;
     }
 
-    activeToolAttachmentIndex = firstEnabled != static_cast<std::size_t>(-1)
-        ? firstEnabled
-        : firstVisible;
+    attachmentVisualSystem.selectInitialActive(firstEnabled, firstVisible);
     syncProjectToolAttachments();
     applyActiveToolAttachmentVisibility();
 
-    if(!toolAttachments.empty() && activeToolAttachmentIndex < toolAttachments.size()) {
+    if(!toolAttachments.empty() &&
+        attachmentVisualSystem.activeIndex() < toolAttachments.size()) {
         std::cout << "QtViewer v3 tool attachments: " << toolAttachments.size()
-            << ", active=" << toolAttachments[activeToolAttachmentIndex].documentId << "\n";
+            << ", active="
+            << toolAttachments[attachmentVisualSystem.activeIndex()].documentId << "\n";
     } else if(!toolAttachments.empty()) {
         std::cout << "QtViewer v3 tool attachments: " << toolAttachments.size()
             << ", active=<none visible>\n";
@@ -5226,8 +3840,18 @@ void ProjectScene::Impl::buildProjectToolAttachments()
 
 void ProjectScene::Impl::syncProjectToolAttachments()
 {
-    const simulation_runtime::Result result =
-        mountedAttachments.updateWorldTransforms(attachmentRobotContexts());
+    if(!simulationRuntime) {
+        return;
+    }
+    simulation_runtime::Result result;
+    if(previewOverlay.empty()) {
+        result = simulationRuntime->updateAttachmentTransforms();
+    } else {
+        result = attachmentVisualSystem.previewGraph().updateWorldTransforms(
+            attachmentRobotContexts());
+    }
+    const auto& mountedAttachments = attachmentVisualSystem.mountedGraph();
+    auto& toolAttachments = attachmentVisualSystem.visuals();
     if(!result.success) {
         std::cerr << "Failed to update mounted attachment runtime graph: "
             << result.message << "\n";
@@ -5253,6 +3877,16 @@ void ProjectScene::Impl::syncProjectToolAttachments()
         attachment.worldToolMount = mountedAttachment->transform.worldAttachmentMount;
         attachment.worldVisual = mountedAttachment->transform.worldVisual;
         attachment.worldTcp = mountedAttachment->transform.worldTcp;
+        if(!attachment.functionalFrameType.empty()) {
+            const simulation_runtime::RuntimeAttachmentFunctionalFrame* functionalFrame =
+                mountedAttachments.functionalFrame(
+                    attachment.documentId,
+                    attachment.functionalFrameType);
+            if(functionalFrame != nullptr) {
+                attachment.assetMountToTcp = functionalFrame->attachmentMountToFrame;
+                attachment.worldTcp = functionalFrame->worldFrame;
+            }
+        }
         if(attachment.visual.rootNode) {
             robot_render::MountedAttachmentVisualBridge::syncTransform(
                 attachment.visual,
@@ -5269,6 +3903,7 @@ void ProjectScene::Impl::syncProjectToolAttachments()
 
 void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
 {
+    auto& toolAttachments = attachmentVisualSystem.visuals();
     if(toolAttachments.empty()) {
         return;
     }
@@ -5278,7 +3913,7 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
     std::size_t builtCount = 0;
     std::size_t skippedCount = 0;
     const simulation_runtime::CollisionDetectorBuildPlan collisionBuildPlan =
-        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(projectDocument);
+        simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(document());
 
     for(std::size_t index = 0; index < toolAttachments.size(); ++index) {
         RuntimeToolAttachmentVisual& runtime = toolAttachments[index];
@@ -5288,7 +3923,7 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
 
         if(!runtime.visible ||
             !runtime.enabled ||
-            !simulation_runtime::projectReferencesAttachmentCollision(projectDocument, runtime.documentId)) {
+            !simulation_runtime::projectReferencesAttachmentCollision(document(), runtime.documentId)) {
             ++skippedCount;
             continue;
         }
@@ -5305,14 +3940,14 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
         toolCollisionObject.collisionEnabled = true;
 
         const simulation_project::ObjectCollisionOverrideDesc* collisionOverride =
-            findToolAttachmentCollisionOverride(projectDocument, runtime.documentId);
+            findToolAttachmentCollisionOverride(document(), runtime.documentId);
         std::string currentModelId =
-            activeObjectCollisionModelId(projectDocument.collision, runtime.documentId);
+            activeObjectCollisionModelId(document().collision, runtime.documentId);
         if(simulation_project::isConvertFromVisualCollisionModelId(currentModelId) &&
             collisionOverride != nullptr &&
             collisionOverride->objectId != runtime.documentId) {
             currentModelId = activeObjectCollisionModelId(
-                projectDocument.collision,
+                document().collision,
                 collisionOverride->objectId);
         }
         std::unordered_set<std::string> modelIds{ currentModelId };
@@ -5331,10 +3966,10 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
                     *collisionOverride,
                     runtimeIdBase,
                     projectBasePath,
-                    projectDocument.assetSearchPaths,
+                    document().assetSearchPaths,
                     modelId,
                     currentModelId,
-                    projectDocument.assetStore.directory);
+                    document().assetStore.directory);
             }
         }
 
@@ -5447,23 +4082,25 @@ void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
 
 void ProjectScene::Impl::drawPreviewRobotMountFrames()
 {
-    if(!previewSelectedLinkFrameVisible && !previewRobotMountFrameVisible) {
+    if(!interactionSystem.selectedLinkFrameVisible() &&
+        !interactionSystem.robotMountFrameVisible()) {
         return;
     }
 
     const simulation_project::RobotMountDesc* mount =
-        findRobotMountDesc(projectDocument, activePreviewRobotMountId);
+        findRobotMountDesc(document(), interactionSystem.activePreviewRobotMountId());
     const RuntimeRobot* robot = nullptr;
     std::string linkName;
     if(mount != nullptr) {
         robot = findRuntimeRobot(robots, mount->robotId);
         linkName = mount->linkName;
-    } else if(previewSelectedLinkFrameVisible && mountFrameLinkFocusActive) {
-        robot = findRuntimeRobot(robots, mountFrameFocusRobotId);
-        linkName = mountFrameFocusLinkName;
-    } else if(previewSelectedLinkFrameVisible) {
-        robot = findRuntimeRobot(robots, selectionState.selectedRobotId());
-        linkName = selectionState.selectedLinkName();
+    } else if(interactionSystem.selectedLinkFrameVisible() &&
+        cameraSystem.mountFrameLinkFocusActive()) {
+        robot = findRuntimeRobot(robots, cameraSystem.mountFrameFocusRobotId());
+        linkName = cameraSystem.mountFrameFocusLinkName();
+    } else if(interactionSystem.selectedLinkFrameVisible()) {
+        robot = findRuntimeRobot(robots, interactionSystem.selection().selectedRobotId());
+        linkName = interactionSystem.selection().selectedLinkName();
     }
     if(robot == nullptr ||
         !robot->instance ||
@@ -5474,10 +4111,10 @@ void ProjectScene::Impl::drawPreviewRobotMountFrames()
 
     const collision::Transform3 worldLink = robot->instance->getLinkTransform(linkName);
     scenecore::DebugDraw& debug = renderer.debug();
-    if(previewSelectedLinkFrameVisible) {
+    if(interactionSystem.selectedLinkFrameVisible()) {
         drawFrameMarker(debug, worldLink, 0.10f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), 3.5f);
     }
-    if(previewRobotMountFrameVisible && mount != nullptr) {
+    if(interactionSystem.robotMountFrameVisible() && mount != nullptr) {
         const collision::Transform3 worldMount =
             worldLink * ProjectRuntimeBuilder::makeTransform(mount->linkToMount);
         const glm::vec4 mountColor(0.1f, 0.35f, 1.0f, 1.0f);
@@ -5497,16 +4134,19 @@ void ProjectScene::Impl::drawPreviewRobotMountFrames()
 
 void ProjectScene::Impl::drawSelectedJointFrame()
 {
-    if(selectedJointFrameRobotId.empty() || selectedJointFrameName.empty()) {
+    if(interactionSystem.selectedJointFrameRobotId().empty() ||
+        interactionSystem.selectedJointFrameName().empty()) {
         return;
     }
 
-    const RuntimeRobot* robot = findRuntimeRobot(robots, selectedJointFrameRobotId);
+    const RuntimeRobot* robot =
+        findRuntimeRobot(robots, interactionSystem.selectedJointFrameRobotId());
     if(robot == nullptr || !robot->instance) {
         return;
     }
 
-    const auto jointIt = robot->model.jointNameToIndex.find(selectedJointFrameName);
+    const auto jointIt =
+        robot->model.jointNameToIndex.find(interactionSystem.selectedJointFrameName());
     if(jointIt == robot->model.jointNameToIndex.end() || jointIt->second < 0) {
         return;
     }
@@ -5542,25 +4182,28 @@ void ProjectScene::Impl::drawSelectedJointFrame()
 
 void ProjectScene::Impl::drawSelectedObjectFrame()
 {
-    if(!objectFrameObjectFocusActive) {
+    if(!cameraSystem.objectFrameObjectFocusActive()) {
         return;
     }
-    if(selectedObjectFrameObjectId.empty() || selectedObjectFrameId.empty()) {
+    if(interactionSystem.selectedObjectFrameObjectId().empty() ||
+        interactionSystem.selectedObjectFrameId().empty()) {
         return;
     }
-    if(selectedObjectFrameObjectId != objectFrameFocusObjectId) {
+    if(interactionSystem.selectedObjectFrameObjectId() !=
+        cameraSystem.objectFrameFocusObjectId()) {
         return;
     }
 
-    const RuntimeSceneObject* runtimeObject = findRuntimeObject(objects, selectedObjectFrameObjectId);
+    const RuntimeSceneObject* runtimeObject =
+        findRuntimeObject(objects, interactionSystem.selectedObjectFrameObjectId());
     const simulation_project::SceneObjectDesc* object =
-        findSceneObjectDesc(projectDocument, selectedObjectFrameObjectId);
+        findSceneObjectDesc(document(), interactionSystem.selectedObjectFrameObjectId());
     if(runtimeObject == nullptr || object == nullptr) {
         return;
     }
 
     const simulation_project::ObjectFrameDesc* frame =
-        findObjectFrameDesc(*object, selectedObjectFrameId);
+        findObjectFrameDesc(*object, interactionSystem.selectedObjectFrameId());
     if(frame == nullptr) {
         return;
     }
@@ -5584,13 +4227,13 @@ void ProjectScene::Impl::drawSelectedObjectFrame()
 
 void ProjectScene::Impl::drawVisibleObjectFrames()
 {
-    if(objectFrameObjectFocusActive) {
+    if(cameraSystem.objectFrameObjectFocusActive()) {
         return;
     }
 
     scenecore::DebugDraw& debug = renderer.debug();
     const glm::vec4 frameColor(0.1f, 1.0f, 0.65f, 1.0f);
-    for(const simulation_project::SceneObjectDesc& object : projectDocument.objects) {
+    for(const simulation_project::SceneObjectDesc& object : document().objects) {
         const RuntimeSceneObject* runtimeObject =
             object.visible ? findRuntimeObject(objects, object.id) : nullptr;
         const RuntimeToolAttachmentVisual* sourceAttachment =
@@ -5614,11 +4257,12 @@ void ProjectScene::Impl::drawVisibleObjectFrames()
 const RuntimeToolAttachmentVisual* ProjectScene::Impl::mountedAttachmentForSourceObject(
     const std::string& objectId) const
 {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
     if(objectId.empty()) {
         return nullptr;
     }
 
-    for(const simulation_project::MountedAttachmentDesc& attachmentDesc : projectDocument.mountedAttachments) {
+    for(const simulation_project::MountedAttachmentDesc& attachmentDesc : document().mountedAttachments) {
         if(attachmentDesc.sourceObjectId != objectId || !attachmentDesc.visible) {
             continue;
         }
@@ -5633,19 +4277,19 @@ const RuntimeToolAttachmentVisual* ProjectScene::Impl::mountedAttachmentForSourc
 
 void ProjectScene::Impl::drawPinnedRobotMountFrames()
 {
-    if(pinnedRobotMountFrameIds.empty()) {
+    if(interactionSystem.pinnedRobotMountFrames().empty()) {
         return;
     }
 
     scenecore::DebugDraw& debug = renderer.debug();
     const glm::vec4 mountColor(0.1f, 0.35f, 1.0f, 1.0f);
-    for(const std::string& mountId : pinnedRobotMountFrameIds) {
-        if(mountId.empty() || mountId == activePreviewRobotMountId) {
+    for(const std::string& mountId : interactionSystem.pinnedRobotMountFrames()) {
+        if(mountId.empty() || mountId == interactionSystem.activePreviewRobotMountId()) {
             continue;
         }
 
         const simulation_project::RobotMountDesc* mount =
-            findRobotMountDesc(projectDocument, mountId);
+            findRobotMountDesc(document(), mountId);
         if(mount == nullptr) {
             continue;
         }
@@ -5666,7 +4310,9 @@ void ProjectScene::Impl::drawPinnedRobotMountFrames()
 
 void ProjectScene::Impl::drawActiveToolAttachmentFrames()
 {
-    if(mountFrameLinkFocusActive || objectFrameObjectFocusActive) {
+    const ProjectScene::ToolFrameVisibility& toolFrameVisibility =
+        attachmentVisualSystem.toolFrameVisibility();
+    if(cameraSystem.mountFrameLinkFocusActive() || cameraSystem.objectFrameObjectFocusActive()) {
         return;
     }
 
@@ -5791,6 +4437,8 @@ bool ProjectScene::Impl::sprayNozzleWorldTransform(
     const std::string& robotId,
     collision::Transform3& tcp, std::string* referenceLink) const
 {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
+    const auto activeToolAttachmentIndex = attachmentVisualSystem.activeIndex();
     const RuntimeToolAttachmentVisual* attachment = nullptr;
     if(activeToolAttachmentIndex < toolAttachments.size()) {
         const RuntimeToolAttachmentVisual& active = toolAttachments[activeToolAttachmentIndex];
@@ -5909,6 +4557,7 @@ void ProjectScene::Impl::hideObjectCollisionModelVariantPreviewMeshes()
 
 void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
 {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
     hideObjectCollisionModelVariantPreviewMeshes();
     if(!previewObjectCollisionModelActive || previewObjectCollisionModelObjectId.empty()) {
         return;
@@ -5998,11 +4647,11 @@ void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
                     targetAttachment->visualScale,
                     math::eigenToGlm(targetAttachment->assetMountToVisual));
             } else if(const simulation_project::SceneObjectDesc* objectDesc =
-                          findSceneObjectDesc(projectDocument, previewObjectCollisionModelObjectId)) {
+                          findSceneObjectDesc(document(), previewObjectCollisionModelObjectId)) {
                 const simulation_project::AssetResolveContext context =
                     ProjectRuntimeBuilder::makeAssetResolveContext(
                         projectBasePath,
-                        projectDocument);
+                        document());
                 addPreviewModel(
                     simulation_project::AssetResolver::resolveProjectPath(
                         context,
@@ -6013,11 +4662,11 @@ void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
         } else {
             const simulation_project::ObjectCollisionOverrideDesc* collisionOverride =
                 ProjectRuntimeBuilder::findObjectCollisionOverride(
-                    projectDocument.collision,
+                    document().collision,
                     previewObjectCollisionModelObjectId);
             if(collisionOverride == nullptr) {
                 collisionOverride = findToolAttachmentCollisionOverride(
-                    projectDocument,
+                    document(),
                     previewObjectCollisionModelObjectId);
             }
 
@@ -6025,7 +4674,7 @@ void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
                 const simulation_project::AssetResolveContext context =
                     ProjectRuntimeBuilder::makeAssetResolveContext(
                         projectBasePath,
-                        projectDocument);
+                        document());
                 for(const simulation_project::ObjectCollisionElementOverrideDesc& element :
                     collisionOverride->elements) {
                     if(!element.enabled) {
@@ -6071,6 +4720,7 @@ void ProjectScene::Impl::updateObjectCollisionModelVariantPreviewMeshes()
 
 void ProjectScene::Impl::drawObjectCollisionModelVariantPreview()
 {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
     if(!previewObjectCollisionModelActive ||
         previewObjectCollisionModelObjectId.empty() ||
         simulation_project::isConvertFromVisualCollisionModelId(previewObjectCollisionModelVariantId)) {
@@ -6079,14 +4729,14 @@ void ProjectScene::Impl::drawObjectCollisionModelVariantPreview()
 
     const simulation_project::ObjectCollisionOverrideDesc* collisionOverride =
         ProjectRuntimeBuilder::findObjectCollisionOverride(
-            projectDocument.collision,
+            document().collision,
             previewObjectCollisionModelObjectId);
     collision::Transform3 baseTransform = collision::Transform3::Identity();
     bool hasBaseTransform = false;
 
     if(collisionOverride == nullptr) {
         collisionOverride = findToolAttachmentCollisionOverride(
-            projectDocument,
+            document(),
             previewObjectCollisionModelObjectId);
     }
 
@@ -6118,10 +4768,10 @@ void ProjectScene::Impl::drawObjectCollisionModelVariantPreview()
            *collisionOverride,
            previewObject.runtimeId,
            projectBasePath,
-           projectDocument.assetSearchPaths,
+           document().assetSearchPaths,
            previewObjectCollisionModelVariantId,
            previewObjectCollisionModelVariantId,
-           projectDocument.assetStore.directory)) {
+           document().assetStore.directory)) {
         return;
     }
 
@@ -6181,16 +4831,20 @@ void ProjectScene::Impl::drawObjectCollisionModelVariantPreview()
 
 void ProjectScene::Impl::drawInteractionModeHints()
 {
-    if(!modeShowsRobotMountHints(interactionMode) && !modeShowsAttachmentHints(interactionMode)) {
+    const auto& toolAttachments = attachmentVisualSystem.visuals();
+    const std::size_t activeToolAttachmentIndex = attachmentVisualSystem.activeIndex();
+    if(!modeShowsRobotMountHints(interactionSystem.mode()) &&
+        !modeShowsAttachmentHints(interactionSystem.mode())) {
         return;
     }
 
     scenecore::DebugDraw& debug = renderer.debug();
-    if(modeShowsRobotMountHints(interactionMode) && !previewRobotMountFrameVisible) {
+    if(modeShowsRobotMountHints(interactionSystem.mode()) &&
+        !interactionSystem.robotMountFrameVisible()) {
         const glm::vec4 mountColor(0.1f, 0.55f, 1.0f, 1.0f);
         const glm::vec4 activeMountColor(0.1f, 1.0f, 0.35f, 1.0f);
-        for(const simulation_project::RobotMountDesc& mount : projectDocument.robotMounts) {
-            const bool active = mount.id == activePreviewRobotMountId;
+        for(const simulation_project::RobotMountDesc& mount : document().robotMounts) {
+            const bool active = mount.id == interactionSystem.activePreviewRobotMountId();
             if(!active) {
                 continue;
             }
@@ -6222,7 +4876,7 @@ void ProjectScene::Impl::drawInteractionModeHints()
         }
     }
 
-    if(modeShowsAttachmentHints(interactionMode)) {
+    if(modeShowsAttachmentHints(interactionSystem.mode())) {
         const glm::vec4 attachmentColor(0.1f, 1.0f, 0.35f, 1.0f);
         const std::string activeAttachmentId =
             activeToolAttachmentIndex < toolAttachments.size()
@@ -6246,6 +4900,7 @@ void ProjectScene::Impl::drawInteractionModeHints()
 
 void ProjectScene::Impl::buildToolAssetPreview()
 {
+    RuntimeToolAssetPreview& toolAssetPreview = attachmentVisualSystem.preview();
     toolAssetPreview.mountToVisual = ProjectRuntimeBuilder::makeTransform(toolAssetPreview.asset.assetMountToVisual);
     toolAssetPreview.mountToTcp = ProjectRuntimeBuilder::makeTransform(primaryAssetFrameTransform(toolAssetPreview.asset));
 
@@ -6289,9 +4944,11 @@ void ProjectScene::Impl::buildToolAssetPreview()
 
 void ProjectScene::Impl::updateToolAssetPreviewModel()
 {
-    if(!toolAssetPreviewSet) {
+    if(!attachmentVisualSystem.hasPreview()) {
         return;
     }
+
+    RuntimeToolAssetPreview& toolAssetPreview = attachmentVisualSystem.preview();
 
     toolAssetPreview.modelLocal =
         math::eigenToGlm(toolAssetPreview.mountToVisual) *
@@ -6303,9 +4960,11 @@ void ProjectScene::Impl::updateToolAssetPreviewModel()
 
 void ProjectScene::Impl::drawToolAssetPreviewFrames()
 {
-    if(!toolAssetPreviewSet) {
+    if(!attachmentVisualSystem.hasPreview()) {
         return;
     }
+
+    const RuntimeToolAssetPreview& toolAssetPreview = attachmentVisualSystem.preview();
 
     scenecore::DebugDraw& debug = renderer.debug();
     const collision::Transform3 worldFrame = collision::Transform3::Identity();
@@ -6329,93 +4988,43 @@ void ProjectScene::Impl::drawToolAssetPreviewFrames()
 
 void ProjectScene::Impl::applyActiveToolAttachmentVisibility()
 {
-    for(std::size_t i = 0; i < toolAttachments.size(); ++i) {
-        RuntimeToolAttachmentVisual& attachment = toolAttachments[i];
-        robot_render::MountedAttachmentVisualBridge::setVisible(
-            attachment.visual,
-            attachment.visible && !mountFrameLinkFocusActive && !objectFrameObjectFocusActive);
-    }
+    attachmentVisualSystem.applyVisibility(
+        cameraSystem.mountFrameLinkFocusActive() ||
+        cameraSystem.objectFrameObjectFocusActive());
 }
 
 const RuntimeToolAttachmentVisual* ProjectScene::Impl::activeToolFrameAttachment() const
 {
-    if(activeToolFrameRobotId.empty()) {
-        return nullptr;
-    }
-
-    if(activeToolAttachmentIndex >= toolAttachments.size()) {
-        return nullptr;
-    }
-
-    const RuntimeToolAttachmentVisual& attachment = toolAttachments[activeToolAttachmentIndex];
-    if(attachment.robotId != activeToolFrameRobotId || !attachment.visible) {
-        return nullptr;
-    }
-    return &attachment;
+    return attachmentVisualSystem.activeToolFrameAttachment();
 }
 
 bool ProjectScene::Impl::cycleActiveToolAttachment(bool reverse)
 {
-    if(toolAttachments.empty()) {
-        return false;
+    const bool changed = attachmentVisualSystem.cycleActive(reverse);
+    if(changed) {
+        applyActiveToolAttachmentVisibility();
     }
-
-    const std::size_t count = toolAttachments.size();
-    std::size_t index = activeToolAttachmentIndex < count ? activeToolAttachmentIndex : 0;
-
-    for(std::size_t step = 0; step < count; ++step) {
-        index = reverse
-            ? (index == 0 ? count - 1 : index - 1)
-            : (index + 1) % count;
-
-        if(toolAttachments[index].visible) {
-            activeToolAttachmentIndex = index;
-            applyActiveToolAttachmentVisibility();
-            std::cout << "QtViewer active tool attachment: "
-                << toolAttachments[index].documentId
-                << " visualPath=" << pathToUtf8(toolAttachments[index].visualPath)
-                << "\n";
-            return true;
-        }
-    }
-
-    return false;
+    return changed;
 }
 
 bool ProjectScene::Impl::setActiveToolAttachment(const std::string& id)
 {
-    if(id.empty()) {
-        const bool changed = activeToolAttachmentIndex < toolAttachments.size();
-        activeToolAttachmentIndex = static_cast<std::size_t>(-1);
-        if(changed) {
-            applyActiveToolAttachmentVisibility();
-        }
-        return changed;
+    const bool changed = attachmentVisualSystem.setActive(id);
+    if(changed) {
+        applyActiveToolAttachmentVisibility();
     }
-
-    for(std::size_t i = 0; i < toolAttachments.size(); ++i) {
-        if(toolAttachments[i].documentId == id && toolAttachments[i].visible) {
-            activeToolAttachmentIndex = i;
-            applyActiveToolAttachmentVisibility();
-            std::cout << "QtViewer active tool attachment: "
-                << toolAttachments[i].documentId
-                << " visualPath=" << pathToUtf8(toolAttachments[i].visualPath)
-                << "\n";
-            return true;
-        }
-    }
-    return false;
+    return changed;
 }
 
 void ProjectScene::Impl::setActiveToolFrameRobot(const std::string& robotId)
 {
-    activeToolFrameRobotId = robotId;
+    attachmentVisualSystem.setActiveToolFrameRobot(robotId);
 }
 
 void ProjectScene::Impl::applyProjectCollisionAndView()
 {
     const auto buildStart = std::chrono::steady_clock::now();
-    collisionDetectors = buildProjectCollisionDetectorViewRuntimes(projectDocument, robots, objects);
+    collisionDetectors = buildProjectCollisionDetectorViewRuntimes(document(), robots, objects);
     if(activeCollisionDetectorId.empty() ||
         std::none_of(
             collisionDetectors.begin(),
@@ -6430,7 +5039,7 @@ void ProjectScene::Impl::applyProjectCollisionAndView()
     collisionQueriesEnabled = false;
     applyCollisionOverlayRenderConfig();
     invalidateCollisionGeometryOverlayCache();
-    backgroundColor = makeEffectiveBackgroundColor(projectDocument.view, defaultBackgroundColor);
+    backgroundColor = makeEffectiveBackgroundColor(document().view, defaultBackgroundColor);
     const ProjectCollisionDetectorRuntime* activeDetector = activeCollisionDetector();
     LOG_DEBUG("rs2026") << "Project collision detectors: robots=" << robots.size()
         << ", objects=" << objects.size()
@@ -6460,6 +5069,15 @@ const ProjectCollisionDetectorRuntime* ProjectScene::Impl::activeCollisionDetect
     return collisionDetectors.empty() ? nullptr : &collisionDetectors.front();
 }
 
+ProjectScene::Impl::~Impl()
+{
+    for(auto& entry : customMeshes) {
+        if(entry.second.material) {
+            scenecore::clearMaterialRenderState(entry.second.material.get());
+        }
+    }
+}
+
 ProjectScene::ProjectScene()
     : m_impl(std::make_unique<Impl>())
 {
@@ -6473,25 +5091,20 @@ void ProjectScene::setProjectDocument(
 {
     m_impl->hideObjectCollisionModelVariantPreviewMeshes();
     ++m_impl->objectCollisionVariantMeshPreviewRevision;
-    m_impl->projectDocument = document;
-    m_impl->projectDocumentSet = true;
+    m_impl->parallelRuntime.clear();
+    m_impl->simulationRuntime.reset();
+    m_impl->pendingProjectDocument =
+        std::make_unique<simulation_project::ProjectDocument>(document);
     m_impl->projectBasePath = basePath;
-    m_impl->toolAssetPreviewSet = false;
-    m_impl->visibleCollisionVariantIds.clear();
-    m_impl->visibleCollisionVariantFilters.clear();
-    m_impl->visibleCollisionVariantFiltersByRuntimeLink.clear();
-    m_impl->collisionQueriesEnabled = false;
-    m_impl->showCollisionGeometry = false;
+    m_impl->previewOverlay.clear();
+    m_impl->attachmentVisualSystem.clearPreview();
+    m_impl->collisionPresentationSystem.resetForProjectDocument();
     m_impl->sprayRangeRobotId.clear();
     m_impl->sprayRangeVisible = false;
     m_impl->endEffectorTraceRobotId.clear();
     m_impl->endEffectorTraceVisible = false;
     clearEndEffectorTrace();
     m_impl->spraySurfaceMeshes.clear();
-    m_impl->collisionRuntimeBuilt = false;
-    m_impl->collisionRuntimeBuildInProgress = false;
-    m_impl->collisionScene = CollisionScene();
-    m_impl->invalidateCollisionGeometryOverlayCache();
 }
 
 const std::filesystem::path& ProjectScene::projectBasePath() const
@@ -6502,9 +5115,25 @@ const std::filesystem::path& ProjectScene::projectBasePath() const
 void ProjectScene::setDefaultBackgroundColor(const simulation_project::ColorDesc& color)
 {
     m_impl->defaultBackgroundColor = color;
-    if(!m_impl->projectDocumentSet || m_impl->projectDocument.view.useThemeBackground) {
+    if(!m_impl->hasProjectDocument() || m_impl->document().view.useThemeBackground) {
         m_impl->backgroundColor = makeBackgroundColor(color);
     }
+}
+
+void ProjectScene::setEnvironmentPreset(ProjectSceneEnvironmentPreset preset)
+{
+    m_impl->environmentSystem.setPreset(preset);
+    if(m_impl->planarShadowPass) {
+        m_impl->planarShadowPass->setEnabled(m_impl->environmentSystem.hasGround());
+    }
+    if(m_impl->gridPass) {
+        m_impl->gridPass->setEnabled(m_impl->environmentSystem.showsGrid());
+    }
+}
+
+ProjectSceneEnvironmentPreset ProjectScene::environmentPreset() const
+{
+    return m_impl->environmentSystem.preset();
 }
 
 bool ProjectScene::refreshCollisionConfiguration(
@@ -6517,13 +5146,22 @@ bool ProjectScene::refreshCollisionConfiguration(
 
     m_impl->hideObjectCollisionModelVariantPreviewMeshes();
     ++m_impl->objectCollisionVariantMeshPreviewRevision;
-    m_impl->projectDocument = document;
-    m_impl->projectDocumentSet = true;
     m_impl->projectBasePath = basePath;
-    m_impl->toolAssetPreviewSet = false;
+    if(!m_impl->simulationRuntime) {
+        return false;
+    }
+    const simulation_runtime::Result refreshResult =
+        m_impl->simulationRuntime->refreshProjectConfiguration(document, basePath);
+    if(!refreshResult.success) {
+        LOG_WARNING("rs2026") << "Project runtime configuration refresh rejected: "
+            << refreshResult.message;
+        return false;
+    }
+    m_impl->previewOverlay.clear();
+    m_impl->attachmentVisualSystem.clearPreview();
     m_impl->invalidateCollisionRuntime();
     m_impl->collisionDetectors = buildProjectCollisionDetectorViewRuntimes(
-        m_impl->projectDocument,
+        m_impl->document(),
         m_impl->robots,
         m_impl->objects);
     if(m_impl->activeCollisionDetectorId.empty() ||
@@ -6538,7 +5176,7 @@ bool ProjectScene::refreshCollisionConfiguration(
             : m_impl->collisionDetectors.front().id;
     }
     m_impl->backgroundColor = makeEffectiveBackgroundColor(
-        m_impl->projectDocument.view,
+        m_impl->document().view,
         m_impl->defaultBackgroundColor);
     m_impl->applyCollisionOverlayRenderConfig();
     m_impl->applyMountFrameLinkFocusVisibility();
@@ -6550,12 +5188,9 @@ bool ProjectScene::setToolAssetPreview(
     const simulation_project::AttachmentAssetDesc& asset,
     const std::filesystem::path& basePath)
 {
-    m_impl->toolAssetPreview = RuntimeToolAssetPreview();
-    m_impl->toolAssetPreview.asset = asset;
-    m_impl->toolAssetPreview.basePath = basePath;
-    m_impl->toolAssetPreviewSet = true;
-    m_impl->projectDocumentSet = true;
-    m_impl->projectDocument = simulation_project::ProjectDocument();
+    m_impl->attachmentVisualSystem.setPreview(asset, basePath);
+    m_impl->pendingProjectDocument.reset();
+    m_impl->simulationRuntime.reset();
     m_impl->projectBasePath = basePath;
     if(m_impl->initialized) {
         return false;
@@ -6581,7 +5216,7 @@ bool ProjectScene::initialize()
     LOG_DEBUG("rs2026") << "ProjectScene initialize OpenGL runtime: elapsedMs="
         << openGlMs;
 
-    if(m_impl->toolAssetPreviewSet) {
+    if(m_impl->attachmentVisualSystem.hasPreview()) {
         const auto previewStart = std::chrono::steady_clock::now();
         m_impl->showCollisionGeometry = false;
         m_impl->backgroundColor = makeBackgroundColor(m_impl->defaultBackgroundColor);
@@ -6595,6 +5230,26 @@ bool ProjectScene::initialize()
 
     const auto ensureStart = std::chrono::steady_clock::now();
     m_impl->ensureProjectDocument();
+    m_impl->simulationRuntime =
+        std::make_unique<simulation_runtime::ProjectSimulationRuntime>();
+    const simulation_runtime::Result runtimeLoadResult =
+        m_impl->simulationRuntime->loadProject(
+            m_impl->document(),
+            m_impl->projectBasePath);
+    if(!runtimeLoadResult.success) {
+        throw std::runtime_error(
+            "Failed to build project simulation runtime: " + runtimeLoadResult.message);
+    }
+    const simulation_runtime::Result parallelConfigureResult =
+        m_impl->parallelRuntime.configure(
+            m_impl->document(),
+            *m_impl->simulationRuntime);
+    if(!parallelConfigureResult.success) {
+        throw std::runtime_error(
+            "Failed to configure project parallel runtime: " +
+            parallelConfigureResult.message);
+    }
+    m_impl->pendingProjectDocument.reset();
     const double ensureMs = elapsedMilliseconds(ensureStart);
     LOG_DEBUG("rs2026") << "ProjectScene ensureProjectDocument: elapsedMs="
         << ensureMs;
@@ -6636,25 +5291,35 @@ bool ProjectScene::initialize()
         << collisionMs;
 
     const auto cameraStart = std::chrono::steady_clock::now();
+    const CameraSceneBounds sceneBounds = m_impl->fullSceneBounds();
+    m_impl->environmentSystem.setSceneScale(
+        static_cast<float>(sceneBounds.radius() / 1.5));
     setCameraView(ProjectSceneCameraView::Home);
     const double cameraMs = elapsedMilliseconds(cameraStart);
     m_impl->initialized = true;
     const double totalMs = elapsedMilliseconds(initializeStart);
     const std::string detail =
         "robots=" + std::to_string(m_impl->robots.size()) +
-        " objects=" + std::to_string(m_impl->projectDocument.objects.size()) +
-        " pointClouds=" + std::to_string(m_impl->projectDocument.pointClouds.size()) +
-        " tools=" + std::to_string(m_impl->toolAttachments.size()) +
+        " objects=" + std::to_string(m_impl->document().objects.size()) +
+        " pointClouds=" + std::to_string(m_impl->document().pointClouds.size()) +
+        " tools=" + std::to_string(m_impl->attachmentVisualSystem.visuals().size()) +
         " detectors=" + std::to_string(m_impl->collisionDetectors.size());
     std::cout << "+------------------------------------------------------------------------------+\n";
     LOG_DEBUG("rs2026") << "+------------------------------------------------------------------------------+";
     logProfileRow("Scene OpenGL runtime", openGlMs, "");
     logProfileRow("Scene document ready", ensureMs, "");
     logProfileRow("Scene build robots", robotsMs, "count=" + std::to_string(m_impl->robots.size()));
-    logProfileRow("Scene attachment graph", attachmentGraphMs, "attachments=" + std::to_string(m_impl->mountedAttachments.attachments().size()));
-    logProfileRow("Scene build objects", objectsMs, "count=" + std::to_string(m_impl->projectDocument.objects.size()));
-    logProfileRow("Scene build point clouds", pointCloudsMs, "count=" + std::to_string(m_impl->projectDocument.pointClouds.size()));
-    logProfileRow("Scene build tool visuals", toolsMs, "count=" + std::to_string(m_impl->toolAttachments.size()));
+    logProfileRow(
+        "Scene attachment graph",
+        attachmentGraphMs,
+        "attachments=" + std::to_string(
+            m_impl->attachmentVisualSystem.mountedGraph().attachments().size()));
+    logProfileRow("Scene build objects", objectsMs, "count=" + std::to_string(m_impl->document().objects.size()));
+    logProfileRow("Scene build point clouds", pointCloudsMs, "count=" + std::to_string(m_impl->document().pointClouds.size()));
+    logProfileRow(
+        "Scene build tool visuals",
+        toolsMs,
+        "count=" + std::to_string(m_impl->attachmentVisualSystem.visuals().size()));
     logProfileRow("Scene collision/view", collisionMs, "detectors=" + std::to_string(m_impl->collisionDetectors.size()));
     logProfileRow("Scene camera home", cameraMs, "");
     logProfileRow("Scene initialize total", totalMs, detail);
@@ -6682,21 +5347,15 @@ void ProjectScene::update(double timeSeconds)
         return;
     }
 
-    m_impl->updateCameraAnimation(timeSeconds);
+    m_impl->cameraSystem.updateAnimation(timeSeconds);
     m_impl->renderer.setCurrentTime(static_cast<float>(timeSeconds));
 
     const auto poseStart = std::chrono::steady_clock::now();
-    for(RuntimeRobot& robot : m_impl->robots) {
-        ProjectRuntimeBuilder::applyAutoMotion(robot, timeSeconds);
-        if(robot.parallelControlEnabled && robot.autoMotionEnabled) {
-            solveStewartInternalLegControls(robot);
-        }
-    }
-    m_impl->syncAllStewartFollowers();
+    m_impl->parallelRuntime.update(timeSeconds);
     for(RuntimeRobot& robot : m_impl->robots) {
         ProjectRuntimeBuilder::updateRobotPose(robot);
     }
-    m_impl->applyAllStewartFollowerVisualOverrides();
+    m_impl->stewartPresentationSystem.applyAllVisualOverrides(m_impl->robots);
     m_impl->syncProjectToolAttachments();
     m_impl->lastRobotPoseUpdateMs = elapsedMilliseconds(poseStart);
 
@@ -6722,52 +5381,30 @@ void ProjectScene::update(double timeSeconds)
             const bool isActive = &detector == activeDetector;
             const bool wasMissingResult = !detector.hasResult;
 
-            const auto queryStart = std::chrono::steady_clock::now();
-            detector.effectiveIncludePairCount =
-                m_impl->collisionScene.effectiveIncludePairCount(detector.options);
-            const auto checkStart = std::chrono::steady_clock::now();
-            m_impl->collisionScene.checkCollision(detector.options, detector.lastResult);
-            const double checkMs = elapsedMilliseconds(checkStart);
-            detector.lastCheckMs = checkMs;
-            totalCheckMs += checkMs;
-            double distanceMs = 0.0;
-            const bool wantsNearest =
-                detector.options.enableDistance || detector.options.enableNearestPoints;
-            detector.nearestState = "NotComputed";
-            detector.nearestReason.clear();
-            if(!wantsNearest) {
-                detector.nearestState = "Disabled";
-                detector.nearestReason = "distance and nearest point output are disabled";
-            } else {
-                const auto distanceStart = std::chrono::steady_clock::now();
-                CollisionResult distanceResult;
-                m_impl->collisionScene.distance(detector.options, distanceResult);
-                mergeDistanceResult(detector.lastResult, distanceResult);
-                distanceMs = elapsedMilliseconds(distanceStart);
-                totalDistanceMs += distanceMs;
-                detector.lastNearestQueryFrame = m_impl->collisionQueryFrame;
-                if(detector.lastResult.hasNearestPoints) {
-                    detector.nearestState = detector.lastResult.inCollision()
-                        ? "ValidInCollision"
-                        : "Valid";
-                } else if(!distanceResult.message.empty()) {
-                    detector.nearestState = "InvalidBackendPoints";
-                    detector.nearestReason = distanceResult.message;
-                } else if(detector.lastResult.inCollision()) {
-                    detector.nearestState = "CollisionNoNearest";
-                    detector.nearestReason =
-                        "distance query did not provide nearest points while detector is colliding";
-                } else {
-                    detector.nearestState = "NotComputed";
-                    detector.nearestReason = "distance query returned no nearest points";
-                }
+            simulation_runtime::ProjectCollisionQueryMetrics metrics;
+            const simulation_runtime::Result queryResult =
+                simulation_runtime::ProjectCollisionQueryService::queryDetector(
+                    m_impl->collisionScene,
+                    detector,
+                    simulation_runtime::ProjectCollisionQueryMode::Continuous,
+                    &metrics);
+            detector.effectiveIncludePairCount = metrics.effectiveIncludePairCount;
+            detector.lastCheckMs = metrics.checkMs;
+            detector.lastDistanceMs = metrics.distanceMs;
+            detector.lastQueryMs = metrics.totalMs;
+            detector.nearestState =
+                simulation_runtime::ProjectCollisionQueryService::nearestStateName(
+                    metrics.nearestState);
+            detector.nearestReason = metrics.nearestReason;
+            totalCheckMs += metrics.checkMs;
+            totalDistanceMs += metrics.distanceMs;
+            totalQueryMs += metrics.totalMs;
+            queriedDetectorCount += metrics.checkExecuted ? 1 : 0;
+            if(!queryResult.success) {
+                LOG_WARNING("rs2026") << "Project collision query failed: detector="
+                    << detector.id << ", reason=" << queryResult.message;
             }
-            detector.lastDistanceMs = distanceMs;
-            const double queryMs = elapsedMilliseconds(queryStart);
-            detector.lastQueryMs = queryMs;
-            totalQueryMs += queryMs;
-            ++queriedDetectorCount;
-            if(wasMissingResult || queryMs > 10.0) {
+            if(wasMissingResult || metrics.totalMs > 10.0) {
                 LOG_DEBUG("rs2026") << "Project collision query slow: detector=" << detector.id
                     << ", active=" << isActive
                     << ", visible=" << detector.visible
@@ -6777,11 +5414,10 @@ void ProjectScene::update(double timeSeconds)
                     << ", enableDistance=" << detector.options.enableDistance
                     << ", enableNearestPoints=" << detector.options.enableNearestPoints
                     << ", contacts=" << detector.lastResult.contacts.size()
-                    << ", checkMs=" << checkMs
-                    << ", distanceMs=" << distanceMs
-                    << ", elapsedMs=" << queryMs;
+                    << ", checkMs=" << metrics.checkMs
+                    << ", distanceMs=" << metrics.distanceMs
+                    << ", elapsedMs=" << metrics.totalMs;
             }
-            detector.hasResult = true;
             if(&detector == activeDetector) {
                 activeResult = detector.lastResult;
             }
@@ -6825,10 +5461,12 @@ void ProjectScene::update(double timeSeconds)
     const std::unordered_set<ObjectID>& visualHighlightObjects =
         showDetectorCollisionGeometry ? activeCollidingObjects : noVisualCollisionHighlights;
 
-    const std::string selectedRobotId = m_impl->selectionState.selectedRobotId();
-    const std::string selectedLinkName = m_impl->selectionState.selectedLinkName();
-    const std::string selectedSceneObjectId = m_impl->selectionState.selectedSceneObjectId();
-    const std::string selectedMountedAttachmentId = m_impl->selectionState.selectedMountedAttachmentId();
+    const std::string selectedRobotId = m_impl->interactionSystem.selection().selectedRobotId();
+    const std::string selectedLinkName = m_impl->interactionSystem.selection().selectedLinkName();
+    const std::string selectedSceneObjectId =
+        m_impl->interactionSystem.selection().selectedSceneObjectId();
+    const std::string selectedMountedAttachmentId =
+        m_impl->interactionSystem.selection().selectedMountedAttachmentId();
 
     for(const RuntimeRobot& robot : m_impl->robots) {
         updateMeshOverlays(
@@ -6840,12 +5478,12 @@ void ProjectScene::update(double timeSeconds)
     updateRobotVisualHighlights(m_impl->robots, visualHighlightObjects);
     updateSceneObjectHighlights(m_impl->objects, visualHighlightObjects, selectedSceneObjectId);
     updateToolAttachmentHighlights(
-        m_impl->toolAttachments,
+        m_impl->attachmentVisualSystem.visuals(),
         m_impl->objects,
         visualHighlightObjects,
         selectedMountedAttachmentId);
-    applySelectionOverrides(m_impl->selectionOverrides);
-    applySelectionOverrides(m_impl->pairPreviewOverrides);
+    applySelectionOverrides(m_impl->interactionSystem.selectionOverrides());
+    applySelectionOverrides(m_impl->interactionSystem.pairPreviewOverrides());
     m_impl->lastCollisionOverlayHighlightMs = elapsedMilliseconds(overlayHighlightStart);
 
     const std::size_t activeIncludePairCount = activeDetector != nullptr
@@ -6863,16 +5501,7 @@ void ProjectScene::update(double timeSeconds)
         m_impl->lastContactCount = activeResult.contacts.size();
     }
 
-    m_impl->lastCollisionOverlayDebugBuildMs = 0.0;
-    m_impl->lastCollisionOverlayVariantFilterMs = 0.0;
-    m_impl->lastCollisionOverlayDebugSubmitMs = 0.0;
-    m_impl->lastCollisionOverlayAuxFramesMs = 0.0;
-    m_impl->lastCollisionOverlayDetectorCount = 0;
-    m_impl->lastCollisionOverlayGeometryCount = 0;
-    m_impl->lastCollisionOverlayContactCount = 0;
-    m_impl->lastCollisionOverlayNearestCount = 0;
-    m_impl->lastCollisionOverlayPrimitiveEstimate = 0;
-    m_impl->lastCollisionOverlayLineEstimate = 0;
+    m_impl->collisionPresentationSystem.state().frameMetrics.resetOverlay();
 
     bool collisionGeometryOverlaySubmitted = false;
     for(const ProjectCollisionDetectorRuntime& detector : m_impl->collisionDetectors) {
@@ -6967,9 +5596,11 @@ void ProjectScene::update(double timeSeconds)
 
         robot_render::CollisionRenderDrawOptions drawOptions;
         drawOptions.adaptiveContactSize = true;
-        if(m_impl->mainCameraNode && m_impl->mainCameraNode->camera()) {
+        const std::shared_ptr<scenecore::CameraNode> mainCameraNode =
+            m_impl->cameraSystem.mainCameraNode();
+        if(mainCameraNode && mainCameraNode->camera()) {
             drawOptions.cameraPosition =
-                m_impl->mainCameraNode->camera()->position().cast<double>();
+                mainCameraNode->camera()->position().cast<double>();
         }
         const auto debugSubmitStart = std::chrono::steady_clock::now();
         robot_render::CollisionRenderBridge::draw(debugData, m_impl->renderer.debug(), drawOptions);
@@ -6977,6 +5608,7 @@ void ProjectScene::update(double timeSeconds)
     }
 
     const auto auxFramesStart = std::chrono::steady_clock::now();
+    m_impl->environmentSystem.submit(m_impl->renderer.debug());
     m_impl->drawSelectedJointFrame();
     m_impl->drawVisibleObjectFrames();
     m_impl->drawSelectedObjectFrame();
@@ -7002,9 +5634,14 @@ void ProjectScene::render()
 
     glViewport(0, 0, m_impl->width, m_impl->height);
 
-    auto camera = m_impl->mainCameraNode->camera();
+    const std::shared_ptr<scenecore::CameraNode> mainCameraNode =
+        m_impl->cameraSystem.mainCameraNode();
+    if(!mainCameraNode || !mainCameraNode->camera()) {
+        return;
+    }
     if(m_impl->height > 0) {
-        camera->setAspect(static_cast<float>(m_impl->width) / static_cast<float>(m_impl->height));
+        mainCameraNode->camera()->setAspect(
+            static_cast<float>(m_impl->width) / static_cast<float>(m_impl->height));
     }
 
     glClearColor(
@@ -7015,48 +5652,82 @@ void ProjectScene::render()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     m_impl->sceneGraph.update();
-    m_impl->renderer.updateSceneUBO(m_impl->sceneGraph, m_impl->mainCameraNode.get());
+    m_impl->renderer.updateSceneUBO(m_impl->sceneGraph, mainCameraNode.get());
     m_impl->renderer.render(m_impl->sceneGraph);
+}
+
+std::vector<ProjectScene::CameraInfo> ProjectScene::cameras() const
+{
+    std::vector<CameraInfo> result;
+    for(const simulation_runtime::RuntimeMountedCamera& camera :
+        m_impl->attachmentVisualSystem.mountedGraph().cameras()) {
+        CameraInfo info;
+        info.attachmentId = camera.attachmentId;
+        info.name = camera.name.empty() ? camera.attachmentId : camera.name;
+        info.robotId = camera.robotId;
+        info.linkName = camera.linkName;
+        info.width = camera.intrinsics.width;
+        info.height = camera.intrinsics.height;
+        info.enabled = camera.enabled;
+        result.push_back(std::move(info));
+    }
+    return result;
+}
+
+bool ProjectScene::renderCameraFrame(
+    const std::string& attachmentId,
+    int width,
+    int height,
+    std::vector<unsigned char>& rgbaPixels,
+    std::string* errorMessage)
+{
+    rgbaPixels.clear();
+    if(!m_impl->initialized || width <= 0 || height <= 0) {
+        if(errorMessage != nullptr) {
+            *errorMessage = "Camera render request is invalid.";
+        }
+        return false;
+    }
+
+    const std::vector<simulation_runtime::RuntimeMountedCamera> cameras =
+        m_impl->attachmentVisualSystem.mountedGraph().cameras();
+    const auto cameraIt = std::find_if(
+        cameras.begin(),
+        cameras.end(),
+        [&](const simulation_runtime::RuntimeMountedCamera& camera) {
+            return camera.attachmentId == attachmentId;
+        });
+    if(cameraIt == cameras.end() || !cameraIt->enabled) {
+        if(errorMessage != nullptr) {
+            *errorMessage = "Camera is missing or disabled: " + attachmentId;
+        }
+        return false;
+    }
+
+    return m_impl->cameraSystem.renderMountedCamera(
+        *cameraIt,
+        width,
+        height,
+        m_impl->backgroundColor,
+        m_impl->sceneGraph,
+        m_impl->renderer,
+        rgbaPixels,
+        errorMessage);
 }
 
 void ProjectScene::onMouseMove(float dx, float dy, int button)
 {
-    if(m_impl->controller) {
-        const Eigen::Vector3f previousPosition =
-            m_impl->mainCameraNode && m_impl->mainCameraNode->camera()
-                ? m_impl->mainCameraNode->camera()->position()
-                : Eigen::Vector3f::Zero();
-        m_impl->cameraAnimationActive = false;
-        m_impl->controller->onMouseMove(dx, dy, button);
-        if(m_impl->mainCameraNode && m_impl->mainCameraNode->camera() && m_impl->cameraLookAt.valid) {
-            const Eigen::Vector3f currentPosition = m_impl->mainCameraNode->camera()->position();
-            if(button == 1) {
-                m_impl->cameraLookAt.target += currentPosition - previousPosition;
-            }
-            m_impl->cameraLookAt.position = currentPosition;
-        }
-    }
+    m_impl->cameraSystem.onMouseMove(dx, dy, button);
 }
 
 void ProjectScene::onScroll(float delta)
 {
-    if(m_impl->controller) {
-        m_impl->cameraAnimationActive = false;
-        m_impl->controller->onScroll(delta);
-        if(m_impl->mainCameraNode && m_impl->mainCameraNode->camera() && m_impl->cameraLookAt.valid) {
-            m_impl->cameraLookAt.position = m_impl->mainCameraNode->camera()->position();
-        }
-    }
+    m_impl->cameraSystem.onScroll(delta);
 }
 
 void ProjectScene::setCameraView(ProjectSceneCameraView view)
 {
-    if(!m_impl->mainCameraNode || !m_impl->mainCameraNode->camera()) {
-        return;
-    }
-
-    m_impl->cameraAnimationActive = false;
-    m_impl->applyCameraLookAt(makeCameraLookAtState(m_impl->fullSceneBounds(), view, 1.25));
+    m_impl->cameraSystem.setView(view, m_impl->fullSceneBounds(), false);
 }
 
 void ProjectScene::focusMountFrameLink(const std::string& robotId, const std::string& linkName)
@@ -7065,39 +5736,25 @@ void ProjectScene::focusMountFrameLink(const std::string& robotId, const std::st
         return;
     }
 
-    if(m_impl->mountFrameLinkFocusActive &&
-        m_impl->mountFrameFocusRobotId == robotId &&
-        m_impl->mountFrameFocusLinkName == linkName) {
-        return;
-    }
-
     const CameraSceneBounds bounds = m_impl->robotLinkBounds(robotId, linkName);
-    if(!bounds.valid) {
+    if(!m_impl->cameraSystem.focusMountFrameLink(robotId, linkName, bounds)) {
         return;
     }
-
-    m_impl->mountFrameLinkFocusActive = true;
-    m_impl->mountFrameFocusRobotId = robotId;
-    m_impl->mountFrameFocusLinkName = linkName;
-    m_impl->objectFrameObjectFocusActive = false;
-    m_impl->objectFrameFocusObjectId.clear();
-    m_impl->mountedAttachmentFocusActive = false;
-    m_impl->mountedAttachmentFocusId.clear();
     m_impl->applyMountFrameLinkFocusVisibility();
-    m_impl->animateCameraTo(makeCameraLookAtState(bounds, ProjectSceneCameraView::Front, 1.8), 0.55);
 }
 
 void ProjectScene::clearMountFrameLinkFocus()
 {
-    if(!m_impl->initialized || !m_impl->mountFrameLinkFocusActive) {
+    if(!m_impl->initialized || !m_impl->cameraSystem.clearMountFrameLinkFocus()) {
         return;
     }
-
-    m_impl->mountFrameLinkFocusActive = false;
-    m_impl->mountFrameFocusRobotId.clear();
-    m_impl->mountFrameFocusLinkName.clear();
     m_impl->applyMountFrameLinkFocusVisibility();
-    m_impl->animateCameraTo(makeCameraLookAtState(m_impl->fullSceneBounds(), ProjectSceneCameraView::Home, 1.25), 0.55);
+    m_impl->cameraSystem.animateTo(
+        ProjectSceneCameraSystem::makeLookAtState(
+            m_impl->fullSceneBounds(),
+            ProjectSceneCameraView::Home,
+            1.25),
+        0.55);
 }
 
 void ProjectScene::focusObjectFrameObject(const std::string& objectId)
@@ -7106,37 +5763,25 @@ void ProjectScene::focusObjectFrameObject(const std::string& objectId)
         return;
     }
 
-    if(m_impl->objectFrameObjectFocusActive &&
-        m_impl->objectFrameFocusObjectId == objectId) {
-        return;
-    }
-
     const CameraSceneBounds bounds = m_impl->sceneObjectBounds(objectId);
-    if(!bounds.valid) {
+    if(!m_impl->cameraSystem.focusObjectFrameObject(objectId, bounds)) {
         return;
     }
-
-    m_impl->mountFrameLinkFocusActive = false;
-    m_impl->mountFrameFocusRobotId.clear();
-    m_impl->mountFrameFocusLinkName.clear();
-    m_impl->objectFrameObjectFocusActive = true;
-    m_impl->objectFrameFocusObjectId = objectId;
-    m_impl->mountedAttachmentFocusActive = false;
-    m_impl->mountedAttachmentFocusId.clear();
     m_impl->applyMountFrameLinkFocusVisibility();
-    m_impl->animateCameraTo(makeCameraLookAtState(bounds, ProjectSceneCameraView::Front, 1.8), 0.55);
 }
 
 void ProjectScene::clearObjectFrameObjectFocus()
 {
-    if(!m_impl->initialized || !m_impl->objectFrameObjectFocusActive) {
+    if(!m_impl->initialized || !m_impl->cameraSystem.clearObjectFrameObjectFocus()) {
         return;
     }
-
-    m_impl->objectFrameObjectFocusActive = false;
-    m_impl->objectFrameFocusObjectId.clear();
     m_impl->applyMountFrameLinkFocusVisibility();
-    m_impl->animateCameraTo(makeCameraLookAtState(m_impl->fullSceneBounds(), ProjectSceneCameraView::Home, 1.25), 0.55);
+    m_impl->cameraSystem.animateTo(
+        ProjectSceneCameraSystem::makeLookAtState(
+            m_impl->fullSceneBounds(),
+            ProjectSceneCameraView::Home,
+            1.25),
+        0.55);
 }
 
 void ProjectScene::focusMountedAttachment(const std::string& attachmentId)
@@ -7145,38 +5790,26 @@ void ProjectScene::focusMountedAttachment(const std::string& attachmentId)
         return;
     }
 
-    if(m_impl->mountedAttachmentFocusActive &&
-        m_impl->mountedAttachmentFocusId == attachmentId) {
-        return;
-    }
-
     const CameraSceneBounds bounds = m_impl->mountedAttachmentBounds(attachmentId);
-    if(!bounds.valid) {
+    if(!m_impl->cameraSystem.focusMountedAttachment(attachmentId, bounds)) {
         return;
     }
-
-    m_impl->mountFrameLinkFocusActive = false;
-    m_impl->mountFrameFocusRobotId.clear();
-    m_impl->mountFrameFocusLinkName.clear();
-    m_impl->objectFrameObjectFocusActive = false;
-    m_impl->objectFrameFocusObjectId.clear();
-    m_impl->mountedAttachmentFocusActive = true;
-    m_impl->mountedAttachmentFocusId = attachmentId;
     m_impl->setActiveToolAttachment(attachmentId);
     m_impl->applyMountFrameLinkFocusVisibility();
-    m_impl->animateCameraTo(makeCameraLookAtState(bounds, ProjectSceneCameraView::Front, 1.8), 0.55);
 }
 
 void ProjectScene::clearMountedAttachmentFocus()
 {
-    if(!m_impl->initialized || !m_impl->mountedAttachmentFocusActive) {
+    if(!m_impl->initialized || !m_impl->cameraSystem.clearMountedAttachmentFocus()) {
         return;
     }
-
-    m_impl->mountedAttachmentFocusActive = false;
-    m_impl->mountedAttachmentFocusId.clear();
     m_impl->applyMountFrameLinkFocusVisibility();
-    m_impl->animateCameraTo(makeCameraLookAtState(m_impl->fullSceneBounds(), ProjectSceneCameraView::Home, 1.25), 0.55);
+    m_impl->cameraSystem.animateTo(
+        ProjectSceneCameraSystem::makeLookAtState(
+            m_impl->fullSceneBounds(),
+            ProjectSceneCameraView::Home,
+            1.25),
+        0.55);
 }
 
 void ProjectScene::previewObjectCollisionModelVariant(
@@ -7187,9 +5820,7 @@ void ProjectScene::previewObjectCollisionModelVariant(
         return;
     }
 
-    m_impl->previewObjectCollisionModelActive = true;
-    m_impl->previewObjectCollisionModelObjectId = objectId;
-    m_impl->previewObjectCollisionModelVariantId = variantId;
+    m_impl->collisionPresentationSystem.beginObjectPreview(objectId, variantId);
     m_impl->applyMountFrameLinkFocusVisibility();
     m_impl->updateObjectCollisionModelVariantPreviewMeshes();
     m_impl->invalidateCollisionGeometryOverlayCache();
@@ -7201,9 +5832,7 @@ void ProjectScene::clearObjectCollisionModelVariantPreview()
         return;
     }
 
-    m_impl->previewObjectCollisionModelActive = false;
-    m_impl->previewObjectCollisionModelObjectId.clear();
-    m_impl->previewObjectCollisionModelVariantId.clear();
+    m_impl->collisionPresentationSystem.clearObjectPreview();
     m_impl->hideObjectCollisionModelVariantPreviewMeshes();
     m_impl->applyMountFrameLinkFocusVisibility();
     m_impl->invalidateCollisionGeometryOverlayCache();
@@ -7223,7 +5852,7 @@ void ProjectScene::previewCollisionPairTargets(
         return;
     }
 
-    restoreMaterialOverrides(m_impl->pairPreviewOverrides);
+    restoreMaterialOverrides(m_impl->interactionSystem.pairPreviewOverrides());
 
     const Eigen::Vector4f colorA(0.05f, 0.65f, 1.0f, 1.0f);
     const Eigen::Vector3f emissiveA(0.01f, 0.08f, 0.22f);
@@ -7238,7 +5867,7 @@ void ProjectScene::previewCollisionPairTargets(
         }
         for(unsigned int i = 0; i < model->subMeshCount(); ++i) {
             auto& subMesh = model->subMesh(i);
-            m_impl->pairPreviewOverrides.push_back(MaterialOverride{
+            m_impl->interactionSystem.pairPreviewOverrides().push_back(MaterialOverride{
                 model,
                 i,
                 subMesh.material,
@@ -7291,7 +5920,8 @@ void ProjectScene::previewCollisionPairTargets(
         if(attachmentId.empty()) {
             return;
         }
-        for(RuntimeToolAttachmentVisual& attachment : m_impl->toolAttachments) {
+        for(RuntimeToolAttachmentVisual& attachment :
+            m_impl->attachmentVisualSystem.visuals()) {
             if(attachment.documentId == attachmentId) {
                 addModelOverrides(attachment.visual.model, color, emissive);
                 return;
@@ -7305,23 +5935,25 @@ void ProjectScene::previewCollisionPairTargets(
     addLinkOverrides(robotBId, linkBName, colorB, emissiveB);
     addObjectOverrides(objectBId, colorB, emissiveB);
     addAttachmentOverrides(attachmentBId, colorB, emissiveB);
-    applySelectionOverrides(m_impl->pairPreviewOverrides);
+    applySelectionOverrides(m_impl->interactionSystem.pairPreviewOverrides());
 }
 
 void ProjectScene::setInteractionMode(ProjectSceneInteractionMode mode)
 {
-    m_impl->interactionMode = mode;
+    m_impl->interactionSystem.setMode(mode);
 }
 
 ProjectSceneInteractionMode ProjectScene::interactionMode() const
 {
-    return m_impl->interactionMode;
+    return m_impl->interactionSystem.mode();
 }
 
 ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
 {
     ProjectScenePickRay ray;
-    if(!screenRayFromCamera(m_impl->mainCameraNode ? m_impl->mainCameraNode->camera() : nullptr,
+    const std::shared_ptr<scenecore::CameraNode> mainCameraNode =
+        m_impl->cameraSystem.mainCameraNode();
+    if(!screenRayFromCamera(mainCameraNode ? mainCameraNode->camera() : nullptr,
         m_impl->width,
         m_impl->height,
         x,
@@ -7360,7 +5992,7 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
         }
     }
 
-    for(const simulation_project::RobotMountDesc& mount : m_impl->projectDocument.robotMounts) {
+    for(const simulation_project::RobotMountDesc& mount : m_impl->document().robotMounts) {
         const RuntimeRobot* robot = findRuntimeRobot(m_impl->robots, mount.robotId);
         if(robot == nullptr ||
             !robot->instance ||
@@ -7382,7 +6014,8 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
         candidates.push_back(std::move(mountCandidate));
     }
 
-    for(const RuntimeToolAttachmentVisual& attachment : m_impl->toolAttachments) {
+    for(const RuntimeToolAttachmentVisual& attachment :
+        m_impl->attachmentVisualSystem.visuals()) {
         if(!attachment.visible) {
             continue;
         }
@@ -7402,13 +6035,13 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
             const RuntimeSceneObject& object = m_impl->objects[attachment.collisionObjectIndex];
             if(object.collisionObject) {
                 ProjectScenePickCandidate aabbCandidate = attachmentCandidate;
-                setCandidateAabb(aabbCandidate, object.collisionObject->fcl()->getAABB());
+                setCandidateAabb(aabbCandidate, object.collisionObject->aabb());
                 candidates.push_back(std::move(aabbCandidate));
             }
             for(const RuntimeSceneCollisionObject& collisionObject : object.collisionObjects) {
                 if(collisionObject.collisionObject) {
                     ProjectScenePickCandidate aabbCandidate = attachmentCandidate;
-                    setCandidateAabb(aabbCandidate, collisionObject.collisionObject->fcl()->getAABB());
+                    setCandidateAabb(aabbCandidate, collisionObject.collisionObject->aabb());
                     candidates.push_back(std::move(aabbCandidate));
                 }
             }
@@ -7430,14 +6063,14 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
         bool pushedAabb = false;
         if(object.collisionObject) {
             ProjectScenePickCandidate aabbCandidate = objectCandidate;
-            setCandidateAabb(aabbCandidate, object.collisionObject->fcl()->getAABB());
+            setCandidateAabb(aabbCandidate, object.collisionObject->aabb());
             candidates.push_back(std::move(aabbCandidate));
             pushedAabb = true;
         }
         for(const RuntimeSceneCollisionObject& collisionObject : object.collisionObjects) {
             if(collisionObject.collisionObject) {
                 ProjectScenePickCandidate aabbCandidate = objectCandidate;
-                setCandidateAabb(aabbCandidate, collisionObject.collisionObject->fcl()->getAABB());
+                setCandidateAabb(aabbCandidate, collisionObject.collisionObject->aabb());
                 candidates.push_back(std::move(aabbCandidate));
                 pushedAabb = true;
             }
@@ -7473,7 +6106,7 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
         for(const RuntimeSceneCollisionObject& collisionObject : pointCloud.collisionObjects) {
             if(collisionObject.collisionObject) {
                 ProjectScenePickCandidate aabbCandidate = pointCloudCandidate;
-                setCandidateAabb(aabbCandidate, collisionObject.collisionObject->fcl()->getAABB());
+                setCandidateAabb(aabbCandidate, collisionObject.collisionObject->aabb());
                 candidates.push_back(std::move(aabbCandidate));
                 pushedAabb = true;
             }
@@ -7483,7 +6116,7 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
         }
     }
 
-    return ProjectScenePickingService::pick(ray, candidates, m_impl->interactionMode);
+    return ProjectScenePickingService::pick(ray, candidates, m_impl->interactionSystem.mode());
 }
 
 bool ProjectScene::applySurfaceScalarOverlay(
@@ -7499,7 +6132,7 @@ bool ProjectScene::applySurfaceScalarOverlay(
 
     RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, overlay.objectId);
     const simulation_project::SceneObjectDesc* objectDesc =
-        findSceneObjectDesc(m_impl->projectDocument, overlay.objectId);
+        findSceneObjectDesc(m_impl->document(), overlay.objectId);
     if(runtime == nullptr || objectDesc == nullptr || !runtime->visualNode) {
         return fail("The target scene object is not available in the viewport.");
     }
@@ -7510,7 +6143,7 @@ bool ProjectScene::applySurfaceScalarOverlay(
     const std::filesystem::path sourcePath = simulation_project::AssetResolver::resolveProjectPath(
         ProjectRuntimeBuilder::makeAssetResolveContext(
             m_impl->projectBasePath,
-            m_impl->projectDocument),
+            m_impl->document()),
         objectDesc->sourcePath);
     std::string loadError;
     const std::shared_ptr<assetcore::ModelDesc> sourceDesc =
@@ -7644,7 +6277,9 @@ smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScala
 
     ProjectScenePickRay ray;
     if(!screenRayFromCamera(
-        m_impl->mainCameraNode ? m_impl->mainCameraNode->camera() : nullptr,
+        m_impl->cameraSystem.mainCameraNode()
+            ? m_impl->cameraSystem.mainCameraNode()->camera()
+            : nullptr,
         m_impl->width,
         m_impl->height,
         x,
@@ -7692,6 +6327,264 @@ smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScala
     return result;
 }
 
+smrobot::visualization::CustomMeshResult ProjectScene::upsertCustomMesh(
+    const smrobot::visualization::CustomMeshDesc& desc,
+    smrobot::visualization::CustomMeshHandle& handle)
+{
+    using namespace smrobot::visualization;
+    CustomMeshDesc normalized;
+    const CustomMeshResult validation = validateCustomMeshDesc(desc, normalized);
+    if(!validation.success) {
+        return validation;
+    }
+    if(!m_impl->initialized) {
+        return CustomMeshResult::fail(
+            CustomMeshError::GraphicsContextUnavailable,
+            "The project scene must be initialized before adding a custom mesh.");
+    }
+
+    std::shared_ptr<rendercore::Material> createdMaterial;
+    std::shared_ptr<scenecore::ModelNode> createdNode;
+    std::string createdKey;
+    std::uint64_t createdHandleValue = 0;
+    bool createdNodeAttached = false;
+    const auto rollbackCreatedMesh = [&]() {
+        if(createdNodeAttached && createdNode) {
+            m_impl->sceneGraph.removeNode(createdNode);
+        }
+        if(!createdKey.empty()) {
+            m_impl->customMeshKeys.erase(createdKey);
+        }
+        if(createdHandleValue != 0) {
+            m_impl->customMeshes.erase(createdHandleValue);
+        }
+        if(createdMaterial) {
+            scenecore::clearMaterialRenderState(createdMaterial.get());
+        }
+    };
+    try {
+        const std::string key = customMeshKey(normalized.ownerId, normalized.meshId);
+        const auto keyIt = m_impl->customMeshKeys.find(key);
+        if(keyIt != m_impl->customMeshKeys.end()) {
+            auto runtimeIt = m_impl->customMeshes.find(keyIt->second);
+            if(runtimeIt == m_impl->customMeshes.end()) {
+                return CustomMeshResult::fail(
+                    CustomMeshError::InternalError,
+                    "The custom mesh registry is inconsistent.");
+            }
+            Impl::RuntimeCustomMesh& runtime = runtimeIt->second;
+            std::shared_ptr<rendercore::Geometry> geometry =
+                makeCustomMeshGeometry(normalized.mesh);
+            applyCustomMeshAppearance(*runtime.material, normalized.appearance);
+            runtime.geometry = std::move(geometry);
+            runtime.model->subMesh(0).geometry = runtime.geometry;
+            runtime.node->setLocal(glm::make_mat4(normalized.transform.columnMajor.data()));
+            runtime.node->setVisible(normalized.visible);
+            runtime.descriptor = std::move(normalized);
+            handle = runtime.handle;
+            return CustomMeshResult::ok();
+        }
+
+        if(m_impl->nextCustomMeshHandle == 0) {
+            return CustomMeshResult::fail(
+                CustomMeshError::InternalError,
+                "The custom mesh handle space is exhausted.");
+        }
+
+        Impl::RuntimeCustomMesh runtime;
+        runtime.handle.value = m_impl->nextCustomMeshHandle;
+        createdHandleValue = runtime.handle.value;
+        createdKey = key;
+        runtime.descriptor = normalized;
+        runtime.geometry = makeCustomMeshGeometry(normalized.mesh);
+        createdMaterial = std::make_shared<rendercore::Material>();
+        runtime.material = createdMaterial;
+        applyCustomMeshAppearance(*runtime.material, normalized.appearance);
+        runtime.model = std::make_shared<rendercore::Model>();
+        rendercore::SubMesh subMesh;
+        subMesh.geometry = runtime.geometry;
+        subMesh.material = runtime.material;
+        runtime.model->addSubMesh(std::move(subMesh));
+        runtime.node = std::make_shared<scenecore::ModelNode>(runtime.model);
+        createdNode = runtime.node;
+        runtime.node->setName("custom-mesh-" + std::to_string(runtime.handle.value));
+        runtime.node->setLocal(glm::make_mat4(normalized.transform.columnMajor.data()));
+        runtime.node->setVisible(normalized.visible);
+
+        m_impl->sceneGraph.addNode(runtime.node);
+        createdNodeAttached = true;
+        m_impl->sceneGraph.registerNode(runtime.node);
+        if(!m_impl->customMeshes.emplace(runtime.handle.value, std::move(runtime)).second) {
+            throw std::runtime_error("The custom mesh handle is already registered.");
+        }
+        if(!m_impl->customMeshKeys.emplace(key, createdHandleValue).second) {
+            throw std::runtime_error("The custom mesh owner and mesh id are already registered.");
+        }
+        handle.value = createdHandleValue;
+        ++m_impl->nextCustomMeshHandle;
+        return CustomMeshResult::ok();
+    }
+    catch(const std::exception& exception) {
+        rollbackCreatedMesh();
+        return CustomMeshResult::fail(CustomMeshError::InternalError, exception.what());
+    }
+    catch(...) {
+        rollbackCreatedMesh();
+        return CustomMeshResult::fail(
+            CustomMeshError::InternalError,
+            "Unknown custom mesh creation error.");
+    }
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::updateCustomMeshGeometry(
+    smrobot::visualization::CustomMeshHandle handle,
+    const smrobot::visualization::MeshData& mesh)
+{
+    using namespace smrobot::visualization;
+    const auto it = m_impl->customMeshes.find(handle.value);
+    if(!handle.valid() || it == m_impl->customMeshes.end()) {
+        return CustomMeshResult::fail(CustomMeshError::NotFound, "Custom mesh handle was not found.");
+    }
+
+    MeshData normalized;
+    const CustomMeshResult validation = validateAndNormalizeMesh(mesh, normalized);
+    if(!validation.success) {
+        return validation;
+    }
+    try {
+        std::shared_ptr<rendercore::Geometry> geometry = makeCustomMeshGeometry(normalized);
+        Impl::RuntimeCustomMesh& runtime = it->second;
+        runtime.geometry = std::move(geometry);
+        runtime.model->subMesh(0).geometry = runtime.geometry;
+        runtime.descriptor.mesh = std::move(normalized);
+        return CustomMeshResult::ok();
+    }
+    catch(const std::exception& exception) {
+        return CustomMeshResult::fail(CustomMeshError::InternalError, exception.what());
+    }
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::updateCustomMeshColors(
+    smrobot::visualization::CustomMeshHandle handle,
+    const std::vector<smrobot::visualization::Color4f>& colors)
+{
+    using namespace smrobot::visualization;
+    const auto it = m_impl->customMeshes.find(handle.value);
+    if(!handle.valid() || it == m_impl->customMeshes.end()) {
+        return CustomMeshResult::fail(CustomMeshError::NotFound, "Custom mesh handle was not found.");
+    }
+    MeshData mesh = it->second.descriptor.mesh;
+    mesh.colors = colors;
+    return updateCustomMeshGeometry(handle, mesh);
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::setCustomMeshTransform(
+    smrobot::visualization::CustomMeshHandle handle,
+    const smrobot::visualization::TransformMatrix& transform)
+{
+    using namespace smrobot::visualization;
+    const auto it = m_impl->customMeshes.find(handle.value);
+    if(!handle.valid() || it == m_impl->customMeshes.end()) {
+        return CustomMeshResult::fail(CustomMeshError::NotFound, "Custom mesh handle was not found.");
+    }
+    CustomMeshDesc candidate = it->second.descriptor;
+    candidate.transform = transform;
+    CustomMeshDesc normalized;
+    const CustomMeshResult validation = validateCustomMeshDesc(candidate, normalized);
+    if(!validation.success) {
+        return validation;
+    }
+    it->second.descriptor.transform = transform;
+    it->second.node->setLocal(glm::make_mat4(transform.columnMajor.data()));
+    return CustomMeshResult::ok();
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::setCustomMeshAppearance(
+    smrobot::visualization::CustomMeshHandle handle,
+    const smrobot::visualization::MeshAppearance& appearance)
+{
+    using namespace smrobot::visualization;
+    const auto it = m_impl->customMeshes.find(handle.value);
+    if(!handle.valid() || it == m_impl->customMeshes.end()) {
+        return CustomMeshResult::fail(CustomMeshError::NotFound, "Custom mesh handle was not found.");
+    }
+    CustomMeshDesc candidate = it->second.descriptor;
+    candidate.appearance = appearance;
+    CustomMeshDesc normalized;
+    const CustomMeshResult validation = validateCustomMeshDesc(candidate, normalized);
+    if(!validation.success) {
+        return validation;
+    }
+    try {
+        applyCustomMeshAppearance(*it->second.material, appearance);
+        it->second.descriptor.appearance = appearance;
+        return CustomMeshResult::ok();
+    }
+    catch(const std::exception& exception) {
+        return CustomMeshResult::fail(CustomMeshError::InternalError, exception.what());
+    }
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::setCustomMeshVisible(
+    smrobot::visualization::CustomMeshHandle handle,
+    bool visible)
+{
+    using namespace smrobot::visualization;
+    const auto it = m_impl->customMeshes.find(handle.value);
+    if(!handle.valid() || it == m_impl->customMeshes.end()) {
+        return CustomMeshResult::fail(CustomMeshError::NotFound, "Custom mesh handle was not found.");
+    }
+    it->second.descriptor.visible = visible;
+    it->second.node->setVisible(visible);
+    return CustomMeshResult::ok();
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::removeCustomMesh(
+    smrobot::visualization::CustomMeshHandle handle)
+{
+    using namespace smrobot::visualization;
+    const auto it = m_impl->customMeshes.find(handle.value);
+    if(!handle.valid() || it == m_impl->customMeshes.end()) {
+        return CustomMeshResult::fail(CustomMeshError::NotFound, "Custom mesh handle was not found.");
+    }
+    if(!m_impl->sceneGraph.removeNode(it->second.node)) {
+        return CustomMeshResult::fail(
+            CustomMeshError::InternalError,
+            "Custom mesh scene node could not be removed.");
+    }
+    const std::string key = customMeshKey(
+        it->second.descriptor.ownerId,
+        it->second.descriptor.meshId);
+    scenecore::clearMaterialRenderState(it->second.material.get());
+    m_impl->customMeshKeys.erase(key);
+    m_impl->customMeshes.erase(it);
+    return CustomMeshResult::ok();
+}
+
+smrobot::visualization::CustomMeshResult ProjectScene::clearCustomMeshes(
+    const std::string& ownerId)
+{
+    using namespace smrobot::visualization;
+    if(ownerId.empty()) {
+        return CustomMeshResult::fail(
+            CustomMeshError::InvalidArgument,
+            "Custom mesh ownerId must not be empty.");
+    }
+    std::vector<CustomMeshHandle> handles;
+    for(const auto& entry : m_impl->customMeshes) {
+        if(entry.second.descriptor.ownerId == ownerId) {
+            handles.push_back(entry.second.handle);
+        }
+    }
+    for(CustomMeshHandle meshHandle : handles) {
+        const CustomMeshResult result = removeCustomMesh(meshHandle);
+        if(!result.success) {
+            return result;
+        }
+    }
+    return CustomMeshResult::ok();
+}
+
 void ProjectScene::setShowCollisionGeometry(bool visible)
 {
     const auto showStart = std::chrono::steady_clock::now();
@@ -7724,12 +6617,12 @@ bool ProjectScene::setVisibleRobotCollisionVariant(
     const std::string runtimeKey =
         runtimeCollisionVariantSelectionKey(static_cast<int>(robot->runtimeId), linkName);
     const auto applyPreviewSelectionMaterial = [&](bool previewActive, bool convertFromVisual) {
-        if(m_impl->selectionState.selectedRobotId() != robotId ||
-            m_impl->selectionState.selectedLinkName() != linkName) {
+        if(m_impl->interactionSystem.selection().selectedRobotId() != robotId ||
+            m_impl->interactionSystem.selection().selectedLinkName() != linkName) {
             return;
         }
 
-        for(MaterialOverride& item : m_impl->selectionOverrides) {
+        for(MaterialOverride& item : m_impl->interactionSystem.selectionOverrides()) {
             if(!previewActive) {
                 item.color = Eigen::Vector4f(0.15f, 1.0f, 0.35f, 1.0f);
                 item.emissive = Eigen::Vector3f(0.02f, 0.18f, 0.04f);
@@ -7761,7 +6654,7 @@ bool ProjectScene::setVisibleRobotCollisionVariant(
                 item.emissive.setZero();
             }
         }
-        applySelectionOverrides(m_impl->selectionOverrides);
+        applySelectionOverrides(m_impl->interactionSystem.selectionOverrides());
     };
 
     if(variantId.empty()) {
@@ -7813,15 +6706,9 @@ std::string ProjectScene::visibleRobotCollisionVariant(
 
 void ProjectScene::setSelectedLink(const std::string& robotId, const std::string& linkName)
 {
-    m_impl->selectedJointFrameRobotId.clear();
-    m_impl->selectedJointFrameName.clear();
-    m_impl->selectedObjectFrameObjectId.clear();
-    m_impl->selectedObjectFrameId.clear();
-
-    restoreMaterialOverrides(m_impl->pairPreviewOverrides);
-    restoreMaterialOverrides(m_impl->selectionOverrides);
-
-    m_impl->selectionState.selectRobotLink(robotId, linkName);
+    restoreMaterialOverrides(m_impl->interactionSystem.pairPreviewOverrides());
+    restoreMaterialOverrides(m_impl->interactionSystem.selectionOverrides());
+    m_impl->interactionSystem.selectRobotLink(robotId, linkName);
 
     RuntimeRobot* demo = nullptr;
     for(RuntimeRobot& robot : m_impl->robots) {
@@ -7835,6 +6722,12 @@ void ProjectScene::setSelectedLink(const std::string& robotId, const std::string
         return;
     }
 
+    // A robot-level selection should preserve the authored materials. The tree and
+    // inspector already present the selection; tinting every link destroys PBR detail.
+    if(linkName.empty()) {
+        return;
+    }
+
     const auto addSelectionOverridesForLink = [&](const std::string& targetLinkName) {
         const auto& nodes = demo->visualBridge->visualNodes(targetLinkName);
         for(const auto& node : nodes) {
@@ -7845,33 +6738,22 @@ void ProjectScene::setSelectedLink(const std::string& robotId, const std::string
             auto model = node->model();
             for(unsigned int i = 0; i < model->subMeshCount(); ++i) {
                 auto& subMesh = model->subMesh(i);
-                m_impl->selectionOverrides.push_back(MaterialOverride{ model, i, subMesh.material });
+                m_impl->interactionSystem.selectionOverrides().push_back(
+                    MaterialOverride{ model, i, subMesh.material });
             }
         }
     };
 
-    if(linkName.empty()) {
-        for(const auto& [targetLinkName, link] : demo->model.links) {
-            (void)link;
-            addSelectionOverridesForLink(targetLinkName);
-        }
-    } else {
-        addSelectionOverridesForLink(linkName);
-    }
+    addSelectionOverridesForLink(linkName);
 
-    applySelectionOverrides(m_impl->selectionOverrides);
+    applySelectionOverrides(m_impl->interactionSystem.selectionOverrides());
 }
 
 void ProjectScene::setSelectedJointFrame(const std::string& robotId, const std::string& jointName)
 {
-    m_impl->selectedObjectFrameObjectId.clear();
-    m_impl->selectedObjectFrameId.clear();
-    restoreMaterialOverrides(m_impl->pairPreviewOverrides);
-    restoreMaterialOverrides(m_impl->selectionOverrides);
-    m_impl->selectionState.clear();
-
-    m_impl->selectedJointFrameRobotId = robotId;
-    m_impl->selectedJointFrameName = jointName;
+    restoreMaterialOverrides(m_impl->interactionSystem.pairPreviewOverrides());
+    restoreMaterialOverrides(m_impl->interactionSystem.selectionOverrides());
+    m_impl->interactionSystem.selectJointFrame(robotId, jointName);
 }
 
 void ProjectScene::setSelectedRobotMount(
@@ -7880,20 +6762,14 @@ void ProjectScene::setSelectedRobotMount(
     const std::string& robotMountId)
 {
     setSelectedLink(robotId, linkName);
-    m_impl->selectionState.selectRobotMount(robotId, linkName, robotMountId);
+    m_impl->interactionSystem.selectRobotMount(robotId, linkName, robotMountId);
 }
 
 void ProjectScene::setSelectedSceneObject(const std::string& objectId)
 {
-    m_impl->selectedJointFrameRobotId.clear();
-    m_impl->selectedJointFrameName.clear();
-    m_impl->selectedObjectFrameObjectId.clear();
-    m_impl->selectedObjectFrameId.clear();
-
-    restoreMaterialOverrides(m_impl->pairPreviewOverrides);
-    restoreMaterialOverrides(m_impl->selectionOverrides);
-
-    m_impl->selectionState.selectSceneObject(objectId);
+    restoreMaterialOverrides(m_impl->interactionSystem.pairPreviewOverrides());
+    restoreMaterialOverrides(m_impl->interactionSystem.selectionOverrides());
+    m_impl->interactionSystem.selectSceneObject(objectId);
 }
 
 void ProjectScene::setSelectedObjectFrame(
@@ -7901,11 +6777,10 @@ void ProjectScene::setSelectedObjectFrame(
     const std::string& frameId)
 {
     setSelectedSceneObject(objectId);
-    if(findSceneObjectDesc(m_impl->projectDocument, objectId) == nullptr || frameId.empty()) {
+    if(findSceneObjectDesc(m_impl->document(), objectId) == nullptr || frameId.empty()) {
         return;
     }
-    m_impl->selectedObjectFrameObjectId = objectId;
-    m_impl->selectedObjectFrameId = frameId;
+    m_impl->interactionSystem.selectObjectFrame(objectId, frameId);
 }
 
 bool ProjectScene::setSelectedToolAttachment(const std::string& attachmentId)
@@ -7915,26 +6790,21 @@ bool ProjectScene::setSelectedToolAttachment(const std::string& attachmentId)
 
 bool ProjectScene::setSelectedMountedAttachment(const std::string& attachmentId)
 {
-    m_impl->selectedJointFrameRobotId.clear();
-    m_impl->selectedJointFrameName.clear();
-    m_impl->selectedObjectFrameObjectId.clear();
-    m_impl->selectedObjectFrameId.clear();
-
-    restoreMaterialOverrides(m_impl->pairPreviewOverrides);
-    restoreMaterialOverrides(m_impl->selectionOverrides);
-
-    m_impl->selectionState.selectMountedAttachment(
+    restoreMaterialOverrides(m_impl->interactionSystem.pairPreviewOverrides());
+    restoreMaterialOverrides(m_impl->interactionSystem.selectionOverrides());
+    m_impl->interactionSystem.selectMountedAttachment(
         attachmentId,
-        m_impl->mountedAttachments.attachmentOwner(attachmentId));
+        m_impl->attachmentVisualSystem.mountedGraph().attachmentOwner(attachmentId));
 
     if(attachmentId.empty()) {
         return true;
     }
 
-    for(std::size_t i = 0; i < m_impl->toolAttachments.size(); ++i) {
-        if(m_impl->toolAttachments[i].documentId == attachmentId) {
-            if(m_impl->toolAttachments[i].visible) {
-                m_impl->activeToolAttachmentIndex = i;
+    auto& toolAttachments = m_impl->attachmentVisualSystem.visuals();
+    for(std::size_t i = 0; i < toolAttachments.size(); ++i) {
+        if(toolAttachments[i].documentId == attachmentId) {
+            if(toolAttachments[i].visible) {
+                m_impl->attachmentVisualSystem.setActive(attachmentId);
                 m_impl->applyActiveToolAttachmentVisibility();
             }
             return true;
@@ -7945,10 +6815,12 @@ bool ProjectScene::setSelectedMountedAttachment(const std::string& attachmentId)
 
 bool ProjectScene::setActivePreviewRobotMount(const std::string& robotMountId)
 {
-    if(findRobotMountDesc(m_impl->projectDocument, robotMountId) == nullptr && !robotMountId.empty()) {
+    const simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
+    if(findRobotMountDesc(previewDocument, robotMountId) == nullptr && !robotMountId.empty()) {
         return false;
     }
-    m_impl->activePreviewRobotMountId = robotMountId;
+    m_impl->interactionSystem.setActivePreviewRobotMountId(robotMountId);
     return true;
 }
 
@@ -7956,12 +6828,71 @@ bool ProjectScene::setPreviewRobotMountTransform(
     const std::string& robotMountId,
     const simulation_project::TransformDesc& transform)
 {
-    simulation_project::RobotMountDesc* mount = findRobotMountDesc(m_impl->projectDocument, robotMountId);
+    simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
+    simulation_project::RobotMountDesc* mount =
+        findRobotMountDesc(previewDocument, robotMountId);
     if(mount == nullptr) {
         return false;
     }
 
     mount->linkToMount = transform;
+    m_impl->previewOverlay.setRobotMount(*mount);
+    if(m_impl->attachmentVisualSystem.previewGraph().setRobotMountLocalTransform(
+        robotMountId,
+        transform)) {
+        m_impl->syncProjectToolAttachments();
+    }
+    return true;
+}
+
+bool ProjectScene::setPreviewMountedAttachmentTransform(
+    const std::string& attachmentId,
+    const simulation_project::TransformDesc& transform)
+{
+    const simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
+    auto attachmentIt = std::find_if(
+        previewDocument.mountedAttachments.begin(),
+        previewDocument.mountedAttachments.end(),
+        [&](const simulation_project::MountedAttachmentDesc& attachment) {
+            return attachment.id == attachmentId;
+        });
+    if(attachmentIt == previewDocument.mountedAttachments.end()) {
+        return false;
+    }
+    m_impl->previewOverlay.setAttachmentTransform(attachmentId, transform);
+    if(!m_impl->attachmentVisualSystem.previewGraph().setAttachmentMountTransform(
+        attachmentId,
+        transform)) {
+        return false;
+    }
+    m_impl->syncProjectToolAttachments();
+    return true;
+}
+
+bool ProjectScene::setPreviewAttachmentAsset(
+    const simulation_project::AttachmentAssetDesc& asset)
+{
+    const simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
+    const auto assetIt = std::find_if(
+        previewDocument.attachmentAssets.begin(),
+        previewDocument.attachmentAssets.end(),
+        [&](const simulation_project::AttachmentAssetDesc& candidate) {
+            return candidate.id == asset.id;
+        });
+    if(assetIt == previewDocument.attachmentAssets.end()) {
+        return false;
+    }
+    const ProjectScenePreviewOverlayState previousOverlay = m_impl->previewOverlay;
+    m_impl->previewOverlay.setAttachmentAsset(asset);
+    if(!m_impl->rebuildMountedAttachmentGraph()) {
+        m_impl->previewOverlay = previousOverlay;
+        m_impl->rebuildMountedAttachmentGraph();
+        return false;
+    }
+    m_impl->syncProjectToolAttachments();
     return true;
 }
 
@@ -7969,7 +6900,10 @@ bool ProjectScene::setPreviewRobotMountLink(
     const std::string& robotMountId,
     const std::string& linkName)
 {
-    simulation_project::RobotMountDesc* mount = findRobotMountDesc(m_impl->projectDocument, robotMountId);
+    simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
+    simulation_project::RobotMountDesc* mount =
+        findRobotMountDesc(previewDocument, robotMountId);
     if(mount == nullptr) {
         return false;
     }
@@ -7980,6 +6914,14 @@ bool ProjectScene::setPreviewRobotMountLink(
     }
 
     mount->linkName = linkName;
+    const ProjectScenePreviewOverlayState previousOverlay = m_impl->previewOverlay;
+    m_impl->previewOverlay.setRobotMount(*mount);
+    if(!m_impl->rebuildMountedAttachmentGraph()) {
+        m_impl->previewOverlay = previousOverlay;
+        m_impl->rebuildMountedAttachmentGraph();
+        return false;
+    }
+    m_impl->syncProjectToolAttachments();
     return true;
 }
 
@@ -7989,49 +6931,49 @@ bool ProjectScene::upsertPreviewRobotMount(const simulation_project::RobotMountD
         return false;
     }
 
-    auto& mounts = m_impl->projectDocument.robotMounts;
-    auto it = std::find_if(
-        mounts.begin(),
-        mounts.end(),
-        [&](const simulation_project::RobotMountDesc& existing) {
-            return existing.id == mount.id;
-        });
-    if(it != mounts.end()) {
-        *it = mount;
-    } else {
-        mounts.push_back(mount);
+    const RuntimeRobot* robot = findRuntimeRobot(m_impl->robots, mount.robotId);
+    if(robot == nullptr || robot->model.links.find(mount.linkName) == robot->model.links.end()) {
+        return false;
     }
-    m_impl->activePreviewRobotMountId = mount.id;
+    const ProjectScenePreviewOverlayState previousOverlay = m_impl->previewOverlay;
+    m_impl->previewOverlay.setRobotMount(mount);
+    if(!m_impl->rebuildMountedAttachmentGraph()) {
+        m_impl->previewOverlay = previousOverlay;
+        m_impl->rebuildMountedAttachmentGraph();
+        return false;
+    }
+    m_impl->interactionSystem.setActivePreviewRobotMountId(mount.id);
     return true;
 }
 
 bool ProjectScene::removePreviewRobotMount(const std::string& robotMountId)
 {
-    auto& mounts = m_impl->projectDocument.robotMounts;
-    const auto oldSize = mounts.size();
-    mounts.erase(
-        std::remove_if(
-            mounts.begin(),
-            mounts.end(),
-            [&](const simulation_project::RobotMountDesc& mount) {
-                return mount.id == robotMountId;
-            }),
-        mounts.end());
-    if(m_impl->activePreviewRobotMountId == robotMountId) {
-        m_impl->activePreviewRobotMountId.clear();
+    const simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
+    if(findRobotMountDesc(previewDocument, robotMountId) == nullptr) {
+        return false;
     }
-    return mounts.size() != oldSize;
+    const ProjectScenePreviewOverlayState previousOverlay = m_impl->previewOverlay;
+    m_impl->previewOverlay.removeRobotMount(robotMountId);
+    if(!m_impl->rebuildMountedAttachmentGraph()) {
+        m_impl->previewOverlay = previousOverlay;
+        m_impl->rebuildMountedAttachmentGraph();
+        return false;
+    }
+    m_impl->interactionSystem.clearActivePreviewRobotMountId(robotMountId);
+    return true;
 }
 
 void ProjectScene::setRobotMountFrameVisibility(bool selectedLinkFrameVisible, bool mountFrameVisible)
 {
-    m_impl->previewSelectedLinkFrameVisible = selectedLinkFrameVisible;
-    m_impl->previewRobotMountFrameVisible = mountFrameVisible;
+    m_impl->interactionSystem.setRobotMountFrameVisibility(
+        selectedLinkFrameVisible,
+        mountFrameVisible);
 }
 
 void ProjectScene::setPinnedRobotMountFrames(const std::vector<std::string>& robotMountIds)
 {
-    m_impl->pinnedRobotMountFrameIds = robotMountIds;
+    m_impl->interactionSystem.setPinnedRobotMountFrames(robotMountIds);
 }
 
 bool ProjectScene::setRobotBaseTransform(
@@ -8043,13 +6985,13 @@ bool ProjectScene::setRobotBaseTransform(
         return false;
     }
 
-    const collision::Transform3 baseTransform = ProjectRuntimeBuilder::makeTransform(transform);
-    if(robot->parallelControlEnabled) {
-        m_impl->setStewartPlatformBaseTransform(*robot, baseTransform);
-    } else {
-        robot->baseTransform = baseTransform;
-        ProjectRuntimeBuilder::updateRobotPose(*robot);
+    m_impl->parallelRuntime.setRobotBaseTransform(
+        robotId,
+        ProjectRuntimeBuilder::makeTransform(transform));
+    for(RuntimeRobot& runtime : m_impl->robots) {
+        ProjectRuntimeBuilder::updateRobotPose(runtime);
     }
+    m_impl->stewartPresentationSystem.applyAllVisualOverrides(m_impl->robots);
     m_impl->syncProjectToolAttachments();
     return true;
 }
@@ -8060,22 +7002,17 @@ bool ProjectScene::setRobotJointValue(
     double value)
 {
     RuntimeRobot* robot = findRuntimeRobot(m_impl->robots, robotId);
-    if(robot == nullptr || !ProjectRuntimeBuilder::setJointValue(*robot, jointName, value)) {
+    if(robot == nullptr) {
+        return false;
+    }
+    if(!m_impl->parallelRuntime.setJointValue(robotId, jointName, value)) {
         return false;
     }
 
-    m_impl->syncStewartFollowers(*robot);
-    if(robot->parallelControlEnabled) {
-        solveStewartInternalLegControls(*robot);
+    for(RuntimeRobot& runtime : m_impl->robots) {
+        ProjectRuntimeBuilder::updateRobotPose(runtime);
     }
-    ProjectRuntimeBuilder::updateRobotPose(*robot);
-    m_impl->applyStewartInternalPlatformVisualOverrides(*robot);
-    for(RuntimeRobot& follower : m_impl->robots) {
-        if(follower.parallelFollowerEnabled && sameStewartSource(*robot, follower)) {
-            ProjectRuntimeBuilder::updateRobotPose(follower);
-        }
-    }
-    m_impl->applyStewartFollowerVisualOverrides(*robot);
+    m_impl->stewartPresentationSystem.applyAllVisualOverrides(m_impl->robots);
     m_impl->syncProjectToolAttachments();
     return true;
 }
@@ -8090,7 +7027,7 @@ bool ProjectScene::robotJointValue(
         return false;
     }
 
-    return ProjectRuntimeBuilder::getJointValue(*robot, jointName, value);
+    return m_impl->parallelRuntime.jointValue(robotId, jointName, value);
 }
 
 bool ProjectScene::setRobotAutoMotion(
@@ -8104,10 +7041,12 @@ bool ProjectScene::setRobotAutoMotion(
         return false;
     }
 
-    robot->autoMotionEnabled = enabled;
-    robot->autoMotionAmplitude = amplitude;
-    robot->autoMotionSpeed = speed;
-    return true;
+    return m_impl->simulationRuntime &&
+        m_impl->simulationRuntime->setRobotAutoMotion(
+            robotId,
+            enabled,
+            amplitude,
+            speed).success;
 }
 
 bool ProjectScene::setSceneObjectTransform(
@@ -8119,10 +7058,19 @@ bool ProjectScene::setSceneObjectTransform(
         return false;
     }
 
-    object->transform = ProjectRuntimeBuilder::makeTransform(transform);
     if(object->objectType == "pointCloud") {
+        if(!m_impl->simulationRuntime ||
+            !m_impl->simulationRuntime->setPointCloudTransform(objectId, transform).success) {
+            return false;
+        }
+        object->transform = object->simulationPointCloud->worldTransform;
         ProjectRuntimeBuilder::updatePointCloudPose(*object);
     } else {
+        if(!m_impl->simulationRuntime ||
+            !m_impl->simulationRuntime->setSceneObjectTransform(objectId, transform).success) {
+            return false;
+        }
+        object->transform = object->simulationObject->transform;
         ProjectRuntimeBuilder::updateSceneObjectPose(*object);
     }
     return true;
@@ -8130,6 +7078,21 @@ bool ProjectScene::setSceneObjectTransform(
 
 bool ProjectScene::removeSceneObject(const std::string& objectId)
 {
+    if(!m_impl->simulationRuntime) {
+        return false;
+    }
+    const bool isSceneObject = m_impl->simulationRuntime->object(objectId) != nullptr;
+    const bool isPointCloud = m_impl->simulationRuntime->pointCloud(objectId) != nullptr;
+    if(!isSceneObject && !isPointCloud) {
+        return false;
+    }
+    const simulation_runtime::Result removeResult = isSceneObject
+        ? m_impl->simulationRuntime->removeSceneObject(objectId)
+        : m_impl->simulationRuntime->removePointCloud(objectId);
+    if(!removeResult.success) {
+        return false;
+    }
+
     bool removed = false;
     for(auto it = m_impl->objects.begin(); it != m_impl->objects.end();) {
         if(it->documentId != objectId) {
@@ -8160,38 +7123,7 @@ bool ProjectScene::removeSceneObject(const std::string& objectId)
         return false;
     }
 
-    m_impl->sceneObjects.erase(
-        std::remove_if(
-            m_impl->sceneObjects.begin(),
-            m_impl->sceneObjects.end(),
-            [&](const SceneObjectGroup& object) {
-                return object.objectId == objectId;
-            }),
-        m_impl->sceneObjects.end());
-    m_impl->pointClouds.erase(
-        std::remove_if(
-            m_impl->pointClouds.begin(),
-            m_impl->pointClouds.end(),
-            [&](const PointCloudGroup& pointCloud) {
-                return pointCloud.pointCloudId == objectId;
-            }),
-        m_impl->pointClouds.end());
-    m_impl->projectDocument.objects.erase(
-        std::remove_if(
-            m_impl->projectDocument.objects.begin(),
-            m_impl->projectDocument.objects.end(),
-            [&](const simulation_project::SceneObjectDesc& object) {
-                return object.id == objectId;
-            }),
-        m_impl->projectDocument.objects.end());
-    m_impl->projectDocument.pointClouds.erase(
-        std::remove_if(
-            m_impl->projectDocument.pointClouds.begin(),
-            m_impl->projectDocument.pointClouds.end(),
-            [&](const simulation_project::PointCloudDesc& pointCloud) {
-                return pointCloud.id == objectId;
-            }),
-        m_impl->projectDocument.pointClouds.end());
+    m_impl->documentProjectionSystem.removeObjectCatalogEntry(objectId);
 
     m_impl->collisionScene.update();
     m_impl->invalidateCollisionGeometryOverlayCache();
@@ -8222,8 +7154,10 @@ bool ProjectScene::setPreviewObjectFrameTransform(
     const std::string& frameId,
     const simulation_project::TransformDesc& transform)
 {
+    simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
     simulation_project::SceneObjectDesc* object =
-        findSceneObjectDesc(m_impl->projectDocument, objectId);
+        findSceneObjectDesc(previewDocument, objectId);
     if(object == nullptr) {
         return false;
     }
@@ -8232,6 +7166,7 @@ bool ProjectScene::setPreviewObjectFrameTransform(
         return false;
     }
     frame->objectToFrame = transform;
+    m_impl->previewOverlay.setObjectFrame(objectId, *frame);
     return true;
 }
 
@@ -8239,8 +7174,10 @@ bool ProjectScene::upsertPreviewObjectFrame(
     const std::string& objectId,
     const simulation_project::ObjectFrameDesc& frame)
 {
+    simulation_project::ProjectDocument previewDocument =
+        m_impl->effectivePreviewDocument();
     simulation_project::SceneObjectDesc* object =
-        findSceneObjectDesc(m_impl->projectDocument, objectId);
+        findSceneObjectDesc(previewDocument, objectId);
     if(object == nullptr || frame.id.empty()) {
         return false;
     }
@@ -8251,6 +7188,7 @@ bool ProjectScene::upsertPreviewObjectFrame(
     } else {
         object->objectFrames.push_back(frame);
     }
+    m_impl->previewOverlay.setObjectFrame(objectId, frame);
     return true;
 }
 
@@ -8258,8 +7196,10 @@ bool ProjectScene::setRobotMountTransform(
     const std::string& robotMountId,
     const simulation_project::TransformDesc& transform)
 {
-    const bool changed =
-        m_impl->mountedAttachments.setRobotMountLocalTransform(robotMountId, transform);
+    const bool changed = m_impl->simulationRuntime &&
+        m_impl->simulationRuntime->setRobotMountTransform(
+            robotMountId,
+            transform).success;
     if(changed) {
         m_impl->syncProjectToolAttachments();
     }
@@ -8277,7 +7217,10 @@ bool ProjectScene::setMountedAttachmentTransform(
     const std::string& attachmentId,
     const simulation_project::TransformDesc& transform)
 {
-    if(m_impl->mountedAttachments.setAttachmentMountTransform(attachmentId, transform)) {
+    if(m_impl->simulationRuntime &&
+        m_impl->simulationRuntime->setMountedAttachmentTransform(
+            attachmentId,
+            transform).success) {
         m_impl->syncProjectToolAttachments();
         return true;
     }
@@ -8288,11 +7231,15 @@ bool ProjectScene::setToolAssetMountToVisual(
     const std::string& assetId,
     const simulation_project::TransformDesc& transform)
 {
-    bool changed = m_impl->mountedAttachments.setAssetVisualTransform(assetId, transform);
-    for(RuntimeToolAttachmentVisual& attachment : m_impl->toolAttachments) {
+    const bool changed = m_impl->simulationRuntime &&
+        m_impl->simulationRuntime->setAttachmentAssetVisualTransform(
+            assetId,
+            transform).success;
+    for(RuntimeToolAttachmentVisual& attachment :
+        m_impl->attachmentVisualSystem.visuals()) {
         if(attachment.toolAssetId == assetId) {
             const simulation_runtime::RuntimeMountedAttachment* mountedAttachment =
-                m_impl->mountedAttachments.attachment(attachment.documentId);
+                m_impl->attachmentVisualSystem.mountedGraph().attachment(attachment.documentId);
             if(mountedAttachment == nullptr) {
                 continue;
             }
@@ -8312,8 +7259,10 @@ bool ProjectScene::setToolAssetTcp(
     const std::string& assetId,
     const simulation_project::TransformDesc& transform)
 {
-    const bool changed =
-        m_impl->mountedAttachments.setAssetTcpTransform(assetId, transform);
+    const bool changed = m_impl->simulationRuntime &&
+        m_impl->simulationRuntime->setAttachmentAssetTcpTransform(
+            assetId,
+            transform).success;
     if(changed) {
         m_impl->syncProjectToolAttachments();
     }
@@ -8323,12 +7272,13 @@ bool ProjectScene::setToolAssetTcp(
 bool ProjectScene::setToolAssetPreviewMountToVisual(
     const simulation_project::TransformDesc& transform)
 {
-    if(!m_impl->toolAssetPreviewSet) {
+    if(!m_impl->attachmentVisualSystem.hasPreview()) {
         return false;
     }
 
-    m_impl->toolAssetPreview.asset.assetMountToVisual = transform;
-    m_impl->toolAssetPreview.mountToVisual = ProjectRuntimeBuilder::makeTransform(transform);
+    RuntimeToolAssetPreview& preview = m_impl->attachmentVisualSystem.preview();
+    preview.asset.assetMountToVisual = transform;
+    preview.mountToVisual = ProjectRuntimeBuilder::makeTransform(transform);
     m_impl->updateToolAssetPreviewModel();
     return true;
 }
@@ -8336,12 +7286,13 @@ bool ProjectScene::setToolAssetPreviewMountToVisual(
 bool ProjectScene::setToolAssetPreviewTcp(
     const simulation_project::TransformDesc& transform)
 {
-    if(!m_impl->toolAssetPreviewSet) {
+    if(!m_impl->attachmentVisualSystem.hasPreview()) {
         return false;
     }
 
     bool updated = false;
-    for(simulation_project::AttachmentFunctionalFrameDesc& frame : m_impl->toolAssetPreview.asset.functionalFrames) {
+    RuntimeToolAssetPreview& preview = m_impl->attachmentVisualSystem.preview();
+    for(simulation_project::AttachmentFunctionalFrameDesc& frame : preview.asset.functionalFrames) {
         if(frame.primary) {
             frame.assetMountToFrame = transform;
             updated = true;
@@ -8350,14 +7301,14 @@ bool ProjectScene::setToolAssetPreviewTcp(
     }
     if(!updated) {
         simulation_project::AttachmentFunctionalFrameDesc frame;
-        frame.id = m_impl->toolAssetPreview.asset.id + ".tcp";
+        frame.id = preview.asset.id + ".tcp";
         frame.name = "TCP";
         frame.frameType = "tcp";
         frame.assetMountToFrame = transform;
         frame.primary = true;
-        m_impl->toolAssetPreview.asset.functionalFrames.push_back(frame);
+        preview.asset.functionalFrames.push_back(frame);
     }
-    m_impl->toolAssetPreview.mountToTcp = ProjectRuntimeBuilder::makeTransform(transform);
+    preview.mountToTcp = ProjectRuntimeBuilder::makeTransform(transform);
     return true;
 }
 
@@ -8388,7 +7339,7 @@ void ProjectScene::setActiveToolFrameRobot(const std::string& robotId)
 
 void ProjectScene::setToolFrameVisibility(const ToolFrameVisibility& visibility)
 {
-    m_impl->toolFrameVisibility = visibility;
+    m_impl->attachmentVisualSystem.setToolFrameVisibility(visibility);
 }
 
 ProjectScene::RobotForwardKinematics ProjectScene::robotForwardKinematics(
@@ -8599,10 +7550,12 @@ std::string ProjectScene::activeToolAttachmentId() const
 
 std::string ProjectScene::activeMountedAttachmentId() const
 {
-    if(m_impl->activeToolAttachmentIndex >= m_impl->toolAttachments.size()) {
+    if(m_impl->attachmentVisualSystem.activeIndex() >=
+        m_impl->attachmentVisualSystem.visuals().size()) {
         return std::string();
     }
-    return m_impl->toolAttachments[m_impl->activeToolAttachmentIndex].documentId;
+    return m_impl->attachmentVisualSystem.visuals()[
+        m_impl->attachmentVisualSystem.activeIndex()].documentId;
 }
 
 std::vector<ProjectScene::ToolAttachmentInfo> ProjectScene::toolAttachments() const
@@ -8613,10 +7566,11 @@ std::vector<ProjectScene::ToolAttachmentInfo> ProjectScene::toolAttachments() co
 std::vector<ProjectScene::MountedAttachmentInfo> ProjectScene::mountedAttachments() const
 {
     std::vector<ProjectScene::MountedAttachmentInfo> infos;
-    infos.reserve(m_impl->toolAttachments.size());
+    infos.reserve(m_impl->attachmentVisualSystem.visuals().size());
 
-    for(std::size_t i = 0; i < m_impl->toolAttachments.size(); ++i) {
-        const RuntimeToolAttachmentVisual& runtime = m_impl->toolAttachments[i];
+    for(std::size_t i = 0; i < m_impl->attachmentVisualSystem.visuals().size(); ++i) {
+        const RuntimeToolAttachmentVisual& runtime =
+            m_impl->attachmentVisualSystem.visuals()[i];
         MountedAttachmentInfo info;
         info.id = runtime.documentId;
         info.name = runtime.name;
@@ -8632,7 +7586,7 @@ std::vector<ProjectScene::MountedAttachmentInfo> ProjectScene::mountedAttachment
         info.visualPath = pathToUtf8(runtime.visualPath);
         info.enabled = runtime.enabled;
         info.visible = runtime.visible;
-        info.active = i == m_impl->activeToolAttachmentIndex;
+        info.active = i == m_impl->attachmentVisualSystem.activeIndex();
         infos.push_back(std::move(info));
     }
 
@@ -8695,8 +7649,8 @@ std::vector<ProjectScene::RobotLinkMaterialInfo> ProjectScene::robotLinkMaterial
             }
         }
 
-        if(m_impl->selectionState.selectedRobotId() == robotId &&
-            m_impl->selectionState.selectedLinkName() == linkName) {
+        if(m_impl->interactionSystem.selection().selectedRobotId() == robotId &&
+            m_impl->interactionSystem.selection().selectedLinkName() == linkName) {
             info.overrideState = "Selection highlight active";
         } else if(robotIt->highlightedLinks.count(linkName) > 0) {
             info.overrideState = "Collision highlight active";
@@ -8716,17 +7670,17 @@ std::vector<ProjectScene::RobotLinkMaterialInfo> ProjectScene::robotLinkMaterial
 
 const std::vector<ProjectScene::RobotLinkGroup>& ProjectScene::robotLinks() const
 {
-    return m_impl->robotLinks;
+    return m_impl->documentProjectionSystem.robotCatalog();
 }
 
 const std::vector<ProjectScene::SceneObjectGroup>& ProjectScene::sceneObjects() const
 {
-    return m_impl->sceneObjects;
+    return m_impl->documentProjectionSystem.sceneObjectCatalog();
 }
 
 const std::vector<ProjectScene::PointCloudGroup>& ProjectScene::pointClouds() const
 {
-    return m_impl->pointClouds;
+    return m_impl->documentProjectionSystem.pointCloudCatalog();
 }
 
 std::vector<ProjectScene::CollisionDetectorInfo> ProjectScene::collisionDetectors() const
@@ -8829,9 +7783,50 @@ bool ProjectScene::setActiveCollisionDetector(const std::string& id)
     return false;
 }
 
+bool ProjectScene::refreshCollisionDetectorNearest(const std::string& id)
+{
+    if(!m_impl->collisionQueriesEnabled || !m_impl->ensureCollisionRuntimeBuilt()) {
+        return false;
+    }
+
+    const auto detectorIt = std::find_if(
+        m_impl->collisionDetectors.begin(),
+        m_impl->collisionDetectors.end(),
+        [&](const ProjectCollisionDetectorRuntime& detector) {
+            return detector.id == id;
+        });
+    if(detectorIt == m_impl->collisionDetectors.end()) {
+        return false;
+    }
+
+    m_impl->collisionScene.update();
+    simulation_runtime::ProjectCollisionQueryMetrics metrics;
+    const simulation_runtime::Result queryResult =
+        simulation_runtime::ProjectCollisionQueryService::queryDetector(
+            m_impl->collisionScene,
+            *detectorIt,
+            simulation_runtime::ProjectCollisionQueryMode::ManualNearest,
+            &metrics);
+    detectorIt->effectiveIncludePairCount = metrics.effectiveIncludePairCount;
+    detectorIt->lastCheckMs = metrics.checkMs;
+    detectorIt->lastDistanceMs = metrics.distanceMs;
+    detectorIt->lastQueryMs = metrics.totalMs;
+    detectorIt->nearestState =
+        simulation_runtime::ProjectCollisionQueryService::nearestStateName(metrics.nearestState);
+    detectorIt->nearestReason = metrics.nearestReason;
+    if(metrics.distanceExecuted) {
+        detectorIt->lastNearestQueryFrame = m_impl->collisionQueryFrame;
+    }
+    if(!queryResult.success) {
+        LOG_WARNING("rs2026") << "Project collision nearest refresh failed: detector="
+            << id << ", reason=" << queryResult.message;
+    }
+    return queryResult.success;
+}
+
 bool ProjectScene::setCollisionDetectorEnabled(const std::string& id, bool enabled)
 {
-    simulation_project::ProjectDocument document = m_impl->projectDocument;
+    simulation_project::ProjectDocument document = m_impl->document();
     const auto detectorIt = std::find_if(
         document.collision.detectors.begin(),
         document.collision.detectors.end(),
@@ -8853,12 +7848,6 @@ bool ProjectScene::setCollisionDetectorVisible(const std::string& id, bool visib
     for(ProjectCollisionDetectorRuntime& detector : m_impl->collisionDetectors) {
         if(detector.id == id) {
             detector.visible = visible;
-            for(simulation_project::CollisionDetectorDesc& desc : m_impl->projectDocument.collision.detectors) {
-                if(desc.id == id) {
-                    desc.visualization.visible = visible;
-                    break;
-                }
-            }
             return true;
         }
     }
@@ -8870,12 +7859,6 @@ bool ProjectScene::updateCollisionDetectorRuntimeOptions(const simulation_projec
     for(ProjectCollisionDetectorRuntime& detector : m_impl->collisionDetectors) {
         if(detector.id == desc.id) {
             applyCollisionDetectorRuntimeOptions(detector, desc);
-            for(simulation_project::CollisionDetectorDesc& projectDesc : m_impl->projectDocument.collision.detectors) {
-                if(projectDesc.id == desc.id) {
-                    projectDesc = desc;
-                    break;
-                }
-            }
             m_impl->lastIncludePairCount = static_cast<std::size_t>(-1);
             m_impl->lastContactCount = static_cast<std::size_t>(-1);
             return true;
@@ -8887,7 +7870,16 @@ bool ProjectScene::updateCollisionDetectorRuntimeOptions(const simulation_projec
 bool ProjectScene::rebuildCollisionDetectorsFromDocument(const simulation_project::ProjectDocument& document)
 {
     const bool collisionRuntimeWasBuilt = m_impl->collisionRuntimeBuilt;
-    m_impl->projectDocument = document;
+    if(!m_impl->simulationRuntime) {
+        return false;
+    }
+    const simulation_runtime::Result refreshResult =
+        m_impl->simulationRuntime->refreshProjectConfiguration(
+            document,
+            m_impl->projectBasePath);
+    if(!refreshResult.success) {
+        return false;
+    }
     const std::string previousActiveId = m_impl->activeCollisionDetectorId;
     m_impl->invalidateCollisionRuntime();
     if(collisionRuntimeWasBuilt || m_impl->collisionQueriesEnabled) {
@@ -8917,7 +7909,7 @@ bool ProjectScene::rebuildCollisionDetectorsFromDocument(const simulation_projec
 
 bool ProjectScene::removeCollisionDetector(const std::string& id)
 {
-    simulation_project::ProjectDocument document = m_impl->projectDocument;
+    simulation_project::ProjectDocument document = m_impl->document();
     const auto oldSize = document.collision.detectors.size();
     document.collision.detectors.erase(
         std::remove_if(
@@ -9013,11 +8005,11 @@ bool ProjectScene::generateRobotCollisionCoacdFromVisual(
     }
 
     const simulation_project::RobotDesc* robotDesc =
-        findRobotDesc(m_impl->projectDocument, robotId);
+        findRobotDesc(m_impl->document(), robotId);
     const std::string sourceKey =
         robotDesc != nullptr && !robotDesc->sourcePath.empty() ? robotDesc->sourcePath : robotId;
     const CollisionGeneratedAssetRequest request = makeGeneratedAssetRequest(
-        m_impl->projectDocument,
+        m_impl->document(),
         m_impl->projectBasePath,
         sourceKey,
         robotId + "_" + linkName);
@@ -9040,11 +8032,11 @@ bool ProjectScene::generateRobotCollisionCoacdFromExistingCollision(
     }
 
     const simulation_project::RobotDesc* robotDesc =
-        findRobotDesc(m_impl->projectDocument, robotId);
+        findRobotDesc(m_impl->document(), robotId);
     const std::string sourceKey =
         robotDesc != nullptr && !robotDesc->sourcePath.empty() ? robotDesc->sourcePath : robotId;
     const CollisionGeneratedAssetRequest request = makeGeneratedAssetRequest(
-        m_impl->projectDocument,
+        m_impl->document(),
         m_impl->projectBasePath,
         sourceKey,
         robotId + "_" + linkName);
@@ -9064,9 +8056,9 @@ bool ProjectScene::generateObjectCollisionCoacdFromVisual(
     const simulation_project::AssetResolveContext assetContext =
         ProjectRuntimeBuilder::makeAssetResolveContext(
             m_impl->projectBasePath,
-            m_impl->projectDocument);
+            m_impl->document());
     const simulation_project::SceneObjectDesc* objectDesc =
-        findSceneObjectDesc(m_impl->projectDocument, objectId);
+        findSceneObjectDesc(m_impl->document(), objectId);
 
     const RuntimeSceneObject* object = nullptr;
     RuntimeSceneObject temporaryObject;
@@ -9094,7 +8086,8 @@ bool ProjectScene::generateObjectCollisionCoacdFromVisual(
     }
 
     if(object == nullptr) {
-        for(const RuntimeToolAttachmentVisual& attachment : m_impl->toolAttachments) {
+        for(const RuntimeToolAttachmentVisual& attachment :
+            m_impl->attachmentVisualSystem.visuals()) {
             if(attachment.documentId != objectId) {
                 continue;
             }
@@ -9128,7 +8121,7 @@ bool ProjectScene::generateObjectCollisionCoacdFromVisual(
     }
 
     const CollisionGeneratedAssetRequest request = makeGeneratedAssetRequest(
-        m_impl->projectDocument,
+        m_impl->document(),
         m_impl->projectBasePath,
         sourceKey,
         objectId);

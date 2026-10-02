@@ -98,4 +98,69 @@ namespace robot_qt_viewer
     {
         return m_viewportServices;
     }
+
+    void RobotQtViewerDocumentContext::setDocumentViewport(
+        IRobotQtViewerDocumentViewportPort* viewport)
+    {
+        m_documentViewport = viewport;
+    }
+
+    IRobotQtViewerDocumentViewportPort* RobotQtViewerDocumentContext::documentViewport() const
+    {
+        return m_documentViewport;
+    }
+
+    void RobotQtViewerDocumentContext::setSelectionViewport(
+        IRobotQtViewerSelectionViewportPort* viewport)
+    {
+        m_selectionViewport = viewport;
+    }
+
+    IRobotQtViewerSelectionViewportPort* RobotQtViewerDocumentContext::selectionViewport() const
+    {
+        return m_selectionViewport;
+    }
+
+    void RobotQtViewerDocumentContext::setAssemblyViewport(
+        IRobotQtViewerAssemblyViewportPort* viewport)
+    {
+        m_assemblyViewport = viewport;
+    }
+
+    IRobotQtViewerAssemblyViewportPort* RobotQtViewerDocumentContext::assemblyViewport() const
+    {
+        return m_assemblyViewport;
+    }
+
+    void RobotQtViewerDocumentContext::setCollisionViewport(
+        IRobotQtViewerCollisionViewportPort* viewport)
+    {
+        m_collisionViewport = viewport;
+    }
+
+    IRobotQtViewerCollisionViewportPort* RobotQtViewerDocumentContext::collisionViewport() const
+    {
+        return m_collisionViewport;
+    }
+
+    void RobotQtViewerDocumentContext::setVisualizationViewport(
+        IRobotQtViewerVisualizationViewportPort* viewport)
+    {
+        m_visualizationViewport = viewport;
+    }
+
+    IRobotQtViewerVisualizationViewportPort* RobotQtViewerDocumentContext::visualizationViewport() const
+    {
+        return m_visualizationViewport;
+    }
+    void RobotQtViewerDocumentContext::setMotionPlanningViewport(IRobotQtViewerMotionPlanningViewportPort* viewport)
+    {
+        m_motionPlanningViewport = viewport;
+    }
+
+    IRobotQtViewerMotionPlanningViewportPort* RobotQtViewerDocumentContext::motionPlanningViewport() const
+    {
+        return m_motionPlanningViewport;
+    }
+
 }

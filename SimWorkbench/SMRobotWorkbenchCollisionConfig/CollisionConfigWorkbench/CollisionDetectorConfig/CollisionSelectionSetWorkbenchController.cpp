@@ -2,11 +2,17 @@
 
 #include "CollisionWorkbenchPanel.h"
 #include "CollisionSelectionSetDocumentFacade.h"
+#include "RobotQtWidgetUtils.h"
 
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QStringList>
+#include <QVBoxLayout>
 
 #include <utility>
 
@@ -162,31 +168,37 @@ namespace robot_qt_viewer
         const QVector<CollisionSelectionSetsController::SelectionSetChoice> choices =
             m_documentFacade.selectionSetChoices();
 
-        QStringList labels;
+        QDialog dialog(&m_panel);
+        dialog.setWindowTitle(QStringLiteral("Add to Collision Selection Set"));
+        dialog.setMinimumWidth(520);
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* form = new QFormLayout();
+        auto* selector = new QComboBox(&dialog);
+        robot_qt_viewer::configureInspectorEntityCombo(selector, 24);
         for(const CollisionSelectionSetsController::SelectionSetChoice& choice : choices) {
-            labels.push_back(choice.label);
+            selector->addItem(choice.label, choice.id);
+            selector->setItemData(selector->count() - 1, choice.label, Qt::ToolTipRole);
         }
+        form->addRow(QStringLiteral("Selection set"), selector);
+        layout->addLayout(form);
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        robot_qt_viewer::configureDialogButtonBox(buttons);
+        QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
 
-        bool ok = false;
-        const QString label = QInputDialog::getItem(
-            &m_panel,
-            "Add to Collision Selection Set",
-            "Selection set:",
-            labels,
-            0,
-            false,
-            &ok);
-        if(!ok || label.isEmpty()) {
+        if(dialog.exec() != QDialog::Accepted) {
             return;
         }
 
-        const int index = labels.indexOf(label);
-        if(index < 0 || index >= choices.size()) {
+        const QString selectionSetId = selector->currentData().toString();
+        if(selectionSetId.isEmpty()) {
             return;
         }
 
         const CollisionSelectionSetsController::CommandResult result =
-            m_documentFacade.addMemberToExistingSelectionSet(choices[index].id, member);
+            m_documentFacade.addMemberToExistingSelectionSet(selectionSetId, member);
         if(!result.success) {
             showStatus(result.message, 5000);
             return;

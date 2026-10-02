@@ -1,7 +1,7 @@
 #include "CollisionDetectorCommandController.h"
 
 #include "CollisionDetectorDocumentFacade.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <algorithm>
 #include <cmath>
@@ -274,7 +274,7 @@ namespace
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::setDetectorEnabled(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId,
     bool enabled)
 {
@@ -300,7 +300,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::setDetectorEn
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetectorProperties(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId,
     const CollisionDetectorPropertiesView& properties)
 {
@@ -464,7 +464,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetector
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetectorQueryContract(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId,
     const CollisionDetectorQueryContractView& contract)
 {
@@ -513,7 +513,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::applyDetector
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::showOnlyDetectors(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QVector<QString>& detectorIds)
 {
     if(detectorIds.empty()) {
@@ -540,7 +540,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::showOnlyDetec
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::removeDetector(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId)
 {
     if(detectorId.isEmpty()) {
@@ -568,7 +568,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::removeDetecto
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::bindDetectorPairGenerators(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId,
     const QVector<CollisionDetectorDraftMemberView>& setA,
     const QVector<CollisionDetectorDraftMemberView>& setB)
@@ -632,7 +632,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::bindDetectorP
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::removeDetectorPairGenerators(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId,
     const QVector<int>& generatorIndexes)
 {
@@ -684,7 +684,7 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::removeDetecto
 
 CollisionDetectorCommandResult CollisionDetectorCommandController::clearDetectorPairScope(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId)
 {
     if(detectorId.isEmpty()) {

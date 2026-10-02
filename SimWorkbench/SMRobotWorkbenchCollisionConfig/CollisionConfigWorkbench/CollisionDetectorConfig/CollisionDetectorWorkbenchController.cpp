@@ -5,7 +5,7 @@
 #include "CollisionWorkbenchPanel.h"
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerSelectionModel.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/ProjectDocument.h>
 
@@ -56,7 +56,7 @@ namespace robot_qt_viewer
 
         const CollisionDetectorCommandResult result =
             m_documentFacade.setDetectorEnabled(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId,
                 enabled);
         if(!result.success) {
@@ -82,7 +82,7 @@ namespace robot_qt_viewer
         }
 
         const QString detectorId = currentDetectorId();
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
         if(!detectorId.isEmpty() && viewportServices != nullptr) {
             viewportServices->setActiveCollisionDetector(detectorId);
             m_appServices.setActiveCollisionDetectorContext(detectorId);
@@ -105,7 +105,7 @@ namespace robot_qt_viewer
         const CollisionDetectorQueryContractView editorValues = m_panel.currentDetectorQueryContract();
         const CollisionDetectorCommandResult result =
             m_documentFacade.applyDetectorQueryContract(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId,
                 editorValues);
         if(!result.success) {
@@ -124,7 +124,7 @@ namespace robot_qt_viewer
         if(result.runtimeUpdateFailed) {
             showStatus("Runtime detector update failed; rebuilding viewport scene.", 3000);
             m_appServices.reloadViewport(QStringLiteral("handleCollisionDetectorPropertyChanged"));
-            if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+            if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
                 viewportServices->setActiveCollisionDetector(detectorId);
             }
         }
@@ -181,7 +181,7 @@ namespace robot_qt_viewer
 
         const CollisionDetectorCommandResult result =
             m_documentFacade.showOnlyDetectors(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 visibleIds);
         if(!result.success) {
             showStatus(result.message, 3000);
@@ -206,7 +206,7 @@ namespace robot_qt_viewer
 
         const CollisionDetectorCommandResult result =
             m_documentFacade.removeDetector(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId);
         if(!result.success) {
             showStatus(result.message, 3000);
@@ -242,7 +242,7 @@ namespace robot_qt_viewer
         }
 
         m_appServices.reloadViewport(QStringLiteral("addCollisionDetectorFromTaskPanel"));
-        if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+        if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
             viewportServices->setActiveCollisionDetector(result.detectorId);
         }
         m_appServices.setActiveCollisionDetectorContext(result.detectorId);
@@ -274,7 +274,7 @@ namespace robot_qt_viewer
         }
 
         m_appServices.reloadViewport(QStringLiteral("addSceneAllCollisionDetector"));
-        if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+        if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
             viewportServices->setActiveCollisionDetector(result.detectorId);
         }
         m_appServices.setActiveCollisionDetectorContext(result.detectorId);
@@ -363,7 +363,7 @@ namespace robot_qt_viewer
             m_panel.detectorDraftSetMembers(QStringLiteral("B"));
         const CollisionDetectorCommandResult result =
             m_documentFacade.bindDetectorDraftSets(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId,
                 setA,
                 setB);
@@ -382,7 +382,7 @@ namespace robot_qt_viewer
         if(result.runtimeUpdateFailed) {
             showStatus("Runtime detector update failed; rebuilding viewport scene.", 3000);
             m_appServices.reloadViewport(QStringLiteral("bindCollisionDetectorDraftSets"));
-            if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+            if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
                 viewportServices->setActiveCollisionDetector(detectorId);
             }
         } else {
@@ -404,7 +404,7 @@ namespace robot_qt_viewer
 
         const CollisionDetectorCommandResult result =
             m_documentFacade.removeDetectorPairGenerators(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId,
                 generatorIndexes);
         if(!result.success) {
@@ -422,7 +422,7 @@ namespace robot_qt_viewer
         if(result.runtimeUpdateFailed) {
             showStatus("Runtime detector update failed; rebuilding viewport scene.", 3000);
             m_appServices.reloadViewport(QStringLiteral("removeCollisionDetectorPairGenerators"));
-            if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+            if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
                 viewportServices->setActiveCollisionDetector(detectorId);
             }
         } else {
@@ -444,7 +444,7 @@ namespace robot_qt_viewer
 
         const CollisionDetectorCommandResult result =
             m_documentFacade.clearDetectorPairScope(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId);
         if(!result.success) {
             showStatus(result.message, 5000);
@@ -461,7 +461,7 @@ namespace robot_qt_viewer
         if(result.runtimeUpdateFailed) {
             showStatus("Runtime detector update failed; rebuilding viewport scene.", 3000);
             m_appServices.reloadViewport(QStringLiteral("clearCollisionDetectorPairScope"));
-            if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+            if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
                 viewportServices->setActiveCollisionDetector(detectorId);
             }
         } else {
@@ -493,7 +493,7 @@ namespace robot_qt_viewer
         previewAttachment(attachmentAId, QStringLiteral("collisionDetectorPairScopeA"));
         previewAttachment(attachmentBId, QStringLiteral("collisionDetectorPairScopeB"));
 
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
         if(viewportServices != nullptr) {
             viewportServices->previewCollisionPairTargets(
                 robotAId,
@@ -531,7 +531,7 @@ namespace robot_qt_viewer
                 QStringLiteral("collisionDetectorDraftMember"));
         }
 
-        if(RobotQtViewerViewportServices* viewportServices = m_context.viewportServices()) {
+        if(IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport()) {
             viewportServices->previewCollisionPairTargets(
                 robotId,
                 linkName,

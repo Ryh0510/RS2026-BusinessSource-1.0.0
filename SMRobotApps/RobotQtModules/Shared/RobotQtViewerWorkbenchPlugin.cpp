@@ -294,6 +294,7 @@ namespace robot_qt_viewer
         Manifest manifest;
         std::unique_ptr<QPluginLoader> loader;
         IRobotQtViewerWorkbenchPlugin* plugin = nullptr;
+        QStringList enabledModeIds;
     };
 
     RobotQtViewerWorkbenchPluginLoader::RobotQtViewerWorkbenchPluginLoader() = default;
@@ -352,7 +353,6 @@ namespace robot_qt_viewer
                     mode.defaultOrder,
                     mode.featureIds,
                     mode.requiredModeIds);
-                registryWorkbench.conflictsWithModeIds = mode.conflictsWithModeIds;
                 registryWorkbench.conflictsWithWorkbenchIds = mode.conflictsWithModeIds;
                 registered = registry.registerWorkbench(registryWorkbench) && registered;
             }
@@ -376,6 +376,10 @@ namespace robot_qt_viewer
         RobotQtViewerWorkbenchPackageRegistry& registry,
         QString* errorMessage)
     {
+        for(const std::unique_ptr<Record>& record : m_records) {
+            record->enabledModeIds.clear();
+        }
+
         std::map<QString, Record*> recordsByPackage;
         for(const std::unique_ptr<Record>& record : m_records) {
             recordsByPackage.emplace(record->manifest.package.id, record.get());
@@ -495,6 +499,7 @@ namespace robot_qt_viewer
                 }
                 return false;
             }
+            QStringList enabledModeIds;
             for(const RobotQtViewerWorkbenchPluginModeDesc& manifestMode : record->manifest.modes) {
                 const auto pluginMode = std::find_if(
                     pluginModes.cbegin(), pluginModes.cend(),
@@ -511,23 +516,9 @@ namespace robot_qt_viewer
                 if(!enabledWorkbenchIds.contains(manifestMode.id)) {
                     continue;
                 }
-                IRobotQtViewerWorkbenchLifecycle* lifecycle =
-                    record->plugin->lifecycle(manifestMode.id);
-                IRobotQtViewerLanguageParticipant* language =
-                    record->plugin->languageParticipant(manifestMode.id);
-                const RobotQtViewerWorkbenchLifecyclePolicy policy{
-                    RobotQtViewerWorkbenchExecutionPolicy::MustQuiesce,
-                    RobotQtViewerWorkbenchReactivationPolicy::PackageDefined };
-                if(lifecycle == nullptr || language == nullptr ||
-                    !registry.bindWorkbenchLifecycle(manifestMode.id, *lifecycle, policy) ||
-                    !registry.bindWorkbenchLanguageParticipant(manifestMode.id, *language)) {
-                    if(errorMessage != nullptr) {
-                        *errorMessage = QStringLiteral("Workbench plugin contribution is incomplete: %1")
-                            .arg(manifestMode.id);
-                    }
-                    return false;
-                }
+                enabledModeIds.push_back(manifestMode.id);
             }
+            record->enabledModeIds = std::move(enabledModeIds);
         }
         if(errorMessage != nullptr) {
             errorMessage->clear();
@@ -553,8 +544,46 @@ namespace robot_qt_viewer
             if(record->plugin == nullptr) {
                 continue;
             }
-            for(const RobotQtViewerWorkbenchPluginModeDesc& mode : record->manifest.modes) {
-                result.push_back(mode.id);
+            result.append(record->enabledModeIds);
+        }
+        return result;
+    }
+
+    std::vector<RobotQtViewerWorkbenchRuntimeContributionFactoryDesc>
+    RobotQtViewerWorkbenchPluginLoader::runtimeContributionFactories() const
+    {
+        std::vector<RobotQtViewerWorkbenchRuntimeContributionFactoryDesc> result;
+        for(const std::unique_ptr<Record>& record : m_records) {
+            if(record->plugin == nullptr) {
+                continue;
+            }
+            for(const QString& modeId : record->enabledModeIds) {
+                IRobotQtViewerWorkbenchPlugin* const plugin = record->plugin;
+                result.push_back({
+                    modeId,
+                    [plugin, modeId](QWidget* parent) {
+                        IRobotQtViewerWorkbenchLifecycle* const lifecycle =
+                            plugin->lifecycle(modeId);
+                        IRobotQtViewerLanguageParticipant* const language =
+                            plugin->languageParticipant(modeId);
+                        if(lifecycle == nullptr || language == nullptr) {
+                            return std::unique_ptr<RobotQtViewerWorkbenchRuntimeContribution>();
+                        }
+                        QWidget* const panel = plugin->createPanel(modeId, parent);
+                        if(panel == nullptr) {
+                            return std::unique_ptr<RobotQtViewerWorkbenchRuntimeContribution>();
+                        }
+                        return std::unique_ptr<RobotQtViewerWorkbenchRuntimeContribution>(
+                            std::make_unique<RobotQtViewerBasicWorkbenchRuntimeContribution>(
+                                modeId,
+                                [panel]() { return panel; },
+                                *lifecycle,
+                                RobotQtViewerWorkbenchLifecyclePolicy{
+                                    RobotQtViewerWorkbenchExecutionPolicy::MustQuiesce,
+                                    RobotQtViewerWorkbenchReactivationPolicy::PackageDefined },
+                                *language));
+                    }
+                });
             }
         }
         return result;

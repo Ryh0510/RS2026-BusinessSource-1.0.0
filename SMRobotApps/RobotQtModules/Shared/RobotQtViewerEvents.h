@@ -7,7 +7,9 @@
 #include <QString>
 #include <QStringList>
 
+#include <SimulationProject/ProjectAttachmentCommands.h>
 #include <SimulationProject/ProjectDocument.h>
+#include <SimulationProject/ProjectTransaction.h>
 
 #include <cstdint>
 
@@ -110,6 +112,14 @@ namespace robot_qt_viewer
         bool previewRobotMountTransform = false;
         QString previewRobotMountId;
         simulation_project::TransformDesc robotMountTransform;
+        bool previewMountedAttachmentTransform = false;
+        QString previewMountedAttachmentId;
+        simulation_project::TransformDesc mountedAttachmentTransform;
+        bool previewAttachmentAsset = false;
+        simulation_project::AttachmentAssetDesc attachmentAsset;
+        bool previewAttachmentBinding = false;
+        simulation_project::BindFramesRequest attachmentBinding;
+        bool clearAttachmentBindingPreview = false;
         bool upsertPreviewRobotMount = false;
         simulation_project::RobotMountDesc robotMount;
         bool removePreviewRobotMount = false;
@@ -160,6 +170,8 @@ namespace robot_qt_viewer
         bool projectDirty = false;
         bool viewportReloadRequested = false;
         bool refreshRequested = false;
+        bool hasProjectChange = false;
+        simulation_project::ProjectChangeSet projectChange;
         RobotQtViewerSelectionPayload selection;
         RobotQtViewerAttachmentPayload attachment;
         RobotQtViewerCollisionPayload collision;

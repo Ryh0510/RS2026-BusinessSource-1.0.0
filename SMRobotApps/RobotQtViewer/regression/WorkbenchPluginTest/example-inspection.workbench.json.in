@@ -1,0 +1,36 @@
+{
+  "schema": "smrobot.workbench-package",
+  "version": 1,
+  "extensionApiVersion": "1",
+  "package": {
+    "id": "smrobot.example.inspection",
+    "displayName": "Example Inspection Workbench",
+    "version": "1.0.0",
+    "providedCapabilities": ["smrobot.capability.example-inspection"],
+    "requiredPackageIds": []
+  },
+  "compatibility": {
+    "qtMajor": @QT_MAJOR@,
+    "qtMinor": @QT_MINOR@,
+    "buildConfiguration": "@BUILD_CONFIGURATION@",
+    "pointerBits": @POINTER_BITS@,
+    "msvcToolset": "@MSVC_TOOLSET@"
+  },
+  "binary": {
+    "file": "@BINARY_FILE@",
+    "sha256": "@BINARY_SHA256@"
+  },
+  "modes": [
+    {
+      "id": "smrobot.mode.example-inspection",
+      "displayName": "Example Inspection",
+      "rightPanelTitle": "Inspection Task",
+      "toolbarActionId": "exampleInspectionWorkbench",
+      "defaultOrder": 900,
+      "featureIds": [],
+      "requiredModeIds": [],
+      "conflictsWithModeIds": []
+    }
+  ],
+  "runtimeFiles": []
+}

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ToolSetupWorkbenchShellPort.h"
+
 #include "RobotQtViewerEvents.h"
 #include "ToolSetupViewModel.h"
 
@@ -8,6 +10,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <SimulationProject/ProjectAttachmentCommands.h>
 #include <SimulationProject/ProjectDocument.h>
 
 #include <string>
@@ -19,8 +22,13 @@ namespace robot_qt_viewer
 {
     class RobotQtViewerDocumentContext;
     class ToolSetupAppServices;
+    class ToolSetupAttachmentDefinitionTaskController;
+    class ToolSetupInstalledDeviceTaskController;
+    class ToolSetupMountFrameTaskController;
+    class ToolSetupObjectBindingTaskController;
+    class ToolSetupTaskSessionCoordinator;
 
-    class ToolSetupModuleController : public QObject
+    class ToolSetupModuleController : public QObject, public ToolSetupWorkbenchShellPort
     {
         Q_OBJECT
 
@@ -60,8 +68,11 @@ namespace robot_qt_viewer
             const QString& preferredFrameId = QString());
         void unbindMountedAttachment(const QString& attachmentId);
         void updateToolFrameVisibility();
+        QString currentMountId() const override;
+        QString currentAttachmentId() const override;
         bool hasPendingTaskChanges() const;
         bool resolvePendingTaskChanges(QWidget* parentWidget = nullptr, bool restoreEditorTarget = true);
+        void releaseProjectState() noexcept;
 
     signals:
         void frameVisibilityChanged();
@@ -80,13 +91,19 @@ namespace robot_qt_viewer
         void statusMessageRequested(const QString& message, int timeoutMs);
 
     private:
+        friend class ToolSetupObjectBindingTaskController;
+        friend class ToolSetupAttachmentDefinitionTaskController;
+        friend class ToolSetupInstalledDeviceTaskController;
+        friend class ToolSetupMountFrameTaskController;
+        friend class ToolSetupTaskSessionCoordinator;
+
         void handleMountSelectionChanged(int index);
         void handleAttachmentSelectionChanged(int index);
         void handleAssetSelectionChanged(int index);
+        void duplicateCurrentAsset();
+        void rebindCurrentAttachment();
         bool applyPendingTaskChanges();
         void discardPendingTaskChanges(const QString& message = QString(), bool restoreEditorTarget = true);
-        void applyCurrentAttachmentOffset(const simulation_project::TransformDesc& transform);
-        void applyCurrentToolAsset(const simulation_project::AttachmentAssetDesc& asset);
         void handleObjectBindingSelectionChanged(
             const QString& mountId,
             const QString& objectId,
@@ -126,30 +143,15 @@ namespace robot_qt_viewer
         void refreshObjectBindingEditor(
             const QString& mountId,
             const QString& objectId,
-            const QString& frameId,
-            const QString& statusMessage = QString());
-        std::string makeUniqueToolAssetId(const std::string& baseName) const;
-        std::string makeUniqueToolAttachmentId(const std::string& baseName) const;
-
+            const QString& frameId);
         ToolSetupWidget& m_widget;
         RobotQtViewerDocumentContext& m_context;
         ToolSetupAppServices& m_appServices;
         bool m_updating = false;
-        bool m_taskDirty = false;
-        bool m_hasMountEditSnapshot = false;
-        bool m_mountEditSnapshotIsNew = false;
-        bool m_hasTaskRollbackDocument = false;
-        bool m_taskRollbackDirty = false;
-        bool m_objectBindingTaskActive = false;
-        ToolSetupMountFrameMode m_mountFrameMode = ToolSetupMountFrameMode::Selection;
-        QString m_activeMountEditId;
-        QString m_mountDraftSourceRobotId;
-        QString m_mountDraftSourceLinkName;
-        QString m_bindingMountId;
-        QString m_bindingObjectId;
-        QString m_bindingFrameId;
-        QSet<QString> m_pinnedRobotMountFrameIds;
-        simulation_project::RobotMountDesc m_mountEditSnapshot;
-        simulation_project::ProjectDocument m_taskRollbackDocument;
+        ToolSetupObjectBindingTaskController* m_objectBindingTask = nullptr;
+        ToolSetupAttachmentDefinitionTaskController* m_attachmentDefinitionTask = nullptr;
+        ToolSetupInstalledDeviceTaskController* m_installedDeviceTask = nullptr;
+        ToolSetupMountFrameTaskController* m_mountFrameTask = nullptr;
+        ToolSetupTaskSessionCoordinator* m_taskSession = nullptr;
     };
 }

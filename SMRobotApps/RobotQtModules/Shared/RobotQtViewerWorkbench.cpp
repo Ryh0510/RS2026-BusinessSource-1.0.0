@@ -38,7 +38,7 @@ namespace robot_qt_viewer
             RobotQtViewerRightPanelKind::ProjectAssembly,
             RobotQtViewerViewportInteractionMode::SelectMount,
             QStringLiteral("smrobot.mode.tool-setup"),
-            QStringLiteral("Project Assembly"),
+            QStringLiteral("Tool Setup"),
             QStringLiteral("Mount Frame Editor"),
             true,
             false,

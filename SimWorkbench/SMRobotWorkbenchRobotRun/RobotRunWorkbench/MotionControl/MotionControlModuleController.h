@@ -1,7 +1,10 @@
 #pragma once
 
+#include "RobotRunWorkbenchShellPort.h"
+
 #include "RobotQtViewerEvents.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QHash>
 #include <QString>
@@ -20,7 +23,7 @@ namespace robot_qt_viewer
     class CollisionResultDocumentFacade;
     class RobotQtViewerDocumentContext;
 
-    class MotionControlModuleController : public QObject
+    class MotionControlModuleController : public QObject, public RobotRunWorkbenchShellPort
     {
         Q_OBJECT
 
@@ -39,6 +42,8 @@ namespace robot_qt_viewer
             const QStringList& movableJoints,
             const QStringList& movableJointTypes);
         void setCollisionDetailsWidget(CollisionResultsWidget* widget);
+        void setWorkbenchActive(bool active);
+        bool isWorkbenchActive() const;
         void clearRuntime();
         void stopAllAutoMotion();
         void selectRobot(const QString& robotId);
@@ -79,7 +84,7 @@ namespace robot_qt_viewer
         void updateTrajectoryStatus();
         void refreshRobotSelection();
         QString firstAvailableRobotId() const;
-        void refreshCollisionResults(const QString& detectorId);
+        void refreshCollisionResults(const QString& detectorId, bool force = false);
         QString preferredCollisionDetectorId() const;
 
         MotionControlWidget& m_widget;
@@ -91,6 +96,8 @@ namespace robot_qt_viewer
         QHash<QString, QStringList> m_robotMovableJoints;
         QHash<QString, QStringList> m_robotMovableJointTypes;
         QHash<QString, AutoMotionState> m_autoMotionStates;
+        QElapsedTimer m_collisionResultsRefreshTimer;
+        bool m_workbenchActive = false;
         bool m_updating = false;
     };
 }

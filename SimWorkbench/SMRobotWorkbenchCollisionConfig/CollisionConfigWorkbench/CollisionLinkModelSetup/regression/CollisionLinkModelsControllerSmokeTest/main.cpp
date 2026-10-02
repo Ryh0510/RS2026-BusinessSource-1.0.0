@@ -1,12 +1,14 @@
 #include "CollisionLinkModelsController.h"
 #include "CollisionLinkModelsCommandController.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/CollisionModelSelectionIds.h>
 #include <SimulationProject/ProjectDocumentService.h>
 #include <SimulationProject/ProjectIo.h>
 
 #include <QString>
+#include <QTemporaryDir>
+#include <fstream>
 
 #include <filesystem>
 #include <iostream>
@@ -16,44 +18,15 @@
 
 namespace
 {
-    class FakeViewportServices : public robot_qt_viewer::RobotQtViewerViewportServices
+    class FakeViewportServices : public robot_qt_viewer::IRobotQtViewerCollisionViewportPort
     {
     public:
+        std::filesystem::path basePath;
+        std::filesystem::path projectBasePath() const override { return basePath; }
+        bool refreshCollisionDetectorNearest(const QString&) override { return false; }
         mutable QString generatedObjectId;
         mutable int objectCoacdCalls = 0;
 
-        void selectRobotMount(const QString&, const QString&, const QString&) override {}
-        bool setActivePreviewRobotMount(const QString&) override { return false; }
-        bool previewRobotMountTransform(const QString&, const simulation_project::TransformDesc&) override { return false; }
-        bool previewRobotMountLink(const QString&, const QString&) override { return false; }
-        bool upsertPreviewRobotMount(const simulation_project::RobotMountDesc&) override { return false; }
-        bool removePreviewRobotMount(const QString&) override { return false; }
-        void previewRobotBaseTransform(const QString&, const simulation_project::TransformDesc&) override {}
-        void previewSceneObjectTransform(const QString&, const simulation_project::TransformDesc&) override {}
-        bool commitSceneObjectTransform(const QString&, const simulation_project::TransformDesc&) override { return false; }
-        bool removeSceneObject(const QString&) override { return false; }
-        void selectObjectFrame(const QString&, const QString&) override {}
-        bool previewObjectFrameTransform(
-            const QString&,
-            const QString&,
-            const simulation_project::TransformDesc&) override { return false; }
-        bool upsertPreviewObjectFrame(const QString&, const simulation_project::ObjectFrameDesc&) override { return false; }
-        void selectRobotLink(const QString&, const QString&) override {}
-        void selectRobotJointFrame(const QString&, const QString&) override {}
-        void setActiveToolFrameRobot(const QString&) override {}
-        void selectSceneObject(const QString&) override {}
-        void selectMountedAttachment(const QString&) override {}
-        bool setActiveMountedAttachment(const QString&) override { return true; }
-        void setToolFrameVisibility(const robot_qt_viewer::RobotQtViewerToolFrameVisibility&) override {}
-        void setSprayRangeVisible(const QString&, bool) override {}
-        void setRobotMountFrameVisibility(bool, bool) override {}
-        void setPinnedRobotMountFrames(const QStringList&) override {}
-        void focusMountFrameLink(const QString&, const QString&) override {}
-        void clearMountFrameLinkFocus() override {}
-        void focusObjectFrameObject(const QString&) override {}
-        void clearObjectFrameObjectFocus() override {}
-        void focusMountedAttachment(const QString&) override {}
-        void clearMountedAttachmentFocus() override {}
         void previewObjectCollisionModelVariant(const QString&, const QString&) override {}
         void clearObjectCollisionModelVariantPreview() override {}
         void previewCollisionPairTargets(
@@ -65,9 +38,6 @@ namespace
             const QString&,
             const QString&,
             const QString&) override {}
-        robot_qt_viewer::RobotQtViewerViewportLoadResult loadProjectDocument(
-            const simulation_project::ProjectDocument&,
-            const std::filesystem::path&) override { return {}; }
         bool refreshCollisionConfiguration(
             const simulation_project::ProjectDocument&,
             const std::filesystem::path&) override { return true; }
@@ -85,11 +55,9 @@ namespace
         bool removeCollisionDetector(const QString&) override { return false; }
         bool setVisibleRobotCollisionVariant(const QString&, const QString&, const QString&) override { return false; }
         QString visibleRobotCollisionVariant(const QString&, const QString&) const override { return {}; }
-        CollisionRuntimeRobotSummary robotCollisionSummary(
-            const QString&,
-            const QString& = QString(),
-            const QString& = QString()) const override { return {}; }
-        std::vector<CollisionRuntimeDetectorInfo> collisionRuntimeDetectors() const override { return {}; }
+        robot_qt_viewer::CollisionRuntimeRobotSummary robotCollisionSummary(
+            const QString&) const override { return {}; }
+        std::vector<robot_qt_viewer::CollisionRuntimeDetectorInfo> collisionRuntimeDetectors() const override { return {}; }
         bool generateRobotCollisionProxies(
             const QString&,
             const QString&,
@@ -126,7 +94,7 @@ namespace
                 element.type = "mesh";
                 element.role = simulation_project::kCoacdCollisionModelRole;
                 element.source = simulation_project::kCoacdVisualSource;
-                element.meshPath = "appGenerated://collision/coacd/test/part_" + std::to_string(i + 1) + ".obj";
+                element.meshPath = "project://assets/collision/coacd/a-test/r-test/part_" + std::to_string(i + 1) + ".obj";
                 element.enabled = true;
                 elements.push_back(std::move(element));
             }
@@ -142,16 +110,7 @@ namespace
             const robot_qt_viewer::CollisionRuntimeProxyRequest&,
             const std::vector<simulation_project::CollisionElementOverrideDesc>&,
             bool,
-            CollisionRuntimeProxyQualitySummary&) const override { return false; }
-        double robotJointValue(const QString&, const QString&, bool* ok = nullptr) const override
-        {
-            if(ok != nullptr) {
-                *ok = false;
-            }
-            return 0.0;
-        }
-        void setRobotJointValue(const QString&, const QString&, double) override {}
-        void setRobotAutoMotion(const QString&, bool, double, double) override {}
+            robot_qt_viewer::CollisionRuntimeProxyQualitySummary&) const override { return false; }
     };
 
     struct Checks
@@ -239,7 +198,19 @@ int main()
         countSource(initial, simulation_project::kCoacdVisualSource) == 0,
         "attachment initially has no COACD variant");
 
+    QTemporaryDir assetDirectory;
+    checks.require(assetDirectory.isValid(), "temporary project asset directory exists");
+    if(!assetDirectory.isValid()) return 1;
     FakeViewportServices viewportServices;
+    viewportServices.basePath = std::filesystem::u8path(assetDirectory.path().toUtf8().constData());
+    document.assetStore.directory = "test.assets";
+    const auto revision = viewportServices.basePath / "test.assets/collision/coacd/a-test/r-test";
+    std::filesystem::create_directories(revision);
+    std::ofstream(revision / "manifest.json") << "{}";
+    for(int i = 1; i <= 2; ++i) {
+        std::ofstream(revision / ("part_" + std::to_string(i) + ".obj"))
+            << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    }
     const CollisionLinkModelsCommandResult commandResult =
         CollisionLinkModelsCommandController::generateCoacdForObject(
             document,

@@ -2,7 +2,7 @@
 
 #include "RobotQtViewerAppController.h"
 #include "RobotQtViewerDocumentContext.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <RobotIO/RobotCollisionOverrideIo.h>
 #include <RobotIO/RobotUrdfCollisionExporter.h>
@@ -155,9 +155,9 @@ namespace robot_qt_viewer
     bool RobotQtViewerCollisionWorkbenchServicesAdapter::refreshViewportCollisionConfiguration(const QString& sourceId)
     {
         (void)sourceId;
-        RobotQtViewerViewportServices* viewportServices =
-            m_appController.documentContext().viewportServices();
-        if(viewportServices == nullptr) {
+        IRobotQtViewerCollisionViewportPort* collisionViewport =
+            m_appController.documentContext().collisionViewport();
+        if(collisionViewport == nullptr) {
             return false;
         }
 
@@ -165,7 +165,9 @@ namespace robot_qt_viewer
         if(!m_appController.session().path().empty()) {
             basePath = m_appController.session().path().parent_path();
         }
-        return viewportServices->refreshCollisionConfiguration(m_appController.document(), basePath);
+        return collisionViewport->refreshCollisionConfiguration(
+            m_appController.document(),
+            basePath);
     }
 
     bool RobotQtViewerCollisionWorkbenchServicesAdapter::saveRobotCollisionOverride(

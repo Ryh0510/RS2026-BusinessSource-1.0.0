@@ -1,10 +1,47 @@
 #include "CollisionWorkbenchModuleController.h"
 
+#include "CollisionConfigDialogService.h"
+
 #include "CollisionDetectorConfigModuleController.h"
 #include "CollisionDocumentEventPublisher.h"
 #include "CollisionWorkbenchEventCoordinator.h"
 #include "CollisionWorkbenchServices.h"
 #include "CollisionWorkbenchPanel.h"
+
+#include <SimulationProject/ProjectSession.h>
+#include <SimulationProject/RuntimePaths.h>
+
+namespace
+{
+    std::filesystem::path resolveCollisionExportSourcePath(
+        const std::filesystem::path& storedPath,
+        const std::filesystem::path& projectPath)
+    {
+        if(storedPath.is_absolute()) {
+            return storedPath;
+        }
+        if(!projectPath.empty()) {
+            const std::filesystem::path projectRelative =
+                projectPath.parent_path() / storedPath;
+            if(std::filesystem::exists(projectRelative)) {
+                return projectRelative;
+            }
+        }
+        for(const std::filesystem::path& root : {
+                simulation_project::RuntimePaths::applicationRoot(),
+                simulation_project::RuntimePaths::dataRoot(),
+                simulation_project::RuntimePaths::sourceRoot() }) {
+            if(root.empty()) {
+                continue;
+            }
+            const std::filesystem::path candidate = root / storedPath;
+            if(std::filesystem::exists(candidate)) {
+                return candidate;
+            }
+        }
+        return storedPath;
+    }
+}
 #include "CollisionLinkModelSetupModuleController.h"
 #include "RobotQtViewerDocumentContext.h"
 
@@ -98,8 +135,21 @@ namespace robot_qt_viewer
 
     CollisionWorkbenchModuleController::~CollisionWorkbenchModuleController() = default;
 
+    void CollisionWorkbenchModuleController::setWorkbenchActive(bool active)
+    {
+        m_workbenchActive = active;
+    }
+
+    bool CollisionWorkbenchModuleController::isWorkbenchActive() const
+    {
+        return m_workbenchActive;
+    }
+
     void CollisionWorkbenchModuleController::handleEvent(const RobotQtViewerEvent& event)
     {
+        if(!m_workbenchActive) {
+            return;
+        }
         CollisionWorkbenchEventCoordinator::dispatchEvent(
             event,
             CollisionWorkbenchEventCoordinator::Handlers{
@@ -351,6 +401,94 @@ namespace robot_qt_viewer
     void CollisionWorkbenchModuleController::saveOverridesToProject()
     {
         m_linkModelSetupController->saveOverridesToProject();
+    }
+
+    void CollisionWorkbenchModuleController::requestSaveOverridesToProject()
+    {
+        if(m_appServices.session().requiresSaveAs() ||
+            m_appServices.session().path().empty()) {
+            emit projectSaveAsRequested();
+            return;
+        }
+        saveOverridesToProject();
+    }
+
+    void CollisionWorkbenchModuleController::requestSaveOverridesAsSidecar(
+        QWidget* parentWidget)
+    {
+        if(m_appServices.selectedRobotId().isEmpty()) {
+            emit statusMessageRequested(QStringLiteral("Select a robot first."), 3000);
+            return;
+        }
+        if(!selectedRobotHasCollisionOverrides()) {
+            emit statusMessageRequested(
+                QStringLiteral("Selected robot has no collision overrides."),
+                3000);
+            return;
+        }
+
+        const std::string robotId = m_appServices.selectedRobotId().toStdString();
+        const std::filesystem::path& projectPath = m_appServices.session().path();
+        const QString defaultName = projectPath.empty()
+            ? QStringLiteral("%1.collision.override.json").arg(m_appServices.selectedRobotId())
+            : QString::fromStdWString((projectPath.parent_path() /
+                  (robotId + ".collision.override.json")).wstring());
+        const QString fileName = CollisionConfigDialogService::selectOverrideSidecarForSave(
+            parentWidget,
+            defaultName);
+        if(fileName.isEmpty()) {
+            return;
+        }
+        const std::filesystem::path path(fileName.toStdWString());
+        saveOverridesAsSidecar(
+            path,
+            m_appServices.session().makePortableAssetPath(path));
+    }
+
+    void CollisionWorkbenchModuleController::requestExportRobotUrdfWithCollision(
+        QWidget* parentWidget)
+    {
+        if(m_appServices.selectedRobotId().isEmpty()) {
+            emit statusMessageRequested(QStringLiteral("Select a robot first."), 3000);
+            return;
+        }
+        const std::filesystem::path storedSourcePath = selectedRobotSourcePath();
+        if(storedSourcePath.empty()) {
+            emit statusMessageRequested(
+                QStringLiteral("Selected robot is not in project."),
+                3000);
+            return;
+        }
+        if(QString::fromStdWString(storedSourcePath.extension().wstring()).compare(
+               QStringLiteral(".urdf"),
+               Qt::CaseInsensitive) != 0) {
+            emit statusMessageRequested(
+                QStringLiteral("URDF collision export only supports URDF robots."),
+                4000);
+            return;
+        }
+        if(!selectedRobotHasCollisionOverrides()) {
+            emit statusMessageRequested(
+                QStringLiteral("Selected robot has no collision overrides."),
+                3000);
+            return;
+        }
+
+        const std::filesystem::path sourcePath = resolveCollisionExportSourcePath(
+            storedSourcePath,
+            m_appServices.session().path());
+        const std::filesystem::path defaultPath = sourcePath.parent_path() /
+            (sourcePath.stem().wstring() + L"_with_collision" +
+                sourcePath.extension().wstring());
+        const QString fileName = CollisionConfigDialogService::selectUrdfForExport(
+            parentWidget,
+            QString::fromStdWString(defaultPath.wstring()));
+        if(fileName.isEmpty()) {
+            return;
+        }
+        exportRobotUrdfWithCollision(
+            sourcePath,
+            std::filesystem::path(fileName.toStdWString()));
     }
 
     bool CollisionWorkbenchModuleController::selectedRobotHasCollisionOverrides() const

@@ -44,9 +44,7 @@ namespace
   "fallbackLocale": "",
   "messages": { "shell.menu.file": "File" },
   "legacy": {
-    "Apply": "Apply",
-    "Selected robot: %1": "Selected robot: %1",
-    "Scene Explorer": "Scene Explorer"
+    "Apply": "Apply"
   }
 })json";
     }
@@ -72,9 +70,9 @@ namespace
         RobotQtViewerWorkbenchPackageRegistry& registry,
         IRobotQtViewerLanguageParticipant& participant)
     {
-        for(const RobotQtViewerWorkbenchModeDesc& mode : registry.modes()) {
+        for(const RobotQtViewerWorkbenchDesc& mode : registry.workbenches()) {
             require(
-                registry.bindModeLanguageParticipant(
+                registry.bindWorkbenchLanguageParticipant(
                     mode.descriptor.kind,
                     participant),
                 "language participant binding failed");
@@ -132,17 +130,21 @@ namespace
         localization.retranslateObjectTree(&root);
         require(label->text() == QStringLiteral("Scene Explorer"),
             "language round trip failed");
+        require(button->text() == QStringLiteral("Apply"),
+            "button language round trip failed");
+        require(tree->headerItem()->text(0) == QStringLiteral("Scene Explorer"),
+            "tree header language round trip failed");
 
         RobotQtViewerWorkbenchPackageRegistry missingRegistry =
             defaultRobotQtViewerWorkbenchPackageRegistry();
-        require(!missingRegistry.validateEnabledModeLanguages(&error),
+        require(!missingRegistry.validateEnabledWorkbenchLanguages(&error),
             "missing language participant was accepted");
 
         RobotQtViewerWorkbenchPackageRegistry registry =
             defaultRobotQtViewerWorkbenchPackageRegistry();
         RobotQtViewerNoOpLanguageParticipant noOp;
         bindAllLanguages(registry, noOp);
-        require(registry.validateEnabledModeLanguages(&error), error.toUtf8().constData());
+        require(registry.validateEnabledWorkbenchLanguages(&error), error.toUtf8().constData());
 
         RobotQtViewerWidgetLanguageParticipant shell(root);
         RobotQtViewerLanguageCoordinator coordinator(localization, registry);
@@ -158,6 +160,10 @@ namespace
                 QString::fromWCharArray(
                     L"\u5df2\u9009\u62e9\u673a\u5668\u4eba\uff1ar2"),
             "dynamic text translation failed");
+        require(coordinator.switchLanguage(QStringLiteral("en-US"), &error),
+            error.toUtf8().constData());
+        require(label->text() == QStringLiteral("Selected robot: r2"),
+            "dynamic text language round trip failed");
         QSettings().remove(QStringLiteral("ui/language"));
     }
 }

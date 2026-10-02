@@ -9,10 +9,11 @@
 #include "CollisionSelectionSetViewController.h"
 #include "CollisionSelectionSetWorkbenchController.h"
 #include "RobotQtViewerDocumentContext.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <QObject>
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -158,7 +159,7 @@ namespace robot_qt_viewer
                     return;
                 }
 
-                RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+                IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
                 if(viewportServices != nullptr && viewportServices->setActiveCollisionDetector(detectorId)) {
                     m_appServices.setActiveCollisionDetectorContext(detectorId);
                     showStatus(QString("Active collision detector: %1").arg(detectorId), 3000);
@@ -182,6 +183,10 @@ namespace robot_qt_viewer
         QObject::connect(&m_panel, &CollisionWorkbenchPanel::showSelectedDetectorsRequested,
             &receiver, [this]() {
                 showSelectedDetectors();
+            });
+        QObject::connect(&m_panel, &CollisionWorkbenchPanel::refreshDetectorNearestRequested,
+            &receiver, [this]() {
+                refreshSelectedDetectorNearest();
             });
         QObject::connect(&m_panel, &CollisionWorkbenchPanel::removeDetectorRequested,
             &receiver, [this]() {
@@ -244,8 +249,8 @@ namespace robot_qt_viewer
     {
         const QString previousId = currentDetectorId();
         std::vector<CollisionRuntimeDetectorInfo> detectors;
-        if(m_context.viewportServices() != nullptr) {
-            detectors = m_context.viewportServices()->collisionRuntimeDetectors();
+        if(m_context.collisionViewport() != nullptr) {
+            detectors = m_context.collisionViewport()->collisionRuntimeDetectors();
         }
 
         m_updating = true;
@@ -288,8 +293,8 @@ namespace robot_qt_viewer
         m_updating = true;
         m_panel.setDetectorProperties(m_detectorDocument->detectorProperties(currentDetectorId()));
         std::vector<CollisionRuntimeDetectorInfo> detectors;
-        if(m_context.viewportServices() != nullptr) {
-            detectors = m_context.viewportServices()->collisionRuntimeDetectors();
+        if(m_context.collisionViewport() != nullptr) {
+            detectors = m_context.collisionViewport()->collisionRuntimeDetectors();
         }
         m_panel.setDetectorPairs(m_detectorDocument->detectorPairs(currentDetectorId(), detectors));
         m_updating = wasUpdating;
@@ -343,6 +348,55 @@ namespace robot_qt_viewer
     void CollisionDetectorConfigModuleController::showSelectedDetectors()
     {
         m_detectorWorkbench->showSelectedDetectors();
+    }
+
+    void CollisionDetectorConfigModuleController::refreshSelectedDetectorNearest()
+    {
+        const QString detectorId = currentDetectorId();
+        IRobotQtViewerCollisionViewportPort* viewport = m_context.collisionViewport();
+        if(detectorId.isEmpty() || viewport == nullptr) {
+            showStatus("Nearest refresh is unavailable without an active detector.", 5000);
+            return;
+        }
+
+        if(!viewport->collisionQueriesEnabled() &&
+            !viewport->setCollisionQueriesEnabled(true)) {
+            showStatus("Nearest refresh failed to enable collision queries.", 5000);
+            return;
+        }
+        if(!viewport->refreshCollisionDetectorNearest(detectorId)) {
+            showStatus(QString("Nearest refresh failed: %1").arg(detectorId), 5000);
+            return;
+        }
+
+        QString status = QString("Nearest refreshed: %1").arg(detectorId);
+        const std::vector<CollisionRuntimeDetectorInfo> detectors =
+            viewport->collisionRuntimeDetectors();
+        const auto runtimeIt = std::find_if(
+            detectors.begin(),
+            detectors.end(),
+            [&](const CollisionRuntimeDetectorInfo& detector) {
+                return QString::fromStdString(detector.id) == detectorId;
+            });
+        if(runtimeIt != detectors.end()) {
+            const QString state = QString::fromStdString(runtimeIt->nearest.state);
+            const QString reason = QString::fromStdString(runtimeIt->nearest.reason);
+            if(runtimeIt->nearest.valid) {
+                status = QString("Nearest refreshed: %1, distance %2")
+                    .arg(detectorId)
+                    .arg(runtimeIt->nearest.distance, 0, 'g', 8);
+            } else if(!reason.isEmpty()) {
+                status = QString("Nearest %1: %2").arg(state, reason);
+            } else {
+                status = QString("Nearest state: %1").arg(state);
+            }
+        }
+
+        refreshDetectorPropertyEditors();
+        if(m_callbacks.refreshDetectorDetails) {
+            m_callbacks.refreshDetectorDetails();
+        }
+        showStatus(status, 5000);
     }
 
     void CollisionDetectorConfigModuleController::removeSelectedDetector()

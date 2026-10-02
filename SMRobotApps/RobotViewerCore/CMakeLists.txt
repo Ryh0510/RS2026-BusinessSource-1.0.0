@@ -3,29 +3,10 @@ cmake_minimum_required(VERSION 3.20)
 set(TARGET_NAME RobotViewerCore)
 
 set(${TARGET_NAME}_REQUIRED_TARGETS
-    Qt5::Widgets
-    Qt5::OpenGL
-    Common::GLRuntime
-    Common::CustomLog
-    Common::Utility
-    SMRobotPlatform::AssetCore
-    SMRobotPlatform::CameraCore
-    SMRobotCore::Collision
-    SMRobotCore::Kinematics
-    SMRobotPlatform::RenderCore
-    SMRobotCore::RobotCore
-    SMRobotCore::RobotIO
-    SMRobotCore::RobotInstance
-    SMRobotPlatform::RobotRenderBridge
-    SMRobotCore::RobotSDK
-    SMRobotCore::RobotRuntime
-    SMRobotPlatform::SceneCore
-    SMRobotPlatform::SimulationProject
-    SMRobotPlatform::SimulationRuntime
-    SMRobotPlatform::SensorCore
-    SMRobotPlatform::SensorSimulation
-    SMRobotPlatform::VisualizationSDK
+    ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPublic}
+    ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPrivate}
 )
+list(REMOVE_DUPLICATES ${TARGET_NAME}_REQUIRED_TARGETS)
 
 set(${TARGET_NAME}_MISSING_TARGETS)
 foreach(required_target_ IN LISTS ${TARGET_NAME}_REQUIRED_TARGETS)
@@ -43,15 +24,36 @@ if(${TARGET_NAME}_MISSING_TARGETS)
 endif()
 
 add_library(${TARGET_NAME} STATIC
+    CameraPreviewWidget.cpp
+    CameraPreviewWidget.h
     ProjectCollisionRuntimeProjection.cpp
     ProjectCollisionRuntimeProjection.h
     ProjectRuntimeBuilder.cpp
     ProjectRuntimeBuilder.h
+    ProjectRuntimeTypes.cpp
     ProjectRuntimeTypes.h
+    ProjectSceneAttachmentVisualSystem.cpp
+    ProjectSceneAttachmentVisualSystem.h
+    ProjectSceneCameraSystem.cpp
+    ProjectSceneCameraSystem.h
+    ProjectSceneCollisionPresentationSystem.cpp
+    ProjectSceneCollisionPresentationSystem.h
+    ProjectSceneDocumentProjectionSystem.cpp
+    ProjectSceneDocumentProjectionSystem.h
+    ProjectSceneEnvironment.cpp
+    ProjectSceneEnvironment.h
+    ProjectSceneEnvironmentSystem.cpp
+    ProjectSceneEnvironmentSystem.h
+    ProjectSceneInteractionSystem.cpp
+    ProjectSceneInteractionSystem.h
+    ProjectSceneStewartPresentationSystem.cpp
+    ProjectSceneStewartPresentationSystem.h
     ProjectScene.cpp
     ProjectScene.h
     ProjectScenePickingService.cpp
     ProjectScenePickingService.h
+    ProjectScenePreviewOverlayState.cpp
+    ProjectScenePreviewOverlayState.h
     RobotCollisionOverrideApplier.cpp
     RobotCollisionOverrideApplier.h
     RobotCollisionModelInspector.cpp
@@ -70,36 +72,29 @@ target_compile_features(${TARGET_NAME}
         cxx_std_17
 )
 
+target_compile_options(${TARGET_NAME}
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/bigobj>
+)
+
 target_link_libraries(${TARGET_NAME}
     PUBLIC
-        SMRobotPlatform::VisualizationSDK
+        ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPublic}
+    PRIVATE
+        ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPrivate}
 )
 
 target_include_directories(${TARGET_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
-        $<INSTALL_INTERFACE:include/RobotViewerCore>
+        $<INSTALL_INTERFACE:${PACKAGE_NAME}/include/RobotViewerCore>
 )
 
-set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES ${${TARGET_NAME}_REQUIRED_TARGETS})
-
-foreach(required_target_ IN LISTS ${TARGET_NAME}_REQUIRED_TARGETS)
-    target_include_directories(${TARGET_NAME}
-        PRIVATE
-            $<TARGET_PROPERTY:${required_target_},INTERFACE_INCLUDE_DIRECTORIES>
-    )
-
-    target_compile_definitions(${TARGET_NAME}
-        PRIVATE
-            $<TARGET_PROPERTY:${required_target_},INTERFACE_COMPILE_DEFINITIONS>
-    )
-
-    target_compile_options(${TARGET_NAME}
-        PRIVATE
-            $<TARGET_PROPERTY:${required_target_},INTERFACE_COMPILE_OPTIONS>
-    )
-endforeach()
+set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
+    ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPublic})
+set(${TARGET_NAME}_INSTALL_RESOLVE_DEPENDENCIES
+    ${${TARGET_NAME}_REQUIRED_TARGETS})
 
 set_target_properties(${TARGET_NAME}
     PROPERTIES
@@ -121,12 +116,14 @@ if(ExportPacakge${PACKAGE_NAME})
         ProjectRuntimeBuilder.h
         ProjectRuntimeTypes.h
         ProjectScene.h
+        ProjectSceneEnvironment.h
         ProjectScenePickingService.h
         RobotCollisionOverrideApplier.h
         RobotCollisionModelInspector.h
         RobotCollisionProxyGenerator.h
         RobotViewport.h
         DESTINATION ${PACKAGE_NAME}/include/RobotViewerCore
+        COMPONENT smrobot_sdk_${PACKAGE_NAME}_${TARGET_NAME}
     )
 endif()
 

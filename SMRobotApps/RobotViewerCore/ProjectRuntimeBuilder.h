@@ -25,9 +25,16 @@ namespace rendercore
     class GeometryResourceCache;
 }
 
+namespace simulation_runtime
+{
+    struct RuntimePointCloud;
+}
+
 class ProjectRuntimeBuilder
 {
 public:
+    // Compatibility surface. ProjectScene production code uses only the
+    // presentation helpers below; project runtime mutations belong to SimulationRuntime.
     static simulation_project::AssetResolveContext makeAssetResolveContext(
         const std::filesystem::path& basePath,
         const std::vector<std::string>& assetSearchPaths,
@@ -39,12 +46,14 @@ public:
 
     static collision::Transform3 makeTransform(const simulation_project::TransformDesc& desc);
 
+    [[deprecated("Describe robots in ProjectDocument and use ProjectSimulationRuntime::loadProject().")]]
     static robot::RobotModel loadSingleRobot(
         const std::filesystem::path& path,
         const std::string& sourceType,
         int sourceModelIndex = 0,
         const std::vector<std::string>& resourceSearchPaths = {});
 
+    [[deprecated("Set RobotDesc::initialJoints before loading or use SimulationRuntime mutation APIs.")]]
     static void applyInitialJoints(
         robotinstance::RobotInstance& instance,
         const std::vector<simulation_project::JointValueDesc>& joints);
@@ -134,6 +143,11 @@ public:
         scenecore::SceneGraph& graph);
 
     static RuntimeSceneObject buildPointCloud(
+        simulation_runtime::RuntimePointCloud& pointCloudRuntime,
+        const simulation_project::PointCloudDesc& pointCloudDesc,
+        scenecore::SceneGraph& graph);
+
+    static RuntimeSceneObject buildPointCloud(
         const simulation_project::PointCloudDesc& pointCloudDesc,
         uint64_t runtimeId,
         const std::filesystem::path& projectBasePath,
@@ -141,9 +155,12 @@ public:
         scenecore::SceneGraph& graph,
         const std::string& projectAssetDirectory = {});
 
+    [[deprecated("Use ProjectSimulationRuntime::setRobotJointValue() or ProjectParallelMechanismRuntime::setJointValue().")]]
     static bool setJointValue(RuntimeRobot& runtime, const std::string& jointName, double value);
 
+    [[deprecated("Read ProjectSimulationRuntime robot state or use ProjectParallelMechanismRuntime::jointValue().")]]
     static bool getJointValue(const RuntimeRobot& runtime, const std::string& jointName, double& value);
 
+    [[deprecated("Use ProjectSimulationRuntime::setRobotAutoMotion() and update().")]]
     static void applyAutoMotion(RuntimeRobot& runtime, double timeSeconds);
 };

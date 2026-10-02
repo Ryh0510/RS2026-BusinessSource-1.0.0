@@ -2,7 +2,7 @@
 
 #include "CollisionWorkbenchServices.h"
 #include "CollisionLinkModelDocumentFacade.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/CollisionModelSelectionIds.h>
 #include <SimulationProject/ProjectAssetStore.h>
@@ -91,7 +91,7 @@ namespace
 
     bool describeGeneratedProjectAsset(
         const simulation_project::ProjectDocument& document,
-        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
         const std::string& meshUri,
         simulation_project::ProjectAssetDesc& asset,
         QString& errorMessage)
@@ -179,7 +179,7 @@ namespace
 
     bool registerGeneratedRobotAsset(
         simulation_project::ProjectDocument& document,
-        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
         const std::string& robotId,
         const std::string& linkName,
         std::vector<simulation_project::CollisionElementOverrideDesc>& elements,
@@ -220,7 +220,7 @@ namespace
 
     bool registerGeneratedObjectAsset(
         simulation_project::ProjectDocument& document,
-        robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+        robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
         const std::string& objectId,
         std::vector<simulation_project::ObjectCollisionElementOverrideDesc>& elements,
         QString& errorMessage)
@@ -310,7 +310,7 @@ namespace
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateFromVisual(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& robotId,
     const QString& linkName,
     const robot_qt_viewer::CollisionRuntimeProxyRequest& request,
@@ -363,7 +363,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateF
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateFromExistingCollision(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& robotId,
     const QString& linkName,
     const robot_qt_viewer::CollisionRuntimeProxyRequest& request,
@@ -421,7 +421,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateF
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateRobotFromExistingCollision(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& robotId,
     const robot_qt_viewer::CollisionRuntimeProxyRequest& request,
     bool replaceOriginal)
@@ -458,7 +458,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateR
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateMissingFromVisual(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& robotId,
     const robot_qt_viewer::CollisionRuntimeProxyRequest& request,
     bool replaceOriginal)
@@ -492,7 +492,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateM
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateCoacdForLink(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& robotId,
     const QString& linkName)
 {
@@ -542,7 +542,7 @@ CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateC
 
 CollisionLinkModelsCommandResult CollisionLinkModelsCommandController::generateCoacdForObject(
     simulation_project::ProjectDocument& document,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& objectId)
 {
     if(objectId.isEmpty()) {

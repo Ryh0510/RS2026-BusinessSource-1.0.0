@@ -66,9 +66,9 @@ message( STATUS "   --  Prebuild VSIndep Directory: ${WIN_VSIndep_DIR}" )
 message( STATUS "   --  Prebuild VS2019 Directory: ${WIN_VS2019_DIR}" )
 
 option(RS2026_4090_ENABLE_DEMAND_LOADING
-    "Load only dependency providers required by the current 4090 build graph" OFF)
+    "Load only dependency providers required by the current 4090 build graph" ON)
 option(RS2026_4090_DEPENDENCY_REPORT
-    "Report 4090 dependency-provider decisions without changing default behavior" ON)
+    "Report 4090 dependency-provider decisions" ON)
 
 function(_rs4090_decide_provider out_load provider_name)
     set(_provider_packages ${ARGN})
@@ -133,6 +133,47 @@ function(_rs4090_force_provider out_load provider_name reason)
     endif()
 endfunction()
 
+macro(_rs4090_find_qt5_exact)
+    rs_project_required_components(Qt5 _rs4090_qt5_components)
+    list(REMOVE_DUPLICATES _rs4090_qt5_components)
+    if(NOT _rs4090_qt5_components)
+        message(FATAL_ERROR
+            "[4090 Dependency] Qt5 was selected without required components.")
+    endif()
+
+    set(_rs4090_qt5_root "${PREBUILD_DIR}/vs_indep/Qt5155_x64")
+    set(_rs4090_qt5_cmake_dir "${_rs4090_qt5_root}/lib/cmake/Qt5")
+    if(NOT EXISTS "${_rs4090_qt5_cmake_dir}/Qt5Config.cmake")
+        message(FATAL_ERROR
+            "Qt 5.15.5 config package is missing: "
+            "${_rs4090_qt5_cmake_dir}/Qt5Config.cmake")
+    endif()
+
+    message(STATUS
+        "[4090 Dependency] Qt5 exact components: ${_rs4090_qt5_components}")
+    find_package(Qt5 5.15.5 CONFIG REQUIRED
+        COMPONENTS ${_rs4090_qt5_components}
+        PATHS "${_rs4090_qt5_cmake_dir}"
+        NO_DEFAULT_PATH
+    )
+
+    set(Qt5_RUNTIME_DIR "${_rs4090_qt5_root}/bin")
+    set(Qt5_PLATFORM_DIR "${_rs4090_qt5_root}/plugins")
+    if(NOT TARGET Qt5::qmake)
+        message(FATAL_ERROR
+            "Qt5 exact provider did not provide Qt5::qmake for runtime deployment.")
+    endif()
+    if(NOT EXISTS "${Qt5_PLATFORM_DIR}/platforms/qwindows.dll")
+        message(FATAL_ERROR
+            "Qt5 platform plugin is missing: "
+            "${Qt5_PLATFORM_DIR}/platforms/qwindows.dll")
+    endif()
+
+    foreach(_component IN LISTS _rs4090_qt5_components)
+        rs_assert_required_targets(Qt5 "Qt5::${_component}")
+    endforeach()
+endmacro()
+
 if(RS2026_4090_DEPENDENCY_REPORT)
     message(STATUS
         "[4090 Dependency] demand loading enabled: "
@@ -144,8 +185,6 @@ if(RS2026_4090_DEPENDENCY_REPORT)
         "[4090 Dependency] required packages: ${RS2026_REQUIRED_PACKAGES}")
 endif()
 
-_rs4090_prebuilt_component_required(
-    _rs4090_prebuilt_core_collision SMRobotCore Collision)
 _rs4090_prebuilt_component_required(
     _rs4090_prebuilt_core_robot_io SMRobotCore RobotIO)
 _rs4090_prebuilt_component_required(
@@ -249,13 +288,10 @@ if(_rs4090_load_pinocchio)
     include( Findpinocchio_3rdParty )
 endif()
 
-# CoACD is still an optional Collision capability and is not yet represented
-# completely in TargetConfigSetting metadata. Keep it loaded conservatively.
-include( FindCoACD_3rdParty )
-if(RS2026_4090_DEPENDENCY_REPORT)
-    message(STATUS
-        "[4090 Dependency] CoACD: demand=DEFERRED, actual=LOAD, "
-        "reason=optional Collision capability is not fully represented in metadata")
+_rs4090_decide_provider(_rs4090_load_coacd CoACD CoACD)
+if(_rs4090_load_coacd)
+    include( FindCoACD_3rdParty )
+    _rs4090_assert_provider_targets(CoACD CoACD::coacd)
 endif()
 
 #   3. Prebuild Packages:
@@ -323,10 +359,6 @@ if(_rs4090_load_assimp)
 endif()
 
 _rs4090_decide_provider(_rs4090_load_fcl FCL fcl ccd octomap)
-if(_rs4090_prebuilt_core_collision)
-    _rs4090_force_provider(_rs4090_load_fcl FCL
-        "prebuilt SMRobotCore::Collision public dependency")
-endif()
 if(_rs4090_load_fcl)
     include( CMake_FindFCL )
     _rs4090_assert_provider_targets(FCL fcl::fcl)
@@ -370,12 +402,10 @@ endif()
 set( CMAKE_MODULE_PATH ${WIN_VSIndep_DIR} ) 
 _rs4090_decide_provider(_rs4090_load_qt5 Qt5 Qt5)
 if(_rs4090_load_qt5)
-    include( CMake_FindQt5155 )
     if(RS2026_4090_ENABLE_DEMAND_LOADING)
-        rs_project_required_components(Qt5 _rs4090_qt5_components)
-        foreach(_component IN LISTS _rs4090_qt5_components)
-            rs_assert_required_targets(Qt5 "Qt5::${_component}")
-        endforeach()
+        _rs4090_find_qt5_exact()
+    else()
+        include( CMake_FindQt5155 )
     endif()
 endif()
 

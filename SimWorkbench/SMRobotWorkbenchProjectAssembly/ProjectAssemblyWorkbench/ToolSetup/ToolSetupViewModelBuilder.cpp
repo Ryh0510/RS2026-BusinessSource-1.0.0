@@ -108,16 +108,13 @@ namespace
     }
 
     std::vector<ToolAttachmentView> buildToolAttachmentViews(
-        const simulation_project::ProjectDocument& document,
-        const simulation_project::RobotMountDesc* selectedMount)
+        const simulation_project::ProjectDocument& document)
     {
         std::vector<ToolAttachmentView> tools;
-        if(selectedMount == nullptr) {
-            return tools;
-        }
-
         for(const simulation_project::MountedAttachmentDesc& attachment : document.mountedAttachments) {
-            if(attachment.mountFrameId != selectedMount->id) {
+            const simulation_project::RobotMountDesc* mount =
+                findRobotMountDesc(document, attachment.mountFrameId);
+            if(mount == nullptr) {
                 continue;
             }
             const simulation_project::AttachmentAssetDesc* asset =
@@ -125,7 +122,7 @@ namespace
             if(asset == nullptr) {
                 continue;
             }
-            appendToolAttachmentView(tools, attachment, *selectedMount, asset);
+            appendToolAttachmentView(tools, attachment, *mount, asset);
         }
         return tools;
     }
@@ -406,7 +403,7 @@ ToolSetupPanelView buildToolSetupPanelView(
         !selectedLinkName.isEmpty() &&
         !hasRobotMountForLink(document, robotIdValue, selectedLinkName.toStdString());
 
-    const std::vector<ToolAttachmentView> tools = buildToolAttachmentViews(document, selectedMount);
+    const std::vector<ToolAttachmentView> tools = buildToolAttachmentViews(document);
     int preferredActiveIndex = -1;
     int rememberedActiveIndex = -1;
     int enabledIndex = -1;
@@ -424,6 +421,7 @@ ToolSetupPanelView buildToolSetupPanelView(
         if(!tool.visible) {
             text += " [hidden]";
         }
+        text += QString(" | %1").arg(QString::fromStdString(tool.linkName));
 
         ToolSetupComboItem item;
         item.text = text;

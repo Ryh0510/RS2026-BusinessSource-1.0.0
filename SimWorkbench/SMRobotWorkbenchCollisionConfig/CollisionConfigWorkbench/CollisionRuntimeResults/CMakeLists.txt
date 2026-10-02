@@ -3,21 +3,11 @@ cmake_minimum_required(VERSION 3.20)
 set(TARGET_NAME CollisionRuntimeResults)
 
 set(SOURCES
-    CollisionResultDocumentFacade.cpp
-    CollisionResultDocumentFacade.h
     CollisionResultViewController.cpp
     CollisionResultViewController.h
-    CollisionRuntimeResultsWidget.cpp
-    CollisionRuntimeResultsWidget.h
-    CollisionResultsController.cpp
-    CollisionResultsController.h
-    CollisionResultsViewModel.h
-    CollisionResultsWidget.cpp
-    CollisionResultsWidget.h
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES})
-add_library(RobotQtModulesCollisionRuntimeResults ALIAS ${TARGET_NAME})
 add_library(SMRobotWorkbenchCollisionConfig::${TARGET_NAME} ALIAS ${TARGET_NAME})
 
 target_include_directories(${TARGET_NAME}
@@ -28,13 +18,13 @@ target_include_directories(${TARGET_NAME}
 
 target_link_libraries(${TARGET_NAME}
     PUBLIC
-        $<BUILD_INTERFACE:RobotQtModulesShared>
-        $<INSTALL_INTERFACE:SMRobotWorkbenchCommon::RobotQtModulesShared>
+        $<BUILD_INTERFACE:CollisionRuntimeResultsView>
+        $<INSTALL_INTERFACE:SMRobotWorkbenchCommon::CollisionRuntimeResultsView>
     PRIVATE
         $<BUILD_INTERFACE:CollisionLinkModelSetup>
         $<INSTALL_INTERFACE:SMRobotWorkbenchCollisionConfig::CollisionLinkModelSetup>
-        $<BUILD_INTERFACE:RobotQtModulesCoreWidgets>
-        $<INSTALL_INTERFACE:SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets>
+        $<BUILD_INTERFACE:RobotQtModulesShared>
+        $<INSTALL_INTERFACE:SMRobotWorkbenchCommon::RobotQtModulesShared>
 )
 
 target_compile_features(${TARGET_NAME}
@@ -51,8 +41,8 @@ set_target_properties(${TARGET_NAME}
 
 if(ExportPacakge${PACKAGE_NAME})
     set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
+        SMRobotWorkbenchCommon::CollisionRuntimeResultsView
         SMRobotWorkbenchCommon::RobotQtModulesShared
-        SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
         SMRobotWorkbenchCollisionConfig::CollisionLinkModelSetup
     )
 

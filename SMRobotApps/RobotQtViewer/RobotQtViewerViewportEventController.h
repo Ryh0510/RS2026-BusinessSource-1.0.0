@@ -9,7 +9,9 @@
 
 namespace robot_qt_viewer
 {
-    class RobotQtViewerViewportServices;
+    class IRobotQtViewerAssemblyViewportPort;
+    class IRobotQtViewerCollisionViewportPort;
+    class IRobotQtViewerSelectionViewportPort;
     class RobotQtViewerViewportPreviewState;
 
     class RobotQtViewerViewportEventController : public QObject
@@ -18,7 +20,9 @@ namespace robot_qt_viewer
         using LinkFrameVisibleQuery = std::function<bool(const QString&, const QString&)>;
 
         RobotQtViewerViewportEventController(
-            RobotQtViewerViewportServices& viewportServices,
+            IRobotQtViewerSelectionViewportPort& selectionViewport,
+            IRobotQtViewerAssemblyViewportPort& assemblyViewport,
+            IRobotQtViewerCollisionViewportPort& collisionViewport,
             const RobotQtViewerViewportPreviewState& viewportPreviewState,
             LinkFrameVisibleQuery linkFrameVisible,
             QObject* parent = nullptr);
@@ -29,7 +33,9 @@ namespace robot_qt_viewer
         void applySelection(const RobotQtViewerSelectionPayload& selection);
         void applyViewportPreview(const RobotQtViewerViewportPreviewPayload& preview);
 
-        RobotQtViewerViewportServices& m_viewportServices;
+        IRobotQtViewerSelectionViewportPort& m_selectionViewport;
+        IRobotQtViewerAssemblyViewportPort& m_assemblyViewport;
+        IRobotQtViewerCollisionViewportPort& m_collisionViewport;
         const RobotQtViewerViewportPreviewState& m_viewportPreviewState;
         LinkFrameVisibleQuery m_linkFrameVisible;
     };

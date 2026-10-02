@@ -9,7 +9,7 @@
 #include "RobotQtViewerDocumentController.h"
 #include "RobotQtViewerEvents.h"
 #include "RobotQtViewerSelectionModel.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 #include "SceneEntityWorkflowController.h"
 #include "ViewportReloadWorkflowController.h"
 
@@ -76,7 +76,8 @@ namespace robot_qt_viewer
     {
         m_active = true;
         if(m_session.hasResult) {
-            if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
+            if(IRobotQtViewerVisualizationViewportPort* services =
+                   m_context.visualizationViewport()) {
                 if(!services->setSurfaceScalarOverlayVisible(m_session.objectId, true)) {
                     QString error;
                     if(!services->applySurfaceScalarOverlay(m_session.overlay, &error)) {
@@ -100,7 +101,8 @@ namespace robot_qt_viewer
         m_active = false;
         m_hasCurrentThickness = false;
         emit thicknessToolTipRequested(QString(), QPoint(), false);
-        if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
+        if(IRobotQtViewerVisualizationViewportPort* services =
+               m_context.visualizationViewport()) {
             services->setSurfaceScalarProbeEnabled(false, QString());
             if(m_session.hasResult) {
                 services->setSurfaceScalarOverlayVisible(m_session.objectId, false);
@@ -158,7 +160,8 @@ namespace robot_qt_viewer
             return;
         }
 
-        if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
+        if(IRobotQtViewerVisualizationViewportPort* services =
+               m_context.visualizationViewport()) {
             services->setSurfaceScalarProbeEnabled(false, QString());
             if(m_session.hasResult) {
                 services->clearSurfaceScalarOverlay(m_session.objectId);
@@ -204,8 +207,9 @@ namespace robot_qt_viewer
         m_context.selectionModel().selectSceneObject(
             m_session.objectId,
             QStringLiteral("coatingAnalysisOpenModel"));
-        if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
-            services->selectSceneObject(m_session.objectId);
+        if(IRobotQtViewerSelectionViewportPort* selectionViewport =
+               m_context.selectionViewport()) {
+            selectionViewport->selectSceneObject(m_session.objectId);
         }
         m_status = QStringLiteral("Model loaded. Run Thickness Prediction.");
         refreshViewModel();
@@ -217,7 +221,8 @@ namespace robot_qt_viewer
     {
         const simulation_project::SceneObjectDesc* object =
             findObject(m_context.document(), m_session.objectId);
-        RobotQtViewerViewportServices* services = m_context.viewportServices();
+        IRobotQtViewerVisualizationViewportPort* services =
+            m_context.visualizationViewport();
         if(object == nullptr || services == nullptr) {
             m_status = QStringLiteral("The analysis model or viewport is unavailable.");
             refreshViewModel();
@@ -292,7 +297,8 @@ namespace robot_qt_viewer
         m_session.showThickness = enabled && m_session.hasResult;
         m_hasCurrentThickness = false;
         emit thicknessToolTipRequested(QString(), QPoint(), false);
-        if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
+        if(IRobotQtViewerVisualizationViewportPort* services =
+               m_context.visualizationViewport()) {
             services->setSurfaceScalarProbeEnabled(
                 m_active && m_session.showThickness,
                 m_session.objectId);
@@ -303,7 +309,8 @@ namespace robot_qt_viewer
 
     void CoatingAnalysisModuleController::clearSession()
     {
-        if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
+        if(IRobotQtViewerVisualizationViewportPort* services =
+               m_context.visualizationViewport()) {
             services->setSurfaceScalarProbeEnabled(false, QString());
             if(m_session.hasResult) {
                 services->clearSurfaceScalarOverlay(m_session.objectId);
@@ -323,7 +330,8 @@ namespace robot_qt_viewer
             findObject(m_context.document(), m_session.objectId) == nullptr) {
             return;
         }
-        if(RobotQtViewerViewportServices* services = m_context.viewportServices()) {
+        if(IRobotQtViewerVisualizationViewportPort* services =
+               m_context.visualizationViewport()) {
             QString error;
             if(services->applySurfaceScalarOverlay(m_session.overlay, &error)) {
                 services->setSurfaceScalarProbeEnabled(

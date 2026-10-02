@@ -28,6 +28,8 @@ set( ExcludeTargets
     RobotViewerCore
     RobotGlfwViewer
     diagnostics
+    docs
+    examples
     external_validation
     feature_probes
     regression

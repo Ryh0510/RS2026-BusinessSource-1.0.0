@@ -14,6 +14,8 @@ set(SOURCES
     RobotQtViewerDocumentController.h
     RobotQtViewerDocumentViewRegistry.cpp
     RobotQtViewerDocumentViewRegistry.h
+    RobotQtViewerEditSession.cpp
+    RobotQtViewerEditSession.h
     RobotQtViewerEventHub.cpp
     RobotQtViewerEventHub.h
     RobotQtViewerEvents.h
@@ -27,13 +29,14 @@ set(SOURCES
     RobotQtViewerAppController.h
     RobotQtViewerSelectionModel.cpp
     RobotQtViewerSelectionModel.h
-    RobotQtViewerProductProfile.cpp
-    RobotQtViewerProductProfile.h
     RobotQtViewerViewportPreviewState.cpp
     RobotQtViewerViewportPreviewState.h
+    RobotQtViewerViewportPorts.h
     RobotQtViewerViewportServices.h
     RobotQtViewerWorkbench.cpp
     RobotQtViewerWorkbench.h
+    RobotQtViewerWorkbenchContribution.cpp
+    RobotQtViewerWorkbenchContribution.h
     RobotQtViewerWorkbenchLifecycle.cpp
     RobotQtViewerWorkbenchLifecycle.h
     RobotQtViewerWorkbenchPackageRegistry.cpp
@@ -106,6 +109,9 @@ if(BuildTests)
     add_subdirectory(
         regression/OperationStatusTest
         ${PROJECT_BINARY_DIR}/tests/robot_qt_operation_status)
+    add_subdirectory(
+        regression/DocumentTransactionTest
+        ${PROJECT_BINARY_DIR}/tests/robot_qt_document_transaction)
 endif()
 
 if(ExportPacakgeSMRobotWorkbenchCommon)

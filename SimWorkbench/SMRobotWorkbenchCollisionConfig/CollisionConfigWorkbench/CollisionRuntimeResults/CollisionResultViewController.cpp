@@ -4,7 +4,7 @@
 #include "CollisionResultsWidget.h"
 #include "CollisionWorkbenchServices.h"
 #include "RobotQtViewerDocumentContext.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <vector>
 
@@ -25,13 +25,13 @@ namespace robot_qt_viewer
     void CollisionResultViewController::refresh(const QString& detectorId)
     {
         std::vector<CollisionRuntimeDetectorInfo> runtimeDetectors;
-        if(m_context.viewportServices() != nullptr) {
-            runtimeDetectors = m_context.viewportServices()->collisionRuntimeDetectors();
+        if(m_context.collisionViewport() != nullptr) {
+            runtimeDetectors = m_context.collisionViewport()->collisionRuntimeDetectors();
         }
 
         const CollisionResultsViewModel viewModel = m_documentFacade.buildViewModel(
             detectorId,
-            m_context.viewportServices() != nullptr,
+            m_context.collisionViewport() != nullptr,
             runtimeDetectors,
             m_appServices.collisionPairRobotA(),
             m_appServices.collisionPairLinkA());

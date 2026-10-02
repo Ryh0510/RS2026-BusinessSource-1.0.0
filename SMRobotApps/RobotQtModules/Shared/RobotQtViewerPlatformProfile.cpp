@@ -14,53 +14,9 @@ namespace robot_qt_viewer
 {
     namespace
     {
-        constexpr int kProfileSchemaVersion = 1;
-        constexpr int kProductProfileSchemaVersion = 2;
+        constexpr int kProfileSchemaVersion = 2;
         constexpr int kSelectionSchemaVersion = 1;
         const QString kWorkbenchExtensionApiVersion = QStringLiteral("1");
-
-        QStringList stringArray(const QJsonObject& object, const QString& key, bool* valid)
-        {
-            QStringList values;
-            const QJsonValue value = object.value(key);
-            if(value.isUndefined()) {
-                return values;
-            }
-            if(!value.isArray()) {
-                *valid = false;
-                return values;
-            }
-            for(const QJsonValue& item : value.toArray()) {
-                if(!item.isString() || item.toString().trimmed().isEmpty()) {
-                    *valid = false;
-                    return {};
-                }
-                const QString text = item.toString().trimmed();
-                if(!values.contains(text)) {
-                    values.push_back(text);
-                }
-            }
-            return values;
-        }
-
-        QJsonArray toJsonArray(const QStringList& values)
-        {
-            QJsonArray array;
-            for(const QString& value : values) {
-                array.push_back(value);
-            }
-            return array;
-        }
-
-        void addDiagnostic(
-            RobotQtViewerResolvedPlatformComposition& result,
-            RobotQtViewerPlatformDiagnosticSeverity severity,
-            const QString& code,
-            const QString& subjectId,
-            const QString& message)
-        {
-            result.diagnostics.push_back({ severity, code, subjectId, message });
-        }
 
         bool isValidStableId(const QString& id)
         {
@@ -74,18 +30,6 @@ namespace robot_qt_viewer
                 }
             }
             return true;
-        }
-
-        void appendUnique(QStringList* target, const QStringList& source)
-        {
-            if(target == nullptr) {
-                return;
-            }
-            for(const QString& value : source) {
-                if(!target->contains(value)) {
-                    target->push_back(value);
-                }
-            }
         }
 
         bool readJsonObject(
@@ -113,31 +57,107 @@ namespace robot_qt_viewer
             *object = document.object();
             return true;
         }
+
+        bool readUniqueStringArray(
+            const QJsonObject& object,
+            const QString& key,
+            QStringList* values,
+            QString* errorMessage)
+        {
+            const QJsonValue value = object.value(key);
+            if(!value.isArray()) {
+                if(errorMessage != nullptr) {
+                    *errorMessage = QStringLiteral("Product Profile field '%1' must be an array.")
+                        .arg(key);
+                }
+                return false;
+            }
+            QStringList loaded;
+            for(const QJsonValue& item : value.toArray()) {
+                const QString id = item.isString() ? item.toString().trimmed() : QString();
+                if(!isValidStableId(id)) {
+                    if(errorMessage != nullptr) {
+                        *errorMessage = QStringLiteral(
+                            "Product Profile field '%1' contains an invalid Workbench ID.")
+                            .arg(key);
+                    }
+                    return false;
+                }
+                if(loaded.contains(id)) {
+                    if(errorMessage != nullptr) {
+                        *errorMessage = QStringLiteral(
+                            "Product Profile field '%1' contains a duplicate Workbench ID: %2")
+                            .arg(key, id);
+                    }
+                    return false;
+                }
+                loaded.push_back(id);
+            }
+            *values = loaded;
+            return true;
+        }
+
+        QJsonArray toJsonArray(const QStringList& values)
+        {
+            QJsonArray array;
+            for(const QString& value : values) {
+                array.push_back(value);
+            }
+            return array;
+        }
+
+        void addDiagnostic(
+            RobotQtViewerResolvedPlatformComposition& result,
+            RobotQtViewerPlatformDiagnosticSeverity severity,
+            const QString& code,
+            const QString& subjectId,
+            const QString& message)
+        {
+            result.diagnostics.push_back({ severity, code, subjectId, message });
+        }
+
+        bool writeJsonObject(
+            const std::filesystem::path& path,
+            const QJsonObject& object,
+            const QString& description,
+            QString* errorMessage)
+        {
+            std::error_code directoryError;
+            std::filesystem::create_directories(path.parent_path(), directoryError);
+            if(directoryError) {
+                if(errorMessage != nullptr) {
+                    *errorMessage = QStringLiteral("Cannot create configuration directory: %1")
+                        .arg(QString::fromStdString(directoryError.message()));
+                }
+                return false;
+            }
+            QSaveFile file(QString::fromStdWString(path.wstring()));
+            if(!file.open(QIODevice::WriteOnly) ||
+                file.write(QJsonDocument(object).toJson(QJsonDocument::Indented)) < 0 ||
+                !file.commit()) {
+                if(errorMessage != nullptr) {
+                    *errorMessage = QStringLiteral("Cannot save %1: %2")
+                        .arg(description, file.fileName());
+                }
+                return false;
+            }
+            if(errorMessage != nullptr) {
+                errorMessage->clear();
+            }
+            return true;
+        }
     }
 
     bool RobotQtViewerResolvedPlatformComposition::succeeded() const
     {
         return std::none_of(
-            diagnostics.cbegin(),
-            diagnostics.cend(),
+            diagnostics.cbegin(), diagnostics.cend(),
             [](const RobotQtViewerPlatformDiagnostic& diagnostic) {
                 return diagnostic.severity == RobotQtViewerPlatformDiagnosticSeverity::Error;
             });
     }
 
-    bool RobotQtViewerResolvedPlatformComposition::containsMode(const QString& modeId) const
-    {
-        return enabledModeIds.contains(modeId);
-    }
-
-    bool RobotQtViewerResolvedPlatformComposition::containsMode(
-        RobotQtViewerWorkbenchKind kind) const
-    {
-        return containsMode(robotQtViewerWorkbenchId(kind));
-    }
-
-    bool RobotQtViewerResolvedPlatformComposition::containsWorkbench(
-        const QString& workbenchId) const
+    bool RobotQtViewerResolvedPlatformComposition::containsWorkbench(const QString& workbenchId) const
     {
         return enabledWorkbenchIds.contains(workbenchId);
     }
@@ -160,549 +180,139 @@ namespace robot_qt_viewer
 
     RobotQtViewerResolvedPlatformComposition RobotQtViewerPlatformProfileResolver::resolve(
         const RobotQtViewerWorkbenchPackageRegistry& catalog,
-        const RobotQtViewerPlatformProfile& profile,
-        const RobotQtViewerPlatformUserOverlay& overlay)
+        const RobotQtViewerPlatformProfile& profile)
     {
-        if(profile.version == kProductProfileSchemaVersion || !profile.workbenchIds.isEmpty()) {
-            RobotQtViewerResolvedPlatformComposition result;
-            result.profileId = profile.id;
-            result.displayName = profile.displayName;
-            result.defaultModeId = !profile.defaultWorkbenchId.isEmpty()
-                ? profile.defaultWorkbenchId
-                : profile.defaultModeId;
-            result.defaultWorkbenchId = result.defaultModeId;
-
-            if(profile.schema != QStringLiteral("smrobot.platform-profile") ||
-                (profile.version != kProductProfileSchemaVersion &&
-                    profile.version != kProfileSchemaVersion)) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.profile.schema"),
-                    profile.id,
-                    QStringLiteral("Unsupported platform profile schema or version."));
-            }
-            if(profile.displayName.trimmed().isEmpty()) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.profile.display_name"),
-                    profile.id,
-                    QStringLiteral("Platform profile display name is empty."));
-            }
-            if(!isValidStableId(profile.id)) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.profile.id"),
-                    profile.id,
-                    QStringLiteral("Platform profile has an invalid stable id: %1").arg(profile.id));
-            }
-            if(!isValidStableId(result.defaultWorkbenchId)) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.default_workbench.id"),
-                    result.defaultWorkbenchId,
-                    QStringLiteral("Platform default Workbench has an invalid stable id: %1")
-                        .arg(result.defaultWorkbenchId));
-            }
-
-            std::set<QString> enabledWorkbenches;
-            std::set<QString> declaredWorkbenches;
-            for(const QString& workbenchId : profile.workbenchIds) {
-                if(!isValidStableId(workbenchId)) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.workbench.id"),
-                        workbenchId,
-                        QStringLiteral("Platform profile contains an invalid Workbench ID: %1")
-                            .arg(workbenchId));
-                    continue;
-                }
-                if(!declaredWorkbenches.insert(workbenchId).second) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.workbench.duplicate"),
-                        workbenchId,
-                        QStringLiteral("Platform profile contains a duplicate Workbench: %1")
-                            .arg(workbenchId));
-                    continue;
-                }
-                enabledWorkbenches.insert(workbenchId);
-            }
-            if(enabledWorkbenches.empty()) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.workbench.empty"),
-                    profile.id,
-                    QStringLiteral("Platform profile must include at least one Workbench."));
-            }
-
-            for(const QString& featureId : profile.requiredFeatureIds) {
-                const RobotQtViewerWorkbenchFeatureDesc* featureDesc = catalog.feature(featureId);
-                if(featureDesc == nullptr) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.feature.missing"),
-                        featureId,
-                        QStringLiteral("Required feature is not in the build catalog: %1")
-                            .arg(featureId));
-                    continue;
-                }
-                for(const QString& workbenchId : featureDesc->requiredModeIds) {
-                    enabledWorkbenches.insert(workbenchId);
-                }
-            }
-
-            std::set<QString> visiting;
-            std::set<QString> expanded;
-            std::function<bool(const QString&)> includeWorkbench;
-            includeWorkbench = [&](const QString& workbenchId) {
-                if(visiting.find(workbenchId) != visiting.end()) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.workbench.dependency_cycle"),
-                        workbenchId,
-                        QStringLiteral("Workbench dependency cycle contains: %1").arg(workbenchId));
-                    return false;
-                }
-                if(expanded.find(workbenchId) != expanded.end()) {
-                    return true;
-                }
-                visiting.insert(workbenchId);
-                const RobotQtViewerWorkbenchDesc* workbench = catalog.registeredWorkbench(workbenchId);
-                if(workbench == nullptr) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.workbench.missing"),
-                        workbenchId,
-                        QStringLiteral("Workbench is not available in this build: %1")
-                            .arg(workbenchId));
-                    visiting.erase(workbenchId);
-                    return false;
-                }
-                const RobotQtViewerWorkbenchPackageDesc* package = catalog.package(workbench->packageId);
-                if(package == nullptr || !package->enabled ||
-                    package->extensionApiVersion != kWorkbenchExtensionApiVersion) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.package.unavailable"),
-                        workbench->packageId,
-                        QStringLiteral("Workbench package is unavailable or incompatible: %1")
-                            .arg(workbench->packageId));
-                    visiting.erase(workbenchId);
-                    return false;
-                }
-                for(const QString& packageDependencyId : package->requiredPackageIds) {
-                    if(!catalog.hasPackage(packageDependencyId)) {
-                        addDiagnostic(result,
-                            RobotQtViewerPlatformDiagnosticSeverity::Error,
-                            QStringLiteral("platform.package.dependency_missing"),
-                            packageDependencyId,
-                            QStringLiteral("Workbench package dependency is missing: %1 requires %2")
-                                .arg(package->id, packageDependencyId));
-                        visiting.erase(workbenchId);
-                        return false;
-                    }
-                }
-                for(const QString& dependencyId : workbench->requiredWorkbenchIds) {
-                    enabledWorkbenches.insert(dependencyId);
-                    if(!includeWorkbench(dependencyId)) {
-                        visiting.erase(workbenchId);
-                        return false;
-                    }
-                }
-                visiting.erase(workbenchId);
-                expanded.insert(workbenchId);
-                return true;
-            };
-
-            const std::set<QString> requestedWorkbenches = enabledWorkbenches;
-            for(const QString& workbenchId : requestedWorkbenches) {
-                if(!includeWorkbench(workbenchId)) {
-                    enabledWorkbenches.erase(workbenchId);
-                }
-            }
-
-            for(const QString& workbenchId : enabledWorkbenches) {
-                const RobotQtViewerWorkbenchDesc* workbench = catalog.registeredWorkbench(workbenchId);
-                if(workbench == nullptr) {
-                    continue;
-                }
-                for(const QString& conflictId : workbench->conflictsWithWorkbenchIds) {
-                    if(enabledWorkbenches.find(conflictId) != enabledWorkbenches.end() &&
-                        workbenchId < conflictId) {
-                        addDiagnostic(result,
-                            RobotQtViewerPlatformDiagnosticSeverity::Error,
-                            QStringLiteral("platform.workbench.conflict"),
-                            workbenchId,
-                            QStringLiteral("Workbenches conflict: %1 and %2")
-                                .arg(workbenchId, conflictId));
-                    }
-                }
-            }
-
-            if(enabledWorkbenches.find(result.defaultWorkbenchId) == enabledWorkbenches.end() ||
-                catalog.registeredWorkbench(result.defaultWorkbenchId) == nullptr) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.default_workbench.unavailable"),
-                    result.defaultWorkbenchId,
-                    QStringLiteral("Default Workbench must be included and available: %1")
-                        .arg(result.defaultWorkbenchId));
-            }
-
-            for(const QString& workbenchId : profile.workbenchIds) {
-                if(enabledWorkbenches.find(workbenchId) != enabledWorkbenches.end() &&
-                    !result.enabledWorkbenchIds.contains(workbenchId)) {
-                    result.enabledWorkbenchIds.push_back(workbenchId);
-                }
-            }
-            QVector<const RobotQtViewerWorkbenchDesc*> remaining;
-            for(const QString& workbenchId : enabledWorkbenches) {
-                if(result.enabledWorkbenchIds.contains(workbenchId)) {
-                    continue;
-                }
-                if(const RobotQtViewerWorkbenchDesc* workbench = catalog.registeredWorkbench(workbenchId)) {
-                    remaining.push_back(workbench);
-                }
-            }
-            std::sort(remaining.begin(), remaining.end(),
-                [](const RobotQtViewerWorkbenchDesc* lhs,
-                   const RobotQtViewerWorkbenchDesc* rhs) {
-                    if(lhs->defaultOrder != rhs->defaultOrder) {
-                        return lhs->defaultOrder < rhs->defaultOrder;
-                    }
-                    return lhs->descriptor.id < rhs->descriptor.id;
-                });
-            for(const RobotQtViewerWorkbenchDesc* workbench : remaining) {
-                result.enabledWorkbenchIds.push_back(workbench->descriptor.id);
-            }
-            result.enabledModeIds = result.enabledWorkbenchIds;
-            return result;
-        }
-
         RobotQtViewerResolvedPlatformComposition result;
         result.profileId = profile.id;
         result.displayName = profile.displayName;
-        result.defaultModeId = profile.defaultModeId;
-        result.defaultWorkbenchId = profile.defaultModeId;
+        result.defaultWorkbenchId = profile.defaultWorkbenchId;
+        result.enabledWorkbenchIds = profile.workbenchIds;
 
         if(profile.schema != QStringLiteral("smrobot.platform-profile") ||
             profile.version != kProfileSchemaVersion) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.profile.schema"),
-                profile.id,
-                QStringLiteral("Unsupported platform profile schema or version."));
-        }
-        if(profile.displayName.trimmed().isEmpty()) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.profile.display_name"),
-                profile.id,
-                QStringLiteral("Platform profile display name is empty."));
+            addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                QStringLiteral("platform.profile.schema"), profile.id,
+                QStringLiteral("Unsupported Product Profile schema. Version 2 is required."));
         }
         if(!isValidStableId(profile.id)) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.profile.id"),
-                profile.id,
-                QStringLiteral("Platform profile has an invalid stable id: %1").arg(profile.id));
+            addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                QStringLiteral("platform.profile.id"), profile.id,
+                QStringLiteral("Product Profile has an invalid stable ID: %1").arg(profile.id));
         }
-        const auto validateIds = [&](const QStringList& ids, const QString& field) {
-            for(const QString& id : ids) {
-                if(!isValidStableId(id)) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.profile.reference_id"),
-                        id,
-                        QStringLiteral("Platform profile field %1 has an invalid stable id: %2")
-                            .arg(field, id));
-                }
-            }
-        };
-        validateIds(profile.requiredFeatureIds, QStringLiteral("requiredFeatures"));
-        validateIds(profile.requiredModeIds, QStringLiteral("requiredModes"));
-        validateIds(profile.optionalModeIds, QStringLiteral("optionalModes"));
-        validateIds(profile.defaultEnabledOptionalModeIds,
-            QStringLiteral("defaultEnabledOptionalModes"));
-        validateIds(profile.modeOrder, QStringLiteral("modeOrder"));
-        if(!isValidStableId(profile.defaultModeId)) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.default_mode.id"),
-                profile.defaultModeId,
-                QStringLiteral("Platform default mode has an invalid stable id: %1")
-                    .arg(profile.defaultModeId));
+        if(profile.displayName.trimmed().isEmpty()) {
+            addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                QStringLiteral("platform.profile.display_name"), profile.id,
+                QStringLiteral("Product Profile display name is empty."));
         }
-        if(overlay.schema != QStringLiteral("smrobot.platform-profile-overlay") ||
-            overlay.version != kProfileSchemaVersion) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.overlay.schema"),
-                overlay.profileId,
-                QStringLiteral("Unsupported platform profile overlay schema or version."));
+        if(profile.workbenchIds.isEmpty()) {
+            addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                QStringLiteral("platform.workbench.empty"), profile.id,
+                QStringLiteral("Product Profile must include at least one Workbench."));
         }
-        if(!overlay.profileId.isEmpty() && overlay.profileId != profile.id) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.overlay.profile_mismatch"),
-                overlay.profileId,
-                QStringLiteral("The user overlay belongs to another platform profile."));
-        }
-        validateIds(overlay.enabledOptionalModeIds,
-            QStringLiteral("overlay.enabledOptionalModes"));
-        validateIds(overlay.disabledOptionalModeIds,
-            QStringLiteral("overlay.disabledOptionalModes"));
 
-        std::set<QString> requiredModes;
-        std::set<QString> optionalModes;
-        std::set<QString> enabledModes;
-        for(const QString& modeId : profile.requiredModeIds) {
-            requiredModes.insert(modeId);
-        }
-        for(const QString& featureId : profile.requiredFeatureIds) {
-            const RobotQtViewerWorkbenchFeatureDesc* featureDesc = catalog.feature(featureId);
-            if(featureDesc == nullptr) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.feature.missing"),
-                    featureId,
-                    QStringLiteral("Required feature is not in the build catalog: %1").arg(featureId));
+        std::set<QString> declared;
+        for(const QString& workbenchId : profile.workbenchIds) {
+            if(!isValidStableId(workbenchId)) {
+                addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                    QStringLiteral("platform.workbench.id"), workbenchId,
+                    QStringLiteral("Product Profile contains an invalid Workbench ID: %1")
+                        .arg(workbenchId));
                 continue;
             }
-            for(const QString& modeId : featureDesc->requiredModeIds) {
-                requiredModes.insert(modeId);
+            if(!declared.insert(workbenchId).second) {
+                addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                    QStringLiteral("platform.workbench.duplicate"), workbenchId,
+                    QStringLiteral("Product Profile contains a duplicate Workbench: %1")
+                        .arg(workbenchId));
+                continue;
             }
-        }
-        for(const QString& modeId : profile.optionalModeIds) {
-            optionalModes.insert(modeId);
-            if(requiredModes.find(modeId) != requiredModes.end()) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.mode.required_and_optional"),
-                    modeId,
-                    QStringLiteral("Workbench mode cannot be both required and optional: %1")
-                        .arg(modeId));
+            const RobotQtViewerWorkbenchDesc* workbench = catalog.registeredWorkbench(workbenchId);
+            if(workbench == nullptr) {
+                addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                    QStringLiteral("platform.workbench.missing"), workbenchId,
+                    QStringLiteral("Workbench is not available in this build: %1")
+                        .arg(workbenchId));
+                continue;
             }
-            if(catalog.registeredMode(modeId) == nullptr) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Warning,
-                    QStringLiteral("platform.mode.optional_missing"),
-                    modeId,
-                    QStringLiteral("Optional Workbench mode is not in the build catalog: %1")
-                        .arg(modeId));
+            const RobotQtViewerWorkbenchPackageDesc* package = catalog.package(workbench->packageId);
+            if(package == nullptr || !package->enabled ||
+                package->extensionApiVersion != kWorkbenchExtensionApiVersion) {
+                addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                    QStringLiteral("platform.package.unavailable"), workbench->packageId,
+                    QStringLiteral("Workbench package is unavailable or incompatible: %1")
+                        .arg(workbench->packageId));
+                continue;
             }
-        }
-        enabledModes = requiredModes;
-        for(const QString& modeId : profile.defaultEnabledOptionalModeIds) {
-            if(optionalModes.find(modeId) == optionalModes.end()) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.optional.default_not_allowed"),
-                    modeId,
-                    QStringLiteral("Default-enabled mode is not declared optional: %1").arg(modeId));
-            } else {
-                enabledModes.insert(modeId);
-            }
-        }
-
-        if(!overlay.enabledOptionalModeIds.isEmpty() ||
-            !overlay.disabledOptionalModeIds.isEmpty()) {
-            if(!profile.allowUserOverrides) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.overlay.not_allowed"),
-                    profile.id,
-                    QStringLiteral("This platform profile does not allow user overrides."));
-            }
-            for(const QString& modeId : overlay.enabledOptionalModeIds) {
-                if(overlay.disabledOptionalModeIds.contains(modeId)) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.overlay.contradictory_mode"),
-                        modeId,
-                        QStringLiteral("The overlay both enables and disables this mode: %1")
-                            .arg(modeId));
-                    continue;
-                }
-                if(optionalModes.find(modeId) == optionalModes.end()) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.overlay.mode_not_allowed"),
-                        modeId,
-                        QStringLiteral("The overlay cannot enable this mode: %1").arg(modeId));
-                } else {
-                    enabledModes.insert(modeId);
-                }
-            }
-            for(const QString& modeId : overlay.disabledOptionalModeIds) {
-                if(requiredModes.find(modeId) != requiredModes.end()) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.overlay.required_mode"),
-                        modeId,
-                        QStringLiteral("The overlay cannot disable a required mode: %1").arg(modeId));
-                } else if(optionalModes.find(modeId) == optionalModes.end()) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Warning,
-                        QStringLiteral("platform.overlay.unknown_mode"),
-                        modeId,
-                        QStringLiteral("The overlay references an unknown optional mode: %1").arg(modeId));
-                } else {
-                    enabledModes.erase(modeId);
-                }
-            }
-        }
-
-        std::set<QString> expanded;
-        std::set<QString> visiting;
-        std::function<bool(const QString&, bool)> includeMode;
-        includeMode = [&](const QString& modeId, bool required) {
-            if(visiting.find(modeId) != visiting.end()) {
-                addDiagnostic(result,
-                    RobotQtViewerPlatformDiagnosticSeverity::Error,
-                    QStringLiteral("platform.mode.dependency_cycle"),
-                    modeId,
-                    QStringLiteral("Workbench mode dependency cycle contains: %1").arg(modeId));
-                return false;
-            }
-            if(expanded.find(modeId) != expanded.end()) {
-                if(required) {
-                    requiredModes.insert(modeId);
-                }
-                return true;
-            }
-            visiting.insert(modeId);
-            const RobotQtViewerWorkbenchModeDesc* modeDesc = catalog.registeredMode(modeId);
-            if(modeDesc == nullptr) {
-                if(required || optionalModes.find(modeId) == optionalModes.end()) {
-                    addDiagnostic(result,
-                        required
-                            ? RobotQtViewerPlatformDiagnosticSeverity::Error
-                            : RobotQtViewerPlatformDiagnosticSeverity::Warning,
-                        required
-                            ? QStringLiteral("platform.mode.required_missing")
-                            : QStringLiteral("platform.mode.dependency_missing"),
-                        modeId,
-                        QStringLiteral("Workbench mode is not in the build catalog: %1")
-                            .arg(modeId));
-                }
-                enabledModes.erase(modeId);
-                visiting.erase(modeId);
-                return false;
-            }
-            const RobotQtViewerWorkbenchPackageDesc* packageDesc =
-                catalog.package(modeDesc->packageId);
-            if(packageDesc == nullptr ||
-                packageDesc->extensionApiVersion != kWorkbenchExtensionApiVersion) {
-                addDiagnostic(result,
-                    required
-                        ? RobotQtViewerPlatformDiagnosticSeverity::Error
-                        : RobotQtViewerPlatformDiagnosticSeverity::Warning,
-                    QStringLiteral("platform.package.unavailable"),
-                    modeDesc->packageId,
-                    QStringLiteral("Workbench package is missing or uses an incompatible extension API: %1")
-                        .arg(modeDesc->packageId));
-                enabledModes.erase(modeId);
-                visiting.erase(modeId);
-                return false;
-            }
-            for(const QString& packageDependencyId : packageDesc->requiredPackageIds) {
+            for(const QString& packageDependencyId : package->requiredPackageIds) {
                 if(!catalog.hasPackage(packageDependencyId)) {
-                    addDiagnostic(result,
-                        required
-                            ? RobotQtViewerPlatformDiagnosticSeverity::Error
-                            : RobotQtViewerPlatformDiagnosticSeverity::Warning,
+                    addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
                         QStringLiteral("platform.package.dependency_missing"),
                         packageDependencyId,
                         QStringLiteral("Workbench package dependency is missing: %1 requires %2")
-                            .arg(packageDesc->id, packageDependencyId));
-                    enabledModes.erase(modeId);
-                    visiting.erase(modeId);
-                    return false;
+                            .arg(package->id, packageDependencyId));
                 }
             }
-            if(required) {
-                requiredModes.insert(modeId);
+        }
+
+        for(const QString& workbenchId : profile.workbenchIds) {
+            const RobotQtViewerWorkbenchDesc* workbench = catalog.registeredWorkbench(workbenchId);
+            if(workbench == nullptr) {
+                continue;
             }
-            for(const QString& dependencyId : modeDesc->requiredModeIds) {
-                enabledModes.insert(dependencyId);
-                if(!includeMode(dependencyId, required)) {
-                    enabledModes.erase(modeId);
-                    visiting.erase(modeId);
-                    return false;
+            for(const QString& dependencyId : workbench->requiredWorkbenchIds) {
+                if(!declared.count(dependencyId)) {
+                    addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                        QStringLiteral("platform.workbench.dependency_not_declared"), workbenchId,
+                        QStringLiteral("Workbench dependency must be listed explicitly: %1 requires %2")
+                            .arg(workbenchId, dependencyId));
                 }
             }
-            visiting.erase(modeId);
-            expanded.insert(modeId);
-            return true;
+            for(const QString& conflictId : workbench->conflictsWithWorkbenchIds) {
+                if(declared.count(conflictId) && workbenchId < conflictId) {
+                    addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                        QStringLiteral("platform.workbench.conflict"), workbenchId,
+                        QStringLiteral("Workbenches conflict: %1 and %2")
+                            .arg(workbenchId, conflictId));
+                }
+            }
+        }
+
+        std::set<QString> visiting;
+        std::set<QString> visited;
+        std::function<void(const QString&)> visit = [&](const QString& workbenchId) {
+            if(visited.count(workbenchId)) {
+                return;
+            }
+            if(!visiting.insert(workbenchId).second) {
+                addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                    QStringLiteral("platform.workbench.dependency_cycle"), workbenchId,
+                    QStringLiteral("Workbench dependency cycle contains: %1").arg(workbenchId));
+                return;
+            }
+            const RobotQtViewerWorkbenchDesc* workbench = catalog.registeredWorkbench(workbenchId);
+            if(workbench != nullptr) {
+                for(const QString& dependencyId : workbench->requiredWorkbenchIds) {
+                    if(declared.count(dependencyId)) {
+                        visit(dependencyId);
+                    }
+                }
+            }
+            visiting.erase(workbenchId);
+            visited.insert(workbenchId);
         };
-        const std::set<QString> requestedModes = enabledModes;
-        for(const QString& modeId : requestedModes) {
-            if(!includeMode(modeId, requiredModes.find(modeId) != requiredModes.end())) {
-                enabledModes.erase(modeId);
-            }
+        for(const QString& workbenchId : profile.workbenchIds) {
+            visit(workbenchId);
         }
 
-        for(const QString& modeId : enabledModes) {
-            const RobotQtViewerWorkbenchModeDesc* modeDesc = catalog.registeredMode(modeId);
-            if(modeDesc == nullptr) {
-                continue;
-            }
-            for(const QString& conflictId : modeDesc->conflictsWithModeIds) {
-                if(enabledModes.find(conflictId) != enabledModes.end()) {
-                    addDiagnostic(result,
-                        RobotQtViewerPlatformDiagnosticSeverity::Error,
-                        QStringLiteral("platform.mode.conflict"),
-                        modeId,
-                        QStringLiteral("Workbench modes conflict: %1 and %2")
-                            .arg(modeId, conflictId));
-                }
-            }
+        if(!isValidStableId(profile.defaultWorkbenchId) ||
+            !declared.count(profile.defaultWorkbenchId) ||
+            catalog.registeredWorkbench(profile.defaultWorkbenchId) == nullptr) {
+            addDiagnostic(result, RobotQtViewerPlatformDiagnosticSeverity::Error,
+                QStringLiteral("platform.default_workbench.unavailable"),
+                profile.defaultWorkbenchId,
+                QStringLiteral("Default Workbench must be included and available: %1")
+                    .arg(profile.defaultWorkbenchId));
         }
-
-        if(enabledModes.find(profile.defaultModeId) == enabledModes.end() ||
-            catalog.registeredMode(profile.defaultModeId) == nullptr) {
-            addDiagnostic(result,
-                RobotQtViewerPlatformDiagnosticSeverity::Error,
-                QStringLiteral("platform.default_mode.unavailable"),
-                profile.defaultModeId,
-                QStringLiteral("Default mode is not enabled and available: %1")
-                    .arg(profile.defaultModeId));
-        }
-
-        for(const QString& modeId : profile.modeOrder) {
-            if(enabledModes.find(modeId) != enabledModes.end() &&
-                !result.enabledModeIds.contains(modeId)) {
-                result.enabledModeIds.push_back(modeId);
-            }
-        }
-        QVector<const RobotQtViewerWorkbenchModeDesc*> remaining;
-        for(const QString& modeId : enabledModes) {
-            if(result.enabledModeIds.contains(modeId)) {
-                continue;
-            }
-            if(const RobotQtViewerWorkbenchModeDesc* modeDesc = catalog.registeredMode(modeId)) {
-                remaining.push_back(modeDesc);
-            }
-        }
-        std::sort(remaining.begin(), remaining.end(),
-            [](const RobotQtViewerWorkbenchModeDesc* lhs,
-               const RobotQtViewerWorkbenchModeDesc* rhs) {
-                if(lhs->defaultOrder != rhs->defaultOrder) {
-                    return lhs->defaultOrder < rhs->defaultOrder;
-                }
-                return lhs->descriptor.id < rhs->descriptor.id;
-            });
-        for(const RobotQtViewerWorkbenchModeDesc* modeDesc : remaining) {
-            result.enabledModeIds.push_back(modeDesc->descriptor.id);
-        }
-        for(const QString& modeId : result.enabledModeIds) {
-            if(requiredModes.find(modeId) != requiredModes.end()) {
-                result.requiredModeIds.push_back(modeId);
-            }
-        }
-        result.enabledWorkbenchIds = result.enabledModeIds;
-        result.defaultWorkbenchId = result.defaultModeId;
         return result;
     }
 
@@ -710,8 +320,6 @@ namespace robot_qt_viewer
         const RobotQtViewerWorkbenchPackageRegistry& catalog)
     {
         RobotQtViewerPlatformProfile profile;
-        profile.schema = QStringLiteral("smrobot.platform-profile");
-        profile.version = kProductProfileSchemaVersion;
         profile.id = QStringLiteral("base-robot");
         profile.displayName = QStringLiteral(
             "General Robot Simulation Platform (Built-in Fallback)");
@@ -739,7 +347,6 @@ namespace robot_qt_viewer
             !profile.workbenchIds.isEmpty()) {
             profile.defaultWorkbenchId = profile.workbenchIds.front();
         }
-        profile.defaultModeId = profile.defaultWorkbenchId;
         return profile;
     }
 
@@ -755,36 +362,34 @@ namespace robot_qt_viewer
         if(!readJsonObject(path, &object, errorMessage)) {
             return false;
         }
-        bool valid = true;
+        const int version = object.value(QStringLiteral("version")).toInt(-1);
+        if(object.value(QStringLiteral("schema")).toString() !=
+               QStringLiteral("smrobot.platform-profile") ||
+            version != kProfileSchemaVersion) {
+            if(errorMessage != nullptr) {
+                *errorMessage = version == 1
+                    ? QStringLiteral("Product Profile v1 must be migrated to v2: %1")
+                        .arg(QString::fromStdWString(path.wstring()))
+                    : QStringLiteral("Unsupported Product Profile schema or version: %1")
+                        .arg(QString::fromStdWString(path.wstring()));
+            }
+            return false;
+        }
+
         RobotQtViewerPlatformProfile loaded;
         loaded.schema = object.value(QStringLiteral("schema")).toString();
-        loaded.version = object.value(QStringLiteral("version")).toInt(-1);
+        loaded.version = version;
         loaded.id = object.value(QStringLiteral("id")).toString().trimmed();
         loaded.displayName = object.value(QStringLiteral("displayName")).toString().trimmed();
-        loaded.requiredFeatureIds = stringArray(object, QStringLiteral("requiredFeatures"), &valid);
-        loaded.requiredModeIds = stringArray(object, QStringLiteral("requiredModes"), &valid);
-        loaded.optionalModeIds = stringArray(object, QStringLiteral("optionalModes"), &valid);
-        loaded.defaultEnabledOptionalModeIds =
-            stringArray(object, QStringLiteral("defaultEnabledOptionalModes"), &valid);
-        loaded.defaultModeId = object.value(QStringLiteral("defaultMode")).toString().trimmed();
-        loaded.modeOrder = stringArray(object, QStringLiteral("modeOrder"), &valid);
-        loaded.allowUserOverrides = object.value(QStringLiteral("allowUserOverrides")).toBool(true);
-        loaded.workbenchIds = stringArray(object, QStringLiteral("workbenches"), &valid);
-        if(loaded.workbenchIds.isEmpty()) {
-            loaded.workbenchIds = stringArray(object, QStringLiteral("workbenchIds"), &valid);
-        }
-        loaded.defaultWorkbenchId = object.value(QStringLiteral("defaultWorkbench")).toString().trimmed();
-        if(loaded.defaultWorkbenchId.isEmpty()) {
-            loaded.defaultWorkbenchId = object.value(QStringLiteral("defaultMode")).toString().trimmed();
-        }
-        const bool productProfileSchema = loaded.version == kProductProfileSchemaVersion ||
-            !loaded.workbenchIds.isEmpty() || !loaded.defaultWorkbenchId.isEmpty();
-        if(!valid || loaded.schema.isEmpty() || loaded.id.isEmpty() ||
-            loaded.displayName.isEmpty() ||
-            (productProfileSchema ? loaded.defaultWorkbenchId.isEmpty()
-                                  : loaded.defaultModeId.isEmpty())) {
-            if(errorMessage != nullptr) {
-                *errorMessage = QStringLiteral("Platform profile has missing or invalid fields: %1")
+        loaded.defaultWorkbenchId =
+            object.value(QStringLiteral("defaultWorkbench")).toString().trimmed();
+        if(!readUniqueStringArray(
+               object, QStringLiteral("workbenches"), &loaded.workbenchIds, errorMessage) ||
+            !isValidStableId(loaded.id) || loaded.displayName.isEmpty() ||
+            !isValidStableId(loaded.defaultWorkbenchId) ||
+            !loaded.workbenchIds.contains(loaded.defaultWorkbenchId)) {
+            if(errorMessage != nullptr && errorMessage->isEmpty()) {
+                *errorMessage = QStringLiteral("Product Profile has missing or invalid fields: %1")
                     .arg(QString::fromStdWString(path.wstring()));
             }
             return false;
@@ -794,6 +399,37 @@ namespace robot_qt_viewer
             errorMessage->clear();
         }
         return true;
+    }
+
+    bool RobotQtViewerPlatformProfileIo::saveProfile(
+        const std::filesystem::path& path,
+        const RobotQtViewerPlatformProfile& profile,
+        QString* errorMessage)
+    {
+        std::set<QString> uniqueIds;
+        bool validIds = !profile.workbenchIds.isEmpty();
+        for(const QString& workbenchId : profile.workbenchIds) {
+            validIds = validIds && isValidStableId(workbenchId) &&
+                uniqueIds.insert(workbenchId).second;
+        }
+        if(profile.schema != QStringLiteral("smrobot.platform-profile") ||
+            profile.version != kProfileSchemaVersion || !isValidStableId(profile.id) ||
+            profile.displayName.trimmed().isEmpty() || !validIds ||
+            !isValidStableId(profile.defaultWorkbenchId) ||
+            !profile.workbenchIds.contains(profile.defaultWorkbenchId)) {
+            if(errorMessage != nullptr) {
+                *errorMessage = QStringLiteral("Cannot save an invalid Product Profile.");
+            }
+            return false;
+        }
+        QJsonObject object;
+        object.insert(QStringLiteral("schema"), profile.schema);
+        object.insert(QStringLiteral("version"), profile.version);
+        object.insert(QStringLiteral("id"), profile.id);
+        object.insert(QStringLiteral("displayName"), profile.displayName.trimmed());
+        object.insert(QStringLiteral("workbenches"), toJsonArray(profile.workbenchIds));
+        object.insert(QStringLiteral("defaultWorkbench"), profile.defaultWorkbenchId);
+        return writeJsonObject(path, object, QStringLiteral("Product Profile"), errorMessage);
     }
 
     bool RobotQtViewerPlatformProfileIo::loadSelection(
@@ -813,7 +449,7 @@ namespace robot_qt_viewer
         loaded.version = object.value(QStringLiteral("version")).toInt(-1);
         loaded.profileId = object.value(QStringLiteral("profileId")).toString().trimmed();
         if(loaded.schema != QStringLiteral("smrobot.platform-selection") ||
-            loaded.version != kSelectionSchemaVersion || loaded.profileId.isEmpty()) {
+            loaded.version != kSelectionSchemaVersion || !isValidStableId(loaded.profileId)) {
             if(errorMessage != nullptr) {
                 *errorMessage = QStringLiteral("Invalid simulation platform selection: %1")
                     .arg(QString::fromStdWString(path.wstring()));
@@ -833,19 +469,10 @@ namespace robot_qt_viewer
         QString* errorMessage)
     {
         if(selection.schema != QStringLiteral("smrobot.platform-selection") ||
-            selection.version != kSelectionSchemaVersion || selection.profileId.isEmpty()) {
+            selection.version != kSelectionSchemaVersion || !isValidStableId(selection.profileId)) {
             if(errorMessage != nullptr) {
                 *errorMessage = QStringLiteral(
                     "Cannot save an invalid simulation platform selection.");
-            }
-            return false;
-        }
-        std::error_code directoryError;
-        std::filesystem::create_directories(path.parent_path(), directoryError);
-        if(directoryError) {
-            if(errorMessage != nullptr) {
-                *errorMessage = QStringLiteral("Cannot create platform selection directory: %1")
-                    .arg(QString::fromStdString(directoryError.message()));
             }
             return false;
         }
@@ -853,102 +480,8 @@ namespace robot_qt_viewer
         object.insert(QStringLiteral("schema"), selection.schema);
         object.insert(QStringLiteral("version"), selection.version);
         object.insert(QStringLiteral("profileId"), selection.profileId);
-        QSaveFile file(QString::fromStdWString(path.wstring()));
-        if(!file.open(QIODevice::WriteOnly) ||
-            file.write(QJsonDocument(object).toJson(QJsonDocument::Indented)) < 0 ||
-            !file.commit()) {
-            if(errorMessage != nullptr) {
-                *errorMessage = QStringLiteral("Cannot save simulation platform selection: %1")
-                    .arg(file.fileName());
-            }
-            return false;
-        }
-        if(errorMessage != nullptr) {
-            errorMessage->clear();
-        }
-        return true;
-    }
-
-    bool RobotQtViewerPlatformProfileIo::loadOverlay(
-        const std::filesystem::path& path,
-        RobotQtViewerPlatformUserOverlay* overlay,
-        QString* errorMessage)
-    {
-        if(overlay == nullptr) {
-            return false;
-        }
-        std::error_code existsError;
-        if(!std::filesystem::exists(path, existsError)) {
-            *overlay = {};
-            if(errorMessage != nullptr) {
-                errorMessage->clear();
-            }
-            return true;
-        }
-        QJsonObject object;
-        if(!readJsonObject(path, &object, errorMessage)) {
-            return false;
-        }
-        bool valid = true;
-        RobotQtViewerPlatformUserOverlay loaded;
-        loaded.schema = object.value(QStringLiteral("schema")).toString();
-        loaded.version = object.value(QStringLiteral("version")).toInt(-1);
-        loaded.profileId = object.value(QStringLiteral("profileId")).toString().trimmed();
-        loaded.enabledOptionalModeIds =
-            stringArray(object, QStringLiteral("enabledOptionalModes"), &valid);
-        loaded.disabledOptionalModeIds =
-            stringArray(object, QStringLiteral("disabledOptionalModes"), &valid);
-        if(!valid || loaded.schema != QStringLiteral("smrobot.platform-profile-overlay") ||
-            loaded.version != kProfileSchemaVersion || loaded.profileId.isEmpty()) {
-            if(errorMessage != nullptr) {
-                *errorMessage = QStringLiteral("Invalid platform profile overlay: %1")
-                    .arg(QString::fromStdWString(path.wstring()));
-            }
-            return false;
-        }
-        *overlay = loaded;
-        if(errorMessage != nullptr) {
-            errorMessage->clear();
-        }
-        return true;
-    }
-
-    bool RobotQtViewerPlatformProfileIo::saveOverlay(
-        const std::filesystem::path& path,
-        const RobotQtViewerPlatformUserOverlay& overlay,
-        QString* errorMessage)
-    {
-        std::error_code directoryError;
-        std::filesystem::create_directories(path.parent_path(), directoryError);
-        if(directoryError) {
-            if(errorMessage != nullptr) {
-                *errorMessage = QStringLiteral("Cannot create platform overlay directory: %1")
-                    .arg(QString::fromStdString(directoryError.message()));
-            }
-            return false;
-        }
-        QJsonObject object;
-        object.insert(QStringLiteral("schema"), overlay.schema);
-        object.insert(QStringLiteral("version"), overlay.version);
-        object.insert(QStringLiteral("profileId"), overlay.profileId);
-        object.insert(QStringLiteral("enabledOptionalModes"),
-            toJsonArray(overlay.enabledOptionalModeIds));
-        object.insert(QStringLiteral("disabledOptionalModes"),
-            toJsonArray(overlay.disabledOptionalModeIds));
-        QSaveFile file(QString::fromStdWString(path.wstring()));
-        if(!file.open(QIODevice::WriteOnly) ||
-            file.write(QJsonDocument(object).toJson(QJsonDocument::Indented)) < 0 ||
-            !file.commit()) {
-            if(errorMessage != nullptr) {
-                *errorMessage = QStringLiteral("Cannot save platform profile overlay: %1")
-                    .arg(file.fileName());
-            }
-            return false;
-        }
-        if(errorMessage != nullptr) {
-            errorMessage->clear();
-        }
-        return true;
+        return writeJsonObject(
+            path, object, QStringLiteral("simulation platform selection"), errorMessage);
     }
 
     QVector<std::filesystem::path> RobotQtViewerPlatformProfileIo::discoverProfiles(
@@ -964,10 +497,10 @@ namespace robot_qt_viewer
             if(error || !entry.is_regular_file()) {
                 continue;
             }
-            const std::string name = entry.path().filename().generic_u8string();
-            constexpr std::size_t suffixLength = 14;
-            if(name.size() >= suffixLength &&
-                name.compare(name.size() - suffixLength, suffixLength, ".platform.json") == 0) {
+            const std::string fileName = entry.path().filename().u8string();
+            const std::string suffix = ".platform.json";
+            if(fileName.size() >= suffix.size() &&
+                fileName.compare(fileName.size() - suffix.size(), suffix.size(), suffix) == 0) {
                 profiles.push_back(entry.path());
             }
         }

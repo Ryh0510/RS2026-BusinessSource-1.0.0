@@ -10,6 +10,7 @@ class QComboBox;
 class QFrame;
 class QLabel;
 class QLineEdit;
+class QTabWidget;
 class ObjectBindingDiagramWidget;
 class QPushButton;
 class ToolAssetEditorWidget;
@@ -112,6 +113,8 @@ signals:
     void configureAttachmentRequested();
     void importToolAssetRequested();
     void attachToolAssetRequested();
+    void duplicateAssetRequested();
+    void rebindAttachmentRequested();
     void assetSelectionChanged(int index);
     void editToolAssetRequested();
     void attachmentOffsetApplyRequested(const simulation_project::TransformDesc& transform);
@@ -135,19 +138,34 @@ signals:
         bool hasToolAsset,
         const simulation_project::AttachmentAssetDesc& toolAsset);
     void taskCancelRequested();
+    void saveProjectRequested();
     void taskExitRequested();
     void mountTransformPreviewChanged(const simulation_project::TransformDesc& transform);
+    void attachmentOffsetPreviewChanged(const simulation_project::TransformDesc& transform);
+    void attachmentAssetPreviewChanged(const simulation_project::AttachmentAssetDesc& asset);
     void frameVisibilityChanged();
 
 private:
+    enum class TaskMode
+    {
+        Selection,
+        FrameEdit,
+        Binding
+    };
+
     void markTaskDirty();
-    void applyFrameEditorLayout();
+    void applyTaskMode(TaskMode mode, bool newMountFrame = false);
 
     QLabel* m_frameEditorTitleLabel = nullptr;
     QLabel* m_taskStatusLabel = nullptr;
     QPushButton* m_applyTaskButton = nullptr;
     QPushButton* m_cancelTaskButton = nullptr;
+    QPushButton* m_saveProjectButton = nullptr;
     QPushButton* m_exitTaskButton = nullptr;
+    QTabWidget* m_setupTabs = nullptr;
+    QWidget* m_mountBrowseContainer = nullptr;
+    QWidget* m_frameVisibilityContainer = nullptr;
+    QWidget* m_bindingEditorContainer = nullptr;
     QComboBox* m_robotMountCombo = nullptr;
     QLabel* m_robotMountDetailsLabel = nullptr;
     QLabel* m_robotMountNameLabel = nullptr;
@@ -156,7 +174,6 @@ private:
     QPushButton* m_addRobotMountButton = nullptr;
     QPushButton* m_deleteRobotMountButton = nullptr;
     ToolTransformEditorWidget* m_robotMountTransformEditor = nullptr;
-    QLabel* m_attachmentSectionTitle = nullptr;
     QComboBox* m_toolAttachmentCombo = nullptr;
     QLabel* m_toolDetailsLabel = nullptr;
     QPushButton* m_configureToolAttachmentButton = nullptr;
@@ -164,13 +181,13 @@ private:
     QComboBox* m_attachmentAssetCombo = nullptr;
     QCheckBox* m_attachmentEnabledCheck = nullptr;
     ToolTransformEditorWidget* m_attachmentOffsetEditor = nullptr;
-    QPushButton* m_applyAttachmentOffsetButton = nullptr;
-    QLabel* m_assetSectionTitle = nullptr;
     QLabel* m_toolAssetDetailsLabel = nullptr;
     QComboBox* m_toolAssetCombo = nullptr;
     ToolAssetEditorWidget* m_toolAssetEditor = nullptr;
     QPushButton* m_importToolAssetButton = nullptr;
     QPushButton* m_attachToolAssetButton = nullptr;
+    QPushButton* m_duplicateAssetButton = nullptr;
+    QPushButton* m_rebindAttachmentButton = nullptr;
     QPushButton* m_editToolAssetButton = nullptr;
     QLabel* m_frameVisibilitySectionTitle = nullptr;
     QCheckBox* m_showLinkFrameCheck = nullptr;
@@ -179,24 +196,20 @@ private:
     QCheckBox* m_showVisualFrameCheck = nullptr;
     QCheckBox* m_showTcpFrameCheck = nullptr;
     QCheckBox* m_showSensorPreviewCheck = nullptr;
-    QLabel* m_objectBindingSectionTitle = nullptr;
     QFrame* m_bindingSummaryFrame = nullptr;
     QLabel* m_bindingNameTitleLabel = nullptr;
     QLabel* m_bindingNameValueLabel = nullptr;
     ObjectBindingDiagramWidget* m_objectBindingDiagram = nullptr;
     QLabel* m_bindingObjectNameLabel = nullptr;
     QLabel* m_bindingObjectFrameLabel = nullptr;
-    QLabel* m_objectBindingDetailsLabel = nullptr;
-    QComboBox* m_bindingMountCombo = nullptr;
     QComboBox* m_bindingObjectCombo = nullptr;
     QComboBox* m_bindingFrameCombo = nullptr;
     QString m_bindingMountId;
-    bool m_attachmentOffsetDirty = false;
     bool m_taskDirty = false;
+    TaskMode m_taskMode = TaskMode::Selection;
     bool m_mountTransformEditorVisible = false;
     bool m_attachmentInstanceEditorVisible = false;
     bool m_attachmentOffsetEditorVisible = false;
     bool m_toolAssetEditorVisible = false;
-    bool m_objectBindingEditorVisible = false;
     simulation_project::MountedAttachmentDesc m_attachmentEditorAttachment;
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RobotQtViewerLocalization.h"
+#include "RobotQtViewerWorkbenchContribution.h"
 #include "RobotQtViewerWorkbenchPackageRegistry.h"
 
 #include <QString>
@@ -68,6 +69,8 @@ namespace robot_qt_viewer
 
         QStringList discoveredWorkbenchIds() const;
         QStringList loadedWorkbenchIds() const;
+        std::vector<RobotQtViewerWorkbenchRuntimeContributionFactoryDesc>
+            runtimeContributionFactories() const;
         QWidget* createPanel(const QString& workbenchId, QWidget* parent) const;
         bool ownsWorkbench(const QString& workbenchId) const;
 

@@ -6,7 +6,7 @@
 #include "CollisionRequestDocumentFacade.h"
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerViewportPreviewState.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/CollisionModelSelectionIds.h>
 
@@ -38,7 +38,7 @@ namespace robot_qt_viewer
         if(hasVariant &&
             (!m_callbacks.isCollisionModelConfigurationActive ||
                 m_callbacks.isCollisionModelConfigurationActive()) &&
-            m_context.viewportServices() != nullptr) {
+            m_context.collisionViewport() != nullptr) {
             previewVariant(m_widget.currentVariantId(), m_widget.currentVariantSource());
         }
         refreshModelSummary(QString());
@@ -61,7 +61,7 @@ namespace robot_qt_viewer
 
         const CollisionLinkModelVariantCommandResult result =
             CollisionLinkModelVariantCommandController::showVariantOnly(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 m_appServices.selectedRobotId(),
                 m_appServices.selectedLinkName(),
                 variantId);
@@ -140,10 +140,10 @@ namespace robot_qt_viewer
 
     void CollisionRequestWorkbenchController::clearRobotVariantPreview()
     {
-        if(m_context.viewportServices() != nullptr &&
+        if(m_context.collisionViewport() != nullptr &&
             !m_previewRobotId.isEmpty() &&
             !m_previewLinkName.isEmpty()) {
-            m_context.viewportServices()->setVisibleRobotCollisionVariant(
+            m_context.collisionViewport()->setVisibleRobotCollisionVariant(
                 m_previewRobotId,
                 m_previewLinkName,
                 QString());
@@ -155,8 +155,8 @@ namespace robot_qt_viewer
     void CollisionRequestWorkbenchController::clearVariantPreview()
     {
         clearRobotVariantPreview();
-        if(m_context.viewportServices() != nullptr) {
-            m_context.viewportServices()->clearObjectCollisionModelVariantPreview();
+        if(m_context.collisionViewport() != nullptr) {
+            m_context.collisionViewport()->clearObjectCollisionModelVariantPreview();
         }
     }
 
@@ -183,7 +183,7 @@ namespace robot_qt_viewer
         const QString objectId = !attachmentId.isEmpty() ? attachmentId : m_appServices.selectedObjectId();
         const CollisionLinkModelVariantCommandResult result =
             m_documentFacade.useVariantInDetector(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 detectorId,
                 m_appServices.selectedRobotId(),
                 m_appServices.selectedLinkName(),
@@ -218,7 +218,7 @@ namespace robot_qt_viewer
         const QString& source)
     {
         (void)source;
-        if(m_context.viewportServices() == nullptr ||
+        if(m_context.collisionViewport() == nullptr ||
             (m_appServices.selectedRobotId().isEmpty() &&
                 m_appServices.selectedObjectId().isEmpty() &&
                 m_appServices.selectedToolAttachmentId().isEmpty())) {
@@ -262,7 +262,7 @@ namespace robot_qt_viewer
             clearRobotVariantPreview();
         }
 
-        if(m_context.viewportServices()->setVisibleRobotCollisionVariant(
+        if(m_context.collisionViewport()->setVisibleRobotCollisionVariant(
                robotId,
                linkName,
                variantId)) {
@@ -315,7 +315,7 @@ namespace robot_qt_viewer
             showStatus("Select a robot link first.", 3000);
             return;
         }
-        if(m_context.viewportServices() == nullptr) {
+        if(m_context.collisionViewport() == nullptr) {
             return;
         }
 
@@ -327,7 +327,7 @@ namespace robot_qt_viewer
         const bool replaceOriginal = m_widget.replaceOriginal();
         const CollisionLinkModelsCommandResult result =
             m_documentFacade.generateFromVisual(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 selectedRobotId,
                 selectedLinkName,
                 request,
@@ -349,7 +349,7 @@ namespace robot_qt_viewer
             showStatus("Select a robot link first.", 3000);
             return;
         }
-        if(m_context.viewportServices() == nullptr) {
+        if(m_context.collisionViewport() == nullptr) {
             return;
         }
 
@@ -361,7 +361,7 @@ namespace robot_qt_viewer
         const bool replaceOriginal = m_widget.replaceOriginal();
         const CollisionLinkModelsCommandResult result =
             m_documentFacade.generateFromExistingCollision(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 m_appServices.selectedRobotId(),
                 m_appServices.selectedLinkName(),
                 request,
@@ -383,7 +383,7 @@ namespace robot_qt_viewer
             showStatus("Select a robot first.", 3000);
             return;
         }
-        if(m_context.viewportServices() == nullptr) {
+        if(m_context.collisionViewport() == nullptr) {
             return;
         }
 
@@ -397,7 +397,7 @@ namespace robot_qt_viewer
         const bool replaceOriginal = m_widget.replaceOriginal();
         const CollisionLinkModelsCommandResult result =
             m_documentFacade.generateRobotFromExistingCollision(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 selectedRobotId,
                 request,
                 replaceOriginal);
@@ -418,7 +418,7 @@ namespace robot_qt_viewer
             showStatus("Select a robot first.", 3000);
             return;
         }
-        if(m_context.viewportServices() == nullptr) {
+        if(m_context.collisionViewport() == nullptr) {
             return;
         }
 
@@ -428,7 +428,7 @@ namespace robot_qt_viewer
         const bool replaceOriginal = m_widget.replaceOriginal();
         const CollisionLinkModelsCommandResult result =
             m_documentFacade.generateMissingFromVisual(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 selectedRobotId,
                 request,
                 replaceOriginal);
@@ -445,7 +445,7 @@ namespace robot_qt_viewer
 
     void CollisionRequestWorkbenchController::generateCoacd()
     {
-        if(m_context.viewportServices() == nullptr) {
+        if(m_context.collisionViewport() == nullptr) {
             showStatus("Viewport is not available.", 3000);
             return;
         }
@@ -458,13 +458,13 @@ namespace robot_qt_viewer
         QString reloadSource;
         if(!selectedObjectId.isEmpty()) {
             result = m_documentFacade.generateCoacdForObject(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 selectedObjectId);
             reloadSource = QStringLiteral("generateObjectCoacdCollisionModel");
         } else if(!m_appServices.selectedRobotId().isEmpty() &&
             !m_appServices.selectedLinkName().isEmpty()) {
             result = m_documentFacade.generateCoacdForLink(
-                m_context.viewportServices(),
+                m_context.collisionViewport(),
                 m_appServices.selectedRobotId(),
                 m_appServices.selectedLinkName());
             reloadSource = QStringLiteral("generateRobotCoacdCollisionModel");

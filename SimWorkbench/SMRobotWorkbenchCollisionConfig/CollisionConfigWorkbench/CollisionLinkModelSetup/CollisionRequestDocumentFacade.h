@@ -22,7 +22,7 @@ namespace robot_qt_viewer
             CollisionWorkbenchServices& appServices);
 
         CollisionLinkModelVariantCommandResult useVariantInDetector(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& detectorId,
             const QString& robotId,
             const QString& linkName,
@@ -47,36 +47,36 @@ namespace robot_qt_viewer
             const QString& linkName);
 
         CollisionLinkModelsCommandResult generateFromVisual(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& robotId,
             const QString& linkName,
             const CollisionRuntimeProxyRequest& request,
             bool replaceOriginal);
 
         CollisionLinkModelsCommandResult generateFromExistingCollision(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& robotId,
             const QString& linkName,
             const CollisionRuntimeProxyRequest& request,
             bool replaceOriginal);
 
         CollisionLinkModelsCommandResult generateRobotFromExistingCollision(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& robotId,
             const CollisionRuntimeProxyRequest& request,
             bool replaceOriginal);
 
         CollisionLinkModelsCommandResult generateCoacdForLink(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& robotId,
             const QString& linkName);
 
         CollisionLinkModelsCommandResult generateCoacdForObject(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& objectId);
 
         CollisionLinkModelsCommandResult generateMissingFromVisual(
-            RobotQtViewerViewportServices* viewportServices,
+            IRobotQtViewerCollisionViewportPort* viewportServices,
             const QString& robotId,
             const CollisionRuntimeProxyRequest& request,
             bool replaceOriginal);

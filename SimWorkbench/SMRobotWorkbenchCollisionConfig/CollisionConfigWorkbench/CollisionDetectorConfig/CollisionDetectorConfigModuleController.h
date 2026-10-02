@@ -68,6 +68,7 @@ namespace robot_qt_viewer
         void applyDetectorProperties();
         void previewDetectorSelection();
         void showSelectedDetectors();
+        void refreshSelectedDetectorNearest();
         void removeSelectedDetector();
         void addDetectorFromTaskPanel();
         void editSelectedDetector();

@@ -295,6 +295,8 @@ void CollisionWorkbenchPanel::connectChildSignals()
         this, &CollisionWorkbenchPanel::editDetectorRequested);
     connect(m_detectorsWidget, &CollisionDetectorsWidget::showSelectedRequested,
         this, &CollisionWorkbenchPanel::showSelectedDetectorsRequested);
+    connect(m_detectorsWidget, &CollisionDetectorsWidget::refreshNearestRequested,
+        this, &CollisionWorkbenchPanel::refreshDetectorNearestRequested);
     connect(m_detectorsWidget, &CollisionDetectorsWidget::removeDetectorRequested,
         this, &CollisionWorkbenchPanel::removeDetectorRequested);
     connect(m_detectorsWidget, &CollisionDetectorsWidget::bindDraftSetsRequested,

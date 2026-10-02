@@ -44,7 +44,6 @@ namespace robot_qt_viewer
 
         m_context.projectSession().resetNew();
         m_context.documentController().publishProjectOpened(sourceId);
-        m_context.documentController().publishDocumentChanged(sourceId, false);
 
         result.success = true;
         result.shouldReloadViewport = true;
@@ -153,7 +152,6 @@ namespace robot_qt_viewer
 
         const auto publishStart = std::chrono::steady_clock::now();
         m_context.documentController().publishProjectOpened(sourceId);
-        m_context.documentController().publishDirtyChanged(sourceId);
         printProfileRow("ProjectSession publish", elapsedMilliseconds(publishStart), sourceId);
 
         result.success = true;

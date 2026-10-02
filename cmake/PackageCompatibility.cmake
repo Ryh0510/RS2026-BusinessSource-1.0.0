@@ -82,7 +82,7 @@ endfunction()
 
 function(rs_install_compat_package NEW_PACKAGE LEGACY_PACKAGE)
     set(options)
-    set(oneValueArgs)
+    set(oneValueArgs INSTALL_COMPONENT)
     set(multiValueArgs COMPONENTS)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -95,6 +95,10 @@ function(rs_install_compat_package NEW_PACKAGE LEGACY_PACKAGE)
     set(LEGACY_PACKAGE "${LEGACY_PACKAGE}")
     set(_compat_config "${CMAKE_CURRENT_BINARY_DIR}/${NEW_PACKAGE}Config.cmake")
     set(_compat_version "${CMAKE_CURRENT_BINARY_DIR}/${NEW_PACKAGE}ConfigVersion.cmake")
+    set(_install_component_args)
+    if(ARG_INSTALL_COMPONENT)
+        list(APPEND _install_component_args COMPONENT "${ARG_INSTALL_COMPONENT}")
+    endif()
 
     configure_package_config_file(
         "${PROJECT_SOURCE_DIR}/cmake/CompatibilityPackageConfig.cmake.in"
@@ -112,11 +116,13 @@ function(rs_install_compat_package NEW_PACKAGE LEGACY_PACKAGE)
         "${_compat_config}"
         "${_compat_version}"
         DESTINATION "${NEW_PACKAGE}/lib/cmake"
+        ${_install_component_args}
     )
 
     install(FILES
         "${_compat_config}"
         "${_compat_version}"
         DESTINATION "${NEW_PACKAGE}/lib/cmake/${NEW_PACKAGE}"
+        ${_install_component_args}
     )
 endfunction()

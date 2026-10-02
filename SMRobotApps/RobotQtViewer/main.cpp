@@ -5,6 +5,7 @@
 
 #include <CustomLog/CustomLog.h>
 #include <SimulationProject/RuntimePaths.h>
+#include <data_path.h>
 
 #include <QApplication>
 #include <QByteArray>
@@ -24,7 +25,6 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -117,11 +117,10 @@ namespace
             LOG_WARNING("rs2026") << diagnostic.toStdString();
         }
 
-        context.profilesDirectory =
-            simulation_project::RuntimePaths::configRoot() / "platforms";
-        context.selectionPath =
-            simulation_project::RuntimePaths::configRoot() / "simulation-platform.json";
-
+        const std::filesystem::path configRoot =
+            simulation_project::RuntimePaths::applicationRoot() / "config";
+        context.profilesDirectory = configRoot / "platforms";
+        context.selectionPath = configRoot / "simulation-platform.json";
         const std::string requestedArgument =
             argumentValue(argc, argv, "--platform-profile");
         const bool hasExplicitProfile = !requestedArgument.empty();
@@ -168,8 +167,8 @@ namespace
                     profilePath, &context.profile, &profileError);
             }
             if(context.profile.id.isEmpty()) {
-                context.profile = robot_qt_viewer::makeRobotQtViewerBuiltInBaseProfile(
-                    context.catalog);
+                context.profile =
+                    robot_qt_viewer::makeRobotQtViewerBuiltInBaseProfile(context.catalog);
                 LOG_WARNING("rs2026")
                     << "Shipped base-robot Product Profile is unavailable; using the built-in fallback. "
                     << profileError.toStdString();
@@ -282,6 +281,13 @@ namespace
 
 int main(int argc, char* argv[])
 {
+    // Preserve explicit/deployed data roots; use the configured source data only
+    // when an externally built SDK still points at its original build machine.
+    if(!qEnvironmentVariableIsSet("SMROBOT_DATA_ROOT") &&
+        !std::filesystem::is_directory(simulation_project::RuntimePaths::dataRoot()) &&
+        std::filesystem::is_directory(std::filesystem::u8path(DATA_PATH))) {
+        qputenv("SMROBOT_DATA_ROOT", QByteArray(DATA_PATH));
+    }
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QSurfaceFormat format;
@@ -289,6 +295,7 @@ int main(int argc, char* argv[])
     format.setProfile(QSurfaceFormat::CoreProfile);
     format.setDepthBufferSize(24);
     format.setStencilBufferSize(8);
+    format.setSamples(4);
     QSurfaceFormat::setDefaultFormat(format);
 
     QApplication app(argc, argv);
@@ -316,14 +323,17 @@ int main(int argc, char* argv[])
         PlatformStartupContext platform = loadPlatformStartupContext(argc, argv);
         LOG_INFO("rs2026") << "Simulation platform profile: id="
             << platform.profile.id.toStdString()
-            << ", workbenches=" << platform.composition.enabledWorkbenchIds.join(',').toStdString();
+            << ", workbenches="
+            << platform.composition.enabledWorkbenchIds.join(',').toStdString();
+        std::unique_ptr<robot_qt_viewer::RobotQtViewerWorkbenchPluginLoader> pluginLoader =
+            std::move(platform.pluginLoader);
         MainWindow window(
             std::move(platform.catalog),
             std::move(platform.profile),
             std::move(platform.composition),
             std::move(platform.profilesDirectory),
             std::move(platform.selectionPath),
-            platform.pluginLoader.get(),
+            pluginLoader.get(),
             QString::fromUtf8(argumentValue(argc, argv, "--language").c_str()));
         window.resize(1760, 920);
         window.setWindowIcon(QApplication::windowIcon());
@@ -351,6 +361,10 @@ int main(int argc, char* argv[])
                 hasArgument(argc, argv, "--profile-set-generated-current");
             const std::string profileSaveProject =
                 argumentValue(argc, argv, "--profile-save-project");
+            const std::string profileEnvironment =
+                argumentValue(argc, argv, "--profile-environment");
+            const std::string profileScreenshot =
+                argumentValue(argc, argv, "--profile-screenshot");
             QTimer::singleShot(
                 0,
                 &window,
@@ -361,7 +375,9 @@ int main(int argc, char* argv[])
                  enableCollisionAfterLoad,
                  profileGenerateObjectCoacd,
                  profileSetGeneratedCurrent,
-                 profileSaveProject]() {
+                 profileSaveProject,
+                 profileEnvironment,
+                 profileScreenshot]() {
                 window.openProjectPathForProfiling(
                     std::filesystem::path(profileProject),
                     exitDelayMs,
@@ -369,7 +385,9 @@ int main(int argc, char* argv[])
                     enableCollisionAfterLoad,
                     QString::fromStdString(profileGenerateObjectCoacd),
                     profileSetGeneratedCurrent,
-                    std::filesystem::path(profileSaveProject));
+                    std::filesystem::path(profileSaveProject),
+                    QString::fromStdString(profileEnvironment),
+                    std::filesystem::path(profileScreenshot));
             });
         }
 

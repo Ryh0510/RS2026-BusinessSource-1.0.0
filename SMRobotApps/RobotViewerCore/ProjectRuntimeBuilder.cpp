@@ -10,10 +10,11 @@
 #include <RenderCore/PointCloudVertex.h>
 #include <RobotIO/IRobotLoader.h>
 #include <SensorCore/PointCloudProcessing.h>
-#include <SensorSimulation/PcdPointCloudLoader.h>
+#include <SensorCore/PcdPointCloudLoader.h>
 #include <SceneCore/SceneGraph.h>
 #include <SimulationProject/CollisionModelSelectionIds.h>
 #include <SimulationProject/RuntimePaths.h>
+#include <SimulationRuntime/ProjectRuntimeTypes.h>
 #include <Utility/MathConvert.hpp>
 #include <data_path.h>
 
@@ -86,7 +87,7 @@ namespace
         double renderBuildMs = 0.0;
         double visualSetupMs = 0.0;
         double meshConvertMs = 0.0;
-        double fclBuildMs = 0.0;
+        double geometryBuildMs = 0.0;
         double collisionSetupMs = 0.0;
         double graphRegisterMs = 0.0;
         double totalMs = 0.0;
@@ -439,8 +440,8 @@ namespace
                 " indices=" + std::to_string(profile.collisionIndices));
         logObjectProfileRow(
             objectId,
-            "FCL BVH build",
-            profile.fclBuildMs,
+            "Collision geometry build",
+            profile.geometryBuildMs,
             !profile.collisionBuildRequested
                 ? "not-requested"
                 : (profile.collisionGeometryBuilt
@@ -604,7 +605,7 @@ namespace
         request.shape = shape;
         const CollisionGeometryBuildResult result = CollisionGeometryBuilder::build(request);
         profile.collisionCacheHit = result.metrics.cacheHit;
-        profile.fclBuildMs = result.metrics.cacheHit ? 0.0 : result.metrics.fclBuildMs;
+        profile.geometryBuildMs = result.metrics.cacheHit ? 0.0 : result.metrics.totalMs;
         profile.collisionVertices = shape.vertices.size();
         profile.collisionIndices = shape.indices.size();
         profile.collisionGeometryBuilt = result.success();
@@ -737,9 +738,6 @@ namespace
         request.context.label = shape.label;
         request.context.source = shape.source;
         request.shape = shape;
-        if(request.shape.type == CollisionShapeType::Capsule) {
-            request.shape.type = CollisionShapeType::Cylinder;
-        }
         return CollisionGeometryBuilder::build(request).geometry;
     }
 
@@ -1438,12 +1436,12 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
     const std::filesystem::path cloudPath =
         resolveRequiredAssetPath(assetResolveContext, pointCloudDesc.sourcePath);
 
-    sensorsimulation::PcdPointCloudLoader loader;
-    sensorsimulation::PcdLoadOptions loadOptions;
+    sensorcore::PcdPointCloudLoader loader;
+    sensorcore::PcdLoadOptions loadOptions;
     loadOptions.scale = pointCloudDesc.scale;
     loadOptions.maxPoints = static_cast<std::size_t>(std::max(0, pointCloudDesc.visualization.maxRenderPoints));
 
-    sensorsimulation::PcdLoadResult loadResult = loader.load(pathToUtf8(cloudPath), loadOptions);
+    sensorcore::PcdLoadResult loadResult = loader.load(pathToUtf8(cloudPath), loadOptions);
     if(!loadResult.success) {
         throw std::runtime_error("Failed to load point cloud '" + pointCloudDesc.id + "': " + loadResult.error);
     }
@@ -1519,6 +1517,79 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
         }
         LOG_DEBUG("rs2026") << "Point cloud collision objects registered: pointCloud=" << pointCloudDesc.id
             << ", collisionObjects=" << runtime.collisionObjects.size();
+        updatePointCloudPose(runtime);
+    }
+
+    return runtime;
+}
+
+RuntimeSceneObject ProjectRuntimeBuilder::buildPointCloud(
+    simulation_runtime::RuntimePointCloud& pointCloudRuntime,
+    const simulation_project::PointCloudDesc& pointCloudDesc,
+    scenecore::SceneGraph& graph)
+{
+    RuntimeSceneObject runtime;
+    runtime.simulationPointCloud = &pointCloudRuntime;
+    runtime.runtimeId = pointCloudRuntime.runtimeId;
+    runtime.documentId = pointCloudRuntime.documentId;
+    runtime.name = pointCloudRuntime.name;
+    runtime.objectType = "pointCloud";
+    runtime.transform = pointCloudRuntime.worldTransform;
+    runtime.collisionEnabled = pointCloudRuntime.collisionEnabled;
+
+    updatePointCloudBounds(runtime, pointCloudRuntime.cloud);
+
+    runtime.pointCloudNode = std::make_shared<scenecore::PointCloudNode>(pointCloudRuntime.documentId);
+    runtime.pointCloudNode->upload(
+        makePointCloudVertices(pointCloudRuntime.cloud, pointCloudDesc.visualization.defaultColor));
+    runtime.pointCloudBasePointSize = static_cast<float>(pointCloudRuntime.pointSize);
+    runtime.pointCloudNode->setPointSize(runtime.pointCloudBasePointSize);
+    runtime.pointCloudNode->setVisible(pointCloudRuntime.visible);
+    updatePointCloudPose(runtime);
+
+    graph.root()->addChild(runtime.pointCloudNode);
+    graph.registerNode(runtime.pointCloudNode);
+
+    if(runtime.collisionEnabled) {
+        collision::PointCloudCollisionOptions collisionOptions;
+        collisionOptions.voxelSize = pointCloudRuntime.collisionVoxelSize;
+        collisionOptions.inflationMargin = pointCloudRuntime.collisionInflationMargin;
+        collisionOptions.maxVoxelBoxes = pointCloudRuntime.maxCollisionProxyBoxes;
+
+        collision::PointCloudCollisionBuilder builder;
+        collision::PointCloudCollisionBuildResult buildResult =
+            builder.buildVoxelBoxes(
+                makePointCloudCollisionPoints(pointCloudRuntime.cloud),
+                collisionOptions);
+        if(!buildResult.success) {
+            throw std::runtime_error(
+                "Failed to build point cloud collision proxy '" +
+                pointCloudRuntime.documentId + "': " + buildResult.error);
+        }
+
+        for(std::size_t index = 0; index < buildResult.geometries.size(); ++index) {
+            if(!buildResult.geometries[index]) {
+                continue;
+            }
+
+            RuntimeSceneCollisionObject collisionRuntime;
+            collisionRuntime.collisionShape = buildResult.shapes[index];
+            collisionRuntime.modelId = "pointCloudProxy";
+            collisionRuntime.currentModel = true;
+            collisionRuntime.collisionShape.modelId = collisionRuntime.modelId;
+            collisionRuntime.collisionShape.currentModel = true;
+            collisionRuntime.localTransform = buildResult.shapes[index].localTransform;
+            if(collisionRuntime.collisionShape.label.empty()) {
+                collisionRuntime.collisionShape.label = pointCloudRuntime.documentId;
+            }
+
+            const uint64_t objectId =
+                pointCloudRuntime.runtimeId * 100000ull + static_cast<uint64_t>(index + 1);
+            collisionRuntime.collisionObject = std::make_shared<collision::CollisionObject>(
+                objectId,
+                buildResult.geometries[index]);
+            runtime.collisionObjects.push_back(std::move(collisionRuntime));
+        }
         updatePointCloudPose(runtime);
     }
 

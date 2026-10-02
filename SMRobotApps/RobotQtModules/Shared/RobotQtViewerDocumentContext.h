@@ -15,6 +15,12 @@ namespace robot_qt_viewer
     class RobotQtViewerSelectionModel;
     class RobotQtViewerViewportPreviewState;
     class RobotQtViewerViewportServices;
+    class IRobotQtViewerMotionPlanningViewportPort;
+    class IRobotQtViewerAssemblyViewportPort;
+    class IRobotQtViewerCollisionViewportPort;
+    class IRobotQtViewerDocumentViewportPort;
+    class IRobotQtViewerSelectionViewportPort;
+    class IRobotQtViewerVisualizationViewportPort;
 
     class RobotQtViewerDocumentContext
     {
@@ -40,8 +46,20 @@ namespace robot_qt_viewer
         const RobotQtViewerEventHub& eventHub() const;
         RobotQtViewerOperationStatusStore& operationStatusStore();
         const RobotQtViewerOperationStatusStore& operationStatusStore() const;
+        void setMotionPlanningViewport(IRobotQtViewerMotionPlanningViewportPort* viewport);
+        IRobotQtViewerMotionPlanningViewportPort* motionPlanningViewport() const;
         void setViewportServices(RobotQtViewerViewportServices* viewportServices);
         RobotQtViewerViewportServices* viewportServices() const;
+        void setDocumentViewport(IRobotQtViewerDocumentViewportPort* viewport);
+        IRobotQtViewerDocumentViewportPort* documentViewport() const;
+        void setSelectionViewport(IRobotQtViewerSelectionViewportPort* viewport);
+        IRobotQtViewerSelectionViewportPort* selectionViewport() const;
+        void setAssemblyViewport(IRobotQtViewerAssemblyViewportPort* viewport);
+        IRobotQtViewerAssemblyViewportPort* assemblyViewport() const;
+        void setCollisionViewport(IRobotQtViewerCollisionViewportPort* viewport);
+        IRobotQtViewerCollisionViewportPort* collisionViewport() const;
+        void setVisualizationViewport(IRobotQtViewerVisualizationViewportPort* viewport);
+        IRobotQtViewerVisualizationViewportPort* visualizationViewport() const;
 
     private:
         simulation_project::ProjectSession& m_session;
@@ -50,6 +68,12 @@ namespace robot_qt_viewer
         RobotQtViewerViewportPreviewState& m_viewportPreviewState;
         RobotQtViewerEventHub& m_eventHub;
         RobotQtViewerOperationStatusStore& m_operationStatusStore;
+        IRobotQtViewerMotionPlanningViewportPort* m_motionPlanningViewport = nullptr;
         RobotQtViewerViewportServices* m_viewportServices = nullptr;
+        IRobotQtViewerDocumentViewportPort* m_documentViewport = nullptr;
+        IRobotQtViewerSelectionViewportPort* m_selectionViewport = nullptr;
+        IRobotQtViewerAssemblyViewportPort* m_assemblyViewport = nullptr;
+        IRobotQtViewerCollisionViewportPort* m_collisionViewport = nullptr;
+        IRobotQtViewerVisualizationViewportPort* m_visualizationViewport = nullptr;
     };
 }

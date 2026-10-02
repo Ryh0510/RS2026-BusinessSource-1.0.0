@@ -10,10 +10,10 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
+#include <QStyle>
 #include <QStringList>
 #include <QVBoxLayout>
 
@@ -107,7 +107,7 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
 
     motionLayout->addWidget(robot_qt_viewer::makePanelTitle("Robot Selection", this));
     m_robotCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_robotCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_robotCombo);
     m_robotCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     connect(m_robotCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, [this]() {
@@ -183,25 +183,21 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
     autoLayout->setColumnStretch(2, 1);
     motionLayout->addLayout(autoLayout);
 
-    m_jointScrollArea = new QScrollArea(this);
-    robot_qt_viewer::makeHorizontallyCompressible(m_jointScrollArea);
-    m_jointScrollArea->setWidgetResizable(true);
-    m_jointScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_jointRowsWidget = new QWidget(m_jointScrollArea);
+    m_jointRowsWidget = new QWidget(this);
+    robot_qt_viewer::makeHorizontallyCompressible(m_jointRowsWidget);
     m_jointRowsLayout = new QVBoxLayout(m_jointRowsWidget);
     m_jointRowsLayout->setContentsMargins(8, 8, 8, 8);
     m_jointRowsLayout->setSpacing(6);
     m_jointRowsLayout->addStretch(1);
     m_jointRowsWidget->setLayout(m_jointRowsLayout);
-    m_jointScrollArea->setWidget(m_jointRowsWidget);
-    motionLayout->addWidget(m_jointScrollArea, 1);
+    motionLayout->addWidget(m_jointRowsWidget);
 
     motionLayout->addWidget(robot_qt_viewer::makePanelTitle("Trajectory Execution", this));
     auto* trajectoryLayout = new QGridLayout();
     trajectoryLayout->setContentsMargins(0, 0, 0, 0);
     trajectoryLayout->setSpacing(6);
     m_trajectoryCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_trajectoryCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_trajectoryCombo);
     trajectoryLayout->addWidget(m_trajectoryCombo, 0, 0, 1, 3);
     m_trajectoryLoadButton = new QPushButton("Load", this);
     m_trajectoryStartButton = new QPushButton("Start", this);
@@ -258,7 +254,7 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
     robot_qt_viewer::configureInspectorGrid(collisionControlLayout);
 
     m_collisionDetectorCombo = new QComboBox(this);
-    robot_qt_viewer::configureInspectorCombo(m_collisionDetectorCombo);
+    robot_qt_viewer::configureInspectorEntityCombo(m_collisionDetectorCombo);
     m_collisionDetectorCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     connect(m_collisionDetectorCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
         this, [this]() {
@@ -269,8 +265,9 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
         });
     collisionControlLayout->addWidget(m_collisionDetectorCombo, 0, 0, 1, 2);
 
-    m_collisionMonitoringButton = new QPushButton("Enable Detection", this);
+    m_collisionMonitoringButton = new QPushButton("Enable Runtime Detection", this);
     m_collisionMonitoringButton->setCheckable(true);
+    m_collisionMonitoringButton->setObjectName(QStringLiteral("robotRunCollisionMonitoringButton"));
     m_collisionMonitoringButton->setMinimumHeight(32);
     m_collisionMonitoringButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_collisionMonitoringButton->setToolTip("Enable collision detection for Robot Run.");
@@ -279,7 +276,8 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
         robot_qt_viewer::UiActionRole::Accent);
     connect(m_collisionMonitoringButton, &QPushButton::toggled, this, [this](bool checked) {
         if(m_collisionMonitoringButton != nullptr) {
-            m_collisionMonitoringButton->setText(checked ? "Disable Detection" : "Enable Detection");
+            m_collisionMonitoringButton->setText(
+                checked ? "Disable Runtime Detection" : "Enable Runtime Detection");
             m_collisionMonitoringButton->setToolTip(checked
                 ? "Disable collision queries for Robot Run."
                 : "Enable collision queries for Robot Run.");
@@ -316,9 +314,31 @@ MotionControlWidget::MotionControlWidget(QWidget* parent)
         }
     });
     collisionControlLayout->addWidget(m_collisionGeometryButton, 2, 0, 1, 2);
+
+    m_collisionDetailsButton = new QPushButton("Result Details", this);
+    m_collisionDetailsButton->setObjectName(QStringLiteral("robotRunCollisionDetailsButton"));
+    m_collisionDetailsButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    m_collisionDetailsButton->setToolTip("Open contact, nearest-point, and timing results.");
+    robot_qt_viewer::configureActionButton(
+        m_collisionDetailsButton,
+        robot_qt_viewer::UiActionRole::Standard);
+    connect(m_collisionDetailsButton, &QPushButton::clicked,
+        this, &MotionControlWidget::collisionDetailsRequested);
+    collisionControlLayout->addWidget(m_collisionDetailsButton, 3, 0, 1, 2);
     collisionControlLayout->setColumnStretch(0, 1);
     collisionControlLayout->setColumnStretch(1, 1);
     motionLayout->addLayout(collisionControlLayout);
+
+    m_collisionRuntimeStatus = new QLabel("Runtime queries: Off", this);
+    m_collisionRuntimeStatus->setObjectName(QStringLiteral("robotRunCollisionRuntimeStatus"));
+    m_collisionRuntimeStatus->setWordWrap(true);
+    robot_qt_viewer::makeHorizontallyCompressible(m_collisionRuntimeStatus);
+    motionLayout->addWidget(m_collisionRuntimeStatus);
+
+    m_collisionResultsWidget = new CollisionResultsWidget(this);
+    m_collisionResultsWidget->setObjectName(QStringLiteral("robotRunCollisionResultSummary"));
+    m_collisionResultsWidget->setDisplayMode(CollisionResultsWidget::DisplayMode::SummaryOnly);
+    motionLayout->addWidget(m_collisionResultsWidget);
 
     setMotionActionsEnabled(false);
     setCollisionMonitoringAvailable(false);
@@ -583,7 +603,8 @@ void MotionControlWidget::setCollisionMonitoringChecked(bool checked)
 
     QSignalBlocker blocker(m_collisionMonitoringButton);
     m_collisionMonitoringButton->setChecked(checked);
-    m_collisionMonitoringButton->setText(checked ? "Disable Detection" : "Enable Detection");
+    m_collisionMonitoringButton->setText(
+        checked ? "Disable Runtime Detection" : "Enable Runtime Detection");
     m_collisionMonitoringButton->setToolTip(checked
         ? "Disable collision detection and show motion only."
         : "Enable collision detection for Robot Run.");
@@ -595,6 +616,10 @@ void MotionControlWidget::setCollisionMonitoringChecked(bool checked)
             m_collisionGeometryButton->setText("Show Collision Model");
             m_collisionGeometryButton->setToolTip("Show collision geometry for the active robot run detector.");
         }
+    }
+    if(m_collisionRuntimeStatus != nullptr) {
+        m_collisionRuntimeStatus->setText(
+            checked ? "Runtime queries: On" : "Runtime queries: Off");
     }
 }
 
@@ -619,6 +644,12 @@ void MotionControlWidget::setCollisionMonitoringAvailable(bool available)
             m_collisionGeometryButton->setChecked(false);
             m_collisionGeometryButton->setText("Show Collision Model");
         }
+    }
+    if(m_collisionDetailsButton != nullptr) {
+        m_collisionDetailsButton->setEnabled(available);
+    }
+    if(m_collisionRuntimeStatus != nullptr && !available) {
+        m_collisionRuntimeStatus->setText("Runtime queries: No detector");
     }
     if(m_collisionResultsWidget != nullptr) {
         m_collisionResultsWidget->setEnabled(available);
@@ -747,4 +778,3 @@ bool MotionControlWidget::isRevoluteJoint(const QString& jointType) const
     return jointType.compare("revolute", Qt::CaseInsensitive) == 0 ||
         jointType.compare("continuous", Qt::CaseInsensitive) == 0;
 }
-

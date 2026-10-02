@@ -5,6 +5,7 @@ set(TARGET_NAME CollisionDetectorConfig)
 set(SOURCES
     CollisionConfigWorkbenchLifecycle.cpp
     CollisionConfigWorkbenchLifecycle.h
+    CollisionConfigWorkbenchShellPort.h
     CollisionDetectorCommandController.cpp
     CollisionDetectorCommandController.h
     CollisionDetectorConfigModuleController.cpp

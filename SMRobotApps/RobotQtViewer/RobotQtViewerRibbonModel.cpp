@@ -29,6 +29,7 @@ namespace robot_qt_viewer
         sceneEditGroup.actions = {
             { QStringLiteral("importRobot"), QStringLiteral("list-add"), QStyle::SP_ComputerIcon },
             { QStringLiteral("importObject"), QStringLiteral("insert-object"), QStyle::SP_DirIcon },
+            { QStringLiteral("addCamera"), QStringLiteral("camera-photo"), QStyle::SP_FileDialogDetailedView },
             { QStringLiteral("importPointCloud"), QStringLiteral("document-import"), QStyle::SP_FileIcon },
             { QStringLiteral("deleteSelectedItem"), QStringLiteral("edit-delete"), QStyle::SP_TrashIcon }
         };
@@ -37,7 +38,7 @@ namespace robot_qt_viewer
         robotEditGroup.groupId = QStringLiteral("robotEdit");
         robotEditGroup.title = texts.robotEditGroup;
         robotEditGroup.actions = {
-            { QStringLiteral("toolSetupWorkbench"), QStringLiteral("preferences-system"), QStyle::SP_DialogApplyButton }
+            { QStringLiteral("addLinkMount"), QStringLiteral("preferences-system"), QStyle::SP_DialogApplyButton }
         };
 
         RobotQtViewerRibbonGroupSpec viewGroup;
@@ -53,6 +54,7 @@ namespace robot_qt_viewer
         modeGroup.title = texts.workbenchGroup;
         const QStringList defaultWorkbenchOrder = {
             QStringLiteral("projectAssemblyWorkbench"),
+            QStringLiteral("toolSetupWorkbench"),
             QStringLiteral("collisionConfigWorkbench"),
             QStringLiteral("robotRunWorkbench"),
             QStringLiteral("motionPlanningWorkbench"),
@@ -64,6 +66,10 @@ namespace robot_qt_viewer
             if(actionId == QStringLiteral("projectAssemblyWorkbench")) {
                 return RobotQtViewerRibbonActionSpec{
                     actionId, QStringLiteral("view-list-details"), QStyle::SP_FileDialogDetailedView };
+            }
+            if(actionId == QStringLiteral("toolSetupWorkbench")) {
+                return RobotQtViewerRibbonActionSpec{
+                    actionId, QStringLiteral("preferences-system"), QStyle::SP_DialogApplyButton };
             }
             if(actionId == QStringLiteral("collisionConfigWorkbench")) {
                 return RobotQtViewerRibbonActionSpec{
@@ -85,14 +91,23 @@ namespace robot_qt_viewer
                 return RobotQtViewerRibbonActionSpec{
                     actionId, QStringLiteral("view-statistics"), QStyle::SP_FileDialogInfoView };
             }
+            if(actionId == QStringLiteral("digitalTwinWorkbench")) {
+                return RobotQtViewerRibbonActionSpec{
+                    actionId, QStringLiteral("network-connect"), QStyle::SP_ComputerIcon };
+            }
             return RobotQtViewerRibbonActionSpec{
-                actionId, QStringLiteral("network-connect"), QStyle::SP_ComputerIcon };
+                actionId, QStringLiteral("applications-engineering"), QStyle::SP_FileIcon };
         };
         const QStringList& requestedOrder = workbenchActionOrder.isEmpty()
             ? defaultWorkbenchOrder
             : workbenchActionOrder;
+        QStringList renderedActionIds;
         for(const QString& actionId : requestedOrder) {
+            if(actionId.isEmpty() || renderedActionIds.contains(actionId)) {
+                continue;
+            }
             modeGroup.actions.push_back(workbenchAction(actionId));
+            renderedActionIds.push_back(actionId);
         }
 
         homePage.groups = { projectGroup, modeGroup, sceneEditGroup, robotEditGroup, viewGroup };

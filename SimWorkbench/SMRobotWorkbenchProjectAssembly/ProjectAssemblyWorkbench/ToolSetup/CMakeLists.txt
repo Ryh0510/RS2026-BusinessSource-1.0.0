@@ -8,8 +8,15 @@ set(SOURCES
     ToolSetupAppServices.h
     ToolSetupModuleController.cpp
     ToolSetupModuleController.h
+    ToolSetupAttachmentDefinitionTaskController.cpp
+    ToolSetupInstalledDeviceTaskController.cpp
+    ToolSetupMountFrameTaskController.cpp
+    ToolSetupObjectBindingTaskController.cpp
+    ToolSetupTaskSessionCoordinator.cpp
+    ToolSetupTaskSupport.cpp
     ToolSetupWorkbenchLifecycle.cpp
     ToolSetupWorkbenchLifecycle.h
+    ToolSetupWorkbenchShellPort.h
     ToolSetupViewModelBuilder.cpp
     ToolSetupViewModelBuilder.h
     ToolSetupWidget.cpp

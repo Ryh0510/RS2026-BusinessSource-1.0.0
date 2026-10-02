@@ -3,23 +3,37 @@
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
 #include "RobotQtViewerSelectionModel.h"
+#include "RobotQtViewerViewportPorts.h"
 #include "RobotQtViewerViewportServices.h"
 #include "RobotQtViewerViewportPreviewState.h"
+#include "RobotQtWidgetUtils.h"
 #include "SceneExplorerViewModelBuilder.h"
 #include "SceneSelectionController.h"
 #include "SceneExplorerTaskWidget.h"
 #include "SceneExplorerWidget.h"
 #include "SceneEntityWorkflowController.h"
+#include "ToolTransformEditorWidget.h"
 
 #include <SimulationProject/ProjectDocumentService.h>
 #include <SimulationProject/ProjectSession.h>
 
 #include <QAction>
 #include <QByteArray>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QTabWidget>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QVBoxLayout>
 
 #include <cmath>
 #include <algorithm>
@@ -29,6 +43,148 @@ namespace robot_qt_viewer
 {
     namespace
     {
+        class ProjectCameraDefinitionDialog final : public QDialog
+        {
+        public:
+            ProjectCameraDefinitionDialog(
+                const simulation_project::ProjectDocument& document,
+                QWidget* parent)
+                : QDialog(parent)
+            {
+                setWindowTitle(QStringLiteral("Add Camera Definition"));
+                setMinimumSize(540, 560);
+
+                auto* root = new QVBoxLayout(this);
+                auto* definitionForm = new QFormLayout();
+                m_nameEdit = new QLineEdit(QStringLiteral("Camera"), this);
+                m_kindCombo = new QComboBox(this);
+                m_kindCombo->addItem(QStringLiteral("Virtual Camera (no geometry)"), false);
+                m_kindCombo->addItem(QStringLiteral("Camera With Geometry"), true);
+                configureInspectorCombo(m_kindCombo);
+                m_geometryCombo = new QComboBox(this);
+                for(const simulation_project::SceneObjectDesc& object : document.objects) {
+                    if(object.sourcePath.empty()) {
+                        continue;
+                    }
+                    const QString name = QString::fromStdString(
+                        object.name.empty() ? object.id : object.name);
+                    m_geometryCombo->addItem(name, QString::fromStdString(object.id));
+                    m_geometryCombo->setItemData(
+                        m_geometryCombo->count() - 1,
+                        QString::fromStdString(object.sourcePath),
+                        Qt::ToolTipRole);
+                }
+                if(m_geometryCombo->count() == 0) {
+                    m_geometryCombo->addItem(QStringLiteral("No project geometry available"));
+                    m_geometryCombo->setToolTip(QStringLiteral(
+                        "Import an object first, or create a virtual Camera without geometry."));
+                }
+                configureInspectorEntityCombo(m_geometryCombo);
+                m_geometryCombo->setEnabled(false);
+                configureInspectorForm(definitionForm);
+                definitionForm->addRow(QStringLiteral("Camera name"), m_nameEdit);
+                definitionForm->addRow(QStringLiteral("Definition type"), m_kindCombo);
+                definitionForm->addRow(QStringLiteral("Geometry source"), m_geometryCombo);
+                root->addLayout(definitionForm);
+
+                auto* tabs = new QTabWidget(this);
+                auto* imagingPage = new QWidget(tabs);
+                auto* imagingForm = new QFormLayout(imagingPage);
+                m_widthSpin = new QSpinBox(imagingPage);
+                m_widthSpin->setRange(1, 16384);
+                m_widthSpin->setValue(640);
+                m_heightSpin = new QSpinBox(imagingPage);
+                m_heightSpin->setRange(1, 16384);
+                m_heightSpin->setValue(480);
+                m_fovSpin = new QDoubleSpinBox(imagingPage);
+                m_fovSpin->setRange(1.0, 179.0);
+                m_fovSpin->setDecimals(3);
+                m_fovSpin->setValue(60.0);
+                m_nearSpin = new QDoubleSpinBox(imagingPage);
+                m_nearSpin->setRange(0.0001, 10000.0);
+                m_nearSpin->setDecimals(4);
+                m_nearSpin->setValue(0.01);
+                m_farSpin = new QDoubleSpinBox(imagingPage);
+                m_farSpin->setRange(0.001, 1000000.0);
+                m_farSpin->setDecimals(3);
+                m_farSpin->setValue(10.0);
+                imagingForm->addRow(QStringLiteral("Width"), m_widthSpin);
+                imagingForm->addRow(QStringLiteral("Height"), m_heightSpin);
+                imagingForm->addRow(QStringLiteral("Vertical FOV"), m_fovSpin);
+                imagingForm->addRow(QStringLiteral("Near plane"), m_nearSpin);
+                imagingForm->addRow(QStringLiteral("Far plane"), m_farSpin);
+                tabs->addTab(imagingPage, QStringLiteral("Imaging"));
+
+                auto* opticalPage = new QWidget(tabs);
+                auto* opticalLayout = new QVBoxLayout(opticalPage);
+                opticalLayout->addWidget(new QLabel(
+                    QStringLiteral("Optical frame convention: +Z forward, +Y image-down."),
+                    opticalPage));
+                m_opticalEditor = new ToolTransformEditorWidget(
+                    QStringLiteral("Camera mount -> Optical frame"), opticalPage);
+                m_opticalEditor->setMatrixVisible(false);
+                opticalLayout->addWidget(m_opticalEditor);
+                opticalLayout->addStretch(1);
+                tabs->addTab(opticalPage, QStringLiteral("Optical Frame"));
+                root->addWidget(tabs, 1);
+
+                m_buttons = new QDialogButtonBox(
+                    QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+                configureDialogButtonBox(m_buttons);
+                connect(m_buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+                connect(m_buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+                root->addWidget(m_buttons);
+
+                const auto updateAcceptance = [this]() {
+                    const bool geometryRequired = m_kindCombo->currentData().toBool();
+                    const bool geometryAvailable =
+                        !m_geometryCombo->currentData().toString().isEmpty();
+                    m_geometryCombo->setEnabled(geometryRequired && geometryAvailable);
+                    QPushButton* okButton = m_buttons->button(QDialogButtonBox::Ok);
+                    if(okButton != nullptr) {
+                        okButton->setEnabled(
+                            !m_nameEdit->text().trimmed().isEmpty() &&
+                            m_farSpin->value() > m_nearSpin->value() &&
+                            (!geometryRequired || geometryAvailable));
+                    }
+                };
+                connect(m_kindCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+                    this, [updateAcceptance](int) { updateAcceptance(); });
+                connect(m_nameEdit, &QLineEdit::textChanged,
+                    this, [updateAcceptance](const QString&) { updateAcceptance(); });
+                connect(m_nearSpin, static_cast<void(QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged),
+                    this, [updateAcceptance](double) { updateAcceptance(); });
+                connect(m_farSpin, static_cast<void(QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged),
+                    this, [updateAcceptance](double) { updateAcceptance(); });
+                updateAcceptance();
+            }
+
+            QString cameraName() const { return m_nameEdit->text().trimmed(); }
+            bool usesGeometry() const { return m_kindCombo->currentData().toBool(); }
+            QString geometryObjectId() const { return m_geometryCombo->currentData().toString(); }
+            int imageWidth() const { return m_widthSpin->value(); }
+            int imageHeight() const { return m_heightSpin->value(); }
+            double fovY() const { return m_fovSpin->value(); }
+            double nearPlane() const { return m_nearSpin->value(); }
+            double farPlane() const { return m_farSpin->value(); }
+            simulation_project::TransformDesc opticalTransform() const
+            {
+                return m_opticalEditor->transform();
+            }
+
+        private:
+            QLineEdit* m_nameEdit = nullptr;
+            QComboBox* m_kindCombo = nullptr;
+            QComboBox* m_geometryCombo = nullptr;
+            QSpinBox* m_widthSpin = nullptr;
+            QSpinBox* m_heightSpin = nullptr;
+            QDoubleSpinBox* m_fovSpin = nullptr;
+            QDoubleSpinBox* m_nearSpin = nullptr;
+            QDoubleSpinBox* m_farSpin = nullptr;
+            ToolTransformEditorWidget* m_opticalEditor = nullptr;
+            QDialogButtonBox* m_buttons = nullptr;
+        };
+
         bool transformForNode(
             const simulation_project::ProjectDocument& document,
             const SceneExplorerNodeRef& node,
@@ -202,6 +358,29 @@ namespace robot_qt_viewer
                 m_interactionMode,
                 sceneExplorerTreeProjectionForWorkbench(m_workbenchDescriptor)
             });
+        if(m_objectFrameEditSnapshotIsNew && m_hasPendingTransformPreview) {
+            const simulation_project::ProjectDocumentService service(m_context.document());
+            const simulation_project::SceneObjectDesc* object =
+                service.findSceneObject(m_activeObjectFrameObjectId.toStdString());
+            viewModel.transformEditorVisible = true;
+            viewModel.transformEditorEnabled = true;
+            viewModel.transformEditorDirty = true;
+            viewModel.transformEditorTitle = QStringLiteral("Frame Transform");
+            viewModel.transformTarget = m_pendingTransformTarget;
+            viewModel.transform = m_pendingTransform;
+            viewModel.objectFrameEditorVisible = true;
+            viewModel.objectFrameMode = SceneExplorerObjectFrameMode::Create;
+            viewModel.objectFrameObjectName = object == nullptr
+                ? m_activeObjectFrameObjectId
+                : QString::fromStdString(object->name.empty() ? object->id : object->name);
+            viewModel.objectFrameName = m_pendingTransformTarget.name;
+            viewModel.objectFrameVisible = m_objectFrameEditSnapshot.visible;
+            viewModel.objectFrameVisibilityControlVisible = true;
+            viewModel.objectFrameVisibilityTarget = m_pendingTransformTarget;
+            viewModel.objectFrameDiagram.visible = true;
+            viewModel.objectFrameDiagram.objectName = viewModel.objectFrameObjectName;
+            viewModel.objectFrameDiagram.objectFrameName = viewModel.objectFrameName;
+        }
         if(viewModel.objectFrameEditorVisible &&
             viewModel.transformTarget.kind == SceneExplorerNodeKind::ObjectFrame &&
             viewModel.transformTarget.id == m_activeObjectFrameObjectId &&
@@ -220,6 +399,11 @@ namespace robot_qt_viewer
         if(m_taskWidget != nullptr) {
             m_taskWidget->setDocumentView(viewModel);
         }
+    }
+
+    void SceneExplorerModuleController::setSummaryText(const QString& text)
+    {
+        m_widget.setSummaryText(text);
     }
 
     void SceneExplorerModuleController::setTaskWidget(SceneExplorerTaskWidget* taskWidget)
@@ -247,6 +431,12 @@ namespace robot_qt_viewer
     void SceneExplorerModuleController::setViewportServices(RobotQtViewerViewportServices* viewportServices)
     {
         m_viewportServices = viewportServices;
+    }
+
+    void SceneExplorerModuleController::setAssemblyViewport(
+        IRobotQtViewerAssemblyViewportPort* viewport)
+    {
+        m_assemblyViewport = viewport;
     }
 
     void SceneExplorerModuleController::setViewportInteractionMode(RobotQtViewerViewportInteractionMode mode)
@@ -358,61 +548,35 @@ namespace robot_qt_viewer
         }
 
         const std::string objectIdUtf8 = objectId.toStdString();
-        simulation_project::ObjectFrameDesc frame;
-        m_objectFrameRollbackDocument = m_context.document();
-        m_objectFrameRollbackDirty = m_context.projectSession().isDirty();
-        m_hasObjectFrameRollbackDocument = true;
-        const ProjectMutationResult mutationResult = m_context.documentController().mutateProject(
-            QStringLiteral("createObjectFrame"),
-            ProjectDirtyPolicy::UserEdit,
-            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
-                const simulation_project::SceneObjectDesc* object =
-                    service.findSceneObject(objectIdUtf8);
-                if(object == nullptr) {
-                    error = "Object not found.";
-                    return false;
-                }
-
-                const QString baseId = objectId + QStringLiteral("_frame");
-                QString frameId = baseId;
-                int suffix = 1;
-                while(service.findObjectFrame(objectIdUtf8, frameId.toStdString()) != nullptr) {
-                    frameId = QString("%1_%2").arg(baseId).arg(suffix++);
-                }
-
-                frame.id = frameId.toStdString();
-                frame.name = frame.id;
-                if(!service.addObjectFrame(objectIdUtf8, frame, &error)) {
-                    return false;
-                }
-                changed = true;
-                return true;
-            });
-        if(!mutationResult.success) {
-            clearObjectFrameEditSnapshot();
-            emit statusMessageRequested(
-                QString("Create object frame failed: %1").arg(mutationResult.message),
-                5000);
+        simulation_project::ProjectDocumentService service(m_context.document());
+        if(service.findSceneObject(objectIdUtf8) == nullptr) {
+            emit statusMessageRequested(QStringLiteral("Object not found."), 5000);
             return;
         }
 
-        const QString frameId = QString::fromStdString(frame.id);
+        const QString baseId = objectId + QStringLiteral("_frame");
+        QString frameId = baseId;
+        int suffix = 1;
+        while(service.findObjectFrame(objectIdUtf8, frameId.toStdString()) != nullptr) {
+            frameId = QString("%1_%2").arg(baseId).arg(suffix++);
+        }
+        simulation_project::ObjectFrameDesc frame;
+        frame.id = frameId.toStdString();
+        frame.name = frame.id;
+
         m_objectFrameMode = SceneExplorerObjectFrameMode::Create;
         m_objectFrameDraftSourceObjectId = objectId;
         m_activeObjectFrameObjectId = objectId;
         m_activeObjectFrameId = frameId;
-        captureObjectFrameEditSnapshot(objectId, frameId, true);
-        m_context.selectionModel().selectObjectFrame(
-            objectId,
-            frameId,
-            QStringLiteral("createObjectFrame"));
+        m_hasObjectFrameEditSnapshot = true;
+        m_objectFrameEditSnapshotIsNew = true;
+        m_objectFrameEditSnapshot = frame;
         m_interactionMode = RobotQtViewerViewportInteractionMode::EditTransformPreview;
         SceneExplorerNodeRef node;
         node.kind = SceneExplorerNodeKind::ObjectFrame;
         node.id = objectId;
         node.name = frameId;
         node.linkName = frameId;
-        selectNode(node);
         m_hasPendingTransformPreview = true;
         m_pendingTransformTarget = node;
         m_pendingTransform = frame.objectToFrame;
@@ -428,7 +592,73 @@ namespace robot_qt_viewer
         preview.focusObjectFrameObjectId = objectId;
         mutateViewportPreview(preview, QStringLiteral("createObjectFrame"));
         publishTaskStateChanged(QStringLiteral("createObjectFrame"));
-        emit statusMessageRequested(QString("Created object frame: %1").arg(frameId), 3000);
+        refreshViewModel();
+        emit statusMessageRequested(QString("Object frame draft created: %1").arg(frameId), 3000);
+    }
+
+    void SceneExplorerModuleController::createCameraDefinition(QWidget* parentWidget)
+    {
+        ProjectCameraDefinitionDialog dialog(m_context.document(), parentWidget);
+        if(dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+
+        simulation_project::AttachmentAssetDesc camera;
+        const QString geometryObjectId = dialog.geometryObjectId();
+        const ProjectMutationResult result = m_context.documentController().mutateProject(
+            QStringLiteral("createCameraDefinition"),
+            ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                camera.id = service.makeUniqueId("camera");
+                camera.name = qStringToUtf8(dialog.cameraName());
+                camera.assetKind = "sensor";
+                camera.assetType = "camera";
+                camera.visible = true;
+                camera.hasSensorIntrinsics = true;
+                camera.sensorIntrinsics.model = "pinhole";
+                camera.sensorIntrinsics.width = dialog.imageWidth();
+                camera.sensorIntrinsics.height = dialog.imageHeight();
+                camera.sensorIntrinsics.fovY = dialog.fovY();
+                camera.sensorIntrinsics.nearPlane = dialog.nearPlane();
+                camera.sensorIntrinsics.farPlane = dialog.farPlane();
+
+                if(dialog.usesGeometry()) {
+                    const simulation_project::SceneObjectDesc* geometry =
+                        service.findSceneObject(qStringToUtf8(geometryObjectId));
+                    if(geometry == nullptr || geometry->sourcePath.empty()) {
+                        error = "Selected camera geometry is no longer available.";
+                        return false;
+                    }
+                    camera.visualPath = geometry->sourcePath;
+                    camera.visualScale = geometry->visualScale;
+                }
+
+                simulation_project::AttachmentFunctionalFrameDesc opticalFrame;
+                opticalFrame.id = camera.id + ".optical";
+                opticalFrame.name = "Optical";
+                opticalFrame.frameType = "optical";
+                opticalFrame.assetMountToFrame = dialog.opticalTransform();
+                opticalFrame.primary = true;
+                camera.functionalFrames.push_back(opticalFrame);
+                if(!service.addAttachmentAsset(camera, &error)) {
+                    return false;
+                }
+                changed = true;
+                return true;
+            });
+        if(!result.success) {
+            QMessageBox::warning(
+                parentWidget,
+                QStringLiteral("Add Camera"),
+                QStringLiteral("Camera creation failed: %1").arg(result.message));
+            return;
+        }
+
+        m_context.documentController().publishDocumentChanged(
+            QStringLiteral("createCameraDefinition"), false);
+        refreshViewModel();
+        emit statusMessageRequested(
+            QStringLiteral("Created camera definition: %1").arg(dialog.cameraName()), 4000);
     }
 
     bool SceneExplorerModuleController::resolvePendingTransformPreviewIfTargetChanges(
@@ -547,7 +777,6 @@ namespace robot_qt_viewer
                 emit statusMessageRequested(QStringLiteral("Frame name cannot be empty."), 4000);
                 return;
             }
-            m_interactionMode = RobotQtViewerViewportInteractionMode::Browse;
             simulation_project::ObjectFrameDesc updated;
             const std::string objectId = target.id.toStdString();
             const std::string frameId = target.linkName.toStdString();
@@ -558,19 +787,22 @@ namespace robot_qt_viewer
                 [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
                     const simulation_project::ObjectFrameDesc* existing =
                         service.findObjectFrame(objectId, frameId);
-                    if(existing == nullptr) {
+                    const bool creating = m_objectFrameEditSnapshotIsNew;
+                    if(!creating && existing == nullptr) {
                         error = "Object frame not found.";
                         return false;
                     }
-                    updated = *existing;
+                    updated = creating ? m_objectFrameEditSnapshot : *existing;
                     updated.name = frameName;
                     updated.objectToFrame = transform;
-                    if(updated.name == existing->name &&
+                    if(!creating && updated.name == existing->name &&
                         sameTransform(updated.objectToFrame, existing->objectToFrame)) {
                         changed = false;
                         return true;
                     }
-                    if(!service.updateObjectFrame(objectId, frameId, updated, &error)) {
+                    if(creating
+                           ? !service.addObjectFrame(objectId, updated, &error)
+                           : !service.updateObjectFrame(objectId, frameId, updated, &error)) {
                         return false;
                     }
                     changed = true;
@@ -582,6 +814,8 @@ namespace robot_qt_viewer
                     5000);
                 return;
             }
+            const bool created = m_objectFrameEditSnapshotIsNew;
+            m_interactionMode = RobotQtViewerViewportInteractionMode::Browse;
             RobotQtViewerViewportPreviewPayload preview;
             preview.clearObjectFrameObjectFocus = true;
             preview.upsertPreviewObjectFrame = true;
@@ -593,7 +827,9 @@ namespace robot_qt_viewer
                     target.id,
                     target.linkName,
                     QStringLiteral("applyObjectFrameTransform"));
-                result.message = QString("Updated object frame: %1").arg(QString::fromStdString(updated.name));
+                result.message = created
+                    ? QString("Created object frame: %1").arg(QString::fromStdString(updated.name))
+                    : QString("Updated object frame: %1").arg(QString::fromStdString(updated.name));
             } else {
                 result.message = QString("Object frame unchanged: %1").arg(target.name.trimmed());
             }
@@ -614,8 +850,12 @@ namespace robot_qt_viewer
 
         if((target.kind == SceneExplorerNodeKind::Object ||
                target.kind == SceneExplorerNodeKind::PointCloud) &&
-            m_viewportServices != nullptr) {
-            m_viewportServices->commitSceneObjectTransform(target.id, transform);
+            (m_assemblyViewport != nullptr || m_viewportServices != nullptr)) {
+            if(m_assemblyViewport != nullptr) {
+                m_assemblyViewport->commitSceneObjectTransform(target.id, transform);
+            } else {
+                m_viewportServices->commitSceneObjectTransform(target.id, transform);
+            }
         }
 
         if(target.kind == SceneExplorerNodeKind::Object) {
@@ -697,6 +937,19 @@ namespace robot_qt_viewer
             return;
         }
 
+        if(m_objectFrameEditSnapshotIsNew &&
+            target.id == m_activeObjectFrameObjectId &&
+            target.linkName == m_activeObjectFrameId) {
+            m_objectFrameEditSnapshot.visible = visible;
+            RobotQtViewerViewportPreviewPayload preview;
+            preview.upsertPreviewObjectFrame = true;
+            preview.objectFrameObjectId = target.id;
+            preview.objectFrame = m_objectFrameEditSnapshot;
+            mutateViewportPreview(preview, QStringLiteral("previewObjectFrameVisibility"));
+            refreshViewModel();
+            return;
+        }
+
         const std::string objectId = target.id.toStdString();
         const std::string frameId = target.linkName.toStdString();
         const ProjectMutationResult mutationResult = m_context.documentController().mutateProject(
@@ -753,6 +1006,11 @@ namespace robot_qt_viewer
     bool SceneExplorerModuleController::hasPendingTransformPreviewFor(const SceneExplorerNodeRef& target) const
     {
         return m_hasPendingTransformPreview && sameTransformTarget(m_pendingTransformTarget, target);
+    }
+
+    bool SceneExplorerModuleController::hasPendingTransformPreview() const
+    {
+        return m_hasPendingTransformPreview;
     }
 
     bool SceneExplorerModuleController::resolvePendingTransformPreview(QWidget* parentWidget)
@@ -833,6 +1091,17 @@ namespace robot_qt_viewer
             target.kind == SceneExplorerNodeKind::ObjectFrame) {
             m_interactionMode = RobotQtViewerViewportInteractionMode::Browse;
         }
+    }
+
+    void SceneExplorerModuleController::releaseProjectState() noexcept
+    {
+        m_hasPendingTransformPreview = false;
+        m_pendingTransformTarget = SceneExplorerNodeRef();
+        m_pendingTransform = simulation_project::TransformDesc();
+        m_interactionMode = RobotQtViewerViewportInteractionMode::Browse;
+        m_objectFrameMode = SceneExplorerObjectFrameMode::Selection;
+        clearObjectFrameEditSnapshot();
+        m_visibleLinkFrameKeys.clear();
     }
 
     void SceneExplorerModuleController::publishTaskStateChanged(const QString& sourceId)
@@ -946,25 +1215,15 @@ namespace robot_qt_viewer
     {
         m_hasObjectFrameEditSnapshot = false;
         m_objectFrameEditSnapshotIsNew = false;
-        m_hasObjectFrameRollbackDocument = false;
-        m_objectFrameRollbackDirty = false;
         m_activeObjectFrameObjectId.clear();
         m_activeObjectFrameId.clear();
         m_objectFrameDraftSourceObjectId.clear();
         m_objectFrameEditSnapshot = simulation_project::ObjectFrameDesc();
-        m_objectFrameRollbackDocument = simulation_project::ProjectDocument();
     }
 
     bool SceneExplorerModuleController::restoreObjectFrameDraft(const QString& sourceId)
     {
         const QString sourceObjectId = m_objectFrameDraftSourceObjectId;
-        if(m_hasObjectFrameRollbackDocument) {
-            m_context.documentController().restoreProjectSnapshot(
-                sourceId,
-                m_objectFrameRollbackDocument,
-                m_objectFrameRollbackDirty);
-        }
-
         RobotQtViewerViewportPreviewPayload preview;
         preview.clearObjectFrameObjectFocus = true;
         mutateViewportPreview(preview, sourceId);

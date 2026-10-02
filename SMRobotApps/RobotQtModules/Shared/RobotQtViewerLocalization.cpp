@@ -578,6 +578,22 @@ bool RobotQtViewerLocalizationService::reloadCatalogs(QString* errorMessage)
         }
     }
 
+    Catalog& englishCatalog =
+        loadedCatalogs[QString::fromLatin1(kDefaultLanguageId)];
+    QSet<QString> legacySourceTexts;
+    for(auto catalog = loadedCatalogs.constBegin(); catalog != loadedCatalogs.constEnd(); ++catalog) {
+        for(auto legacy = catalog->legacy.constBegin(); legacy != catalog->legacy.constEnd(); ++legacy) {
+            if(!legacy.key().isEmpty()) {
+                legacySourceTexts.insert(legacy.key());
+            }
+        }
+    }
+    for(const QString& sourceText : legacySourceTexts) {
+        if(!englishCatalog.legacy.contains(sourceText)) {
+            englishCatalog.legacy.insert(sourceText, sourceText);
+        }
+    }
+
     m_impl->catalogs = std::move(loadedCatalogs);
     m_impl->rebuildLegacyIndex();
     QString desired = m_impl->canonicalLanguageId(m_impl->currentLanguageId);
@@ -788,7 +804,7 @@ bool RobotQtViewerLanguageCoordinator::switchLanguage(
     const QString& languageId,
     QString* errorMessage)
 {
-    if(!m_registry.validateEnabledModeLanguages(errorMessage)) {
+    if(!m_registry.validateEnabledWorkbenchLanguages(errorMessage)) {
         return false;
     }
     if(!m_localization.setLanguage(languageId, false, errorMessage)) {
@@ -802,7 +818,7 @@ bool RobotQtViewerLanguageCoordinator::switchLanguage(
 
 bool RobotQtViewerLanguageCoordinator::retranslateCurrentLanguage(QString* errorMessage)
 {
-    if(!m_registry.validateEnabledModeLanguages(errorMessage)) {
+    if(!m_registry.validateEnabledWorkbenchLanguages(errorMessage)) {
         return false;
     }
     return dispatch(errorMessage);
@@ -815,9 +831,9 @@ bool RobotQtViewerLanguageCoordinator::dispatch(QString* errorMessage)
             participant->retranslateUi(m_localization);
         }
     }
-    for(const RobotQtViewerWorkbenchModeDesc& mode : m_registry.modes()) {
-        if(mode.enabled && mode.languageParticipant != nullptr) {
-            mode.languageParticipant->retranslateUi(m_localization);
+    for(const RobotQtViewerWorkbenchDesc& workbench : m_registry.workbenches()) {
+        if(workbench.enabled && workbench.languageParticipant != nullptr) {
+            workbench.languageParticipant->retranslateUi(m_localization);
         }
     }
     m_localization.retranslateApplication();

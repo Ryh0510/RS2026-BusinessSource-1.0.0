@@ -5,7 +5,7 @@
 #include "CollisionModelDocumentFacade.h"
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerViewportPreviewState.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/ProjectSession.h>
 
@@ -59,16 +59,16 @@ namespace robot_qt_viewer
         std::vector<CollisionRuntimeDetectorInfo> runtimeDetectors;
         const QString selectedObjectId = m_appServices.selectedObjectId();
         const QString selectedAttachmentId = m_appServices.selectedToolAttachmentId();
-        if(m_context.viewportServices() != nullptr &&
+        if(m_context.collisionViewport() != nullptr &&
             !m_appServices.selectedRobotId().isEmpty() &&
             !m_appServices.selectedLinkName().isEmpty()) {
-            visibleVariantId = m_context.viewportServices()->visibleRobotCollisionVariant(
+            visibleVariantId = m_context.collisionViewport()->visibleRobotCollisionVariant(
                 m_appServices.selectedRobotId(),
                 m_appServices.selectedLinkName());
-            robotSummary = m_context.viewportServices()->robotCollisionSummary(
+            robotSummary = m_context.collisionViewport()->robotCollisionSummary(
                 m_appServices.selectedRobotId());
             robotSummaryPtr = &robotSummary;
-            runtimeDetectors = m_context.viewportServices()->collisionRuntimeDetectors();
+            runtimeDetectors = m_context.collisionViewport()->collisionRuntimeDetectors();
         }
 
         m_widget.setViewModel(
@@ -120,13 +120,13 @@ namespace robot_qt_viewer
         std::vector<CollisionRuntimeDetectorInfo> runtimeDetectors;
         const QString selectedObjectId = m_appServices.selectedObjectId();
         const QString selectedAttachmentId = m_appServices.selectedToolAttachmentId();
-        if(m_context.viewportServices() != nullptr &&
+        if(m_context.collisionViewport() != nullptr &&
             !m_appServices.selectedRobotId().isEmpty() &&
             !m_appServices.selectedLinkName().isEmpty()) {
-            robotSummary = m_context.viewportServices()->robotCollisionSummary(
+            robotSummary = m_context.collisionViewport()->robotCollisionSummary(
                 m_appServices.selectedRobotId());
             robotSummaryPtr = &robotSummary;
-            runtimeDetectors = m_context.viewportServices()->collisionRuntimeDetectors();
+            runtimeDetectors = m_context.collisionViewport()->collisionRuntimeDetectors();
         }
 
         m_widget.setSummary(

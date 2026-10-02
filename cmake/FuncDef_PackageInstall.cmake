@@ -258,6 +258,7 @@ function(_smrobot_export_private_runtime_dependencies TARGET_NAME)
         if(_runtime_type STREQUAL "SHARED_LIBRARY" OR
            _runtime_type STREQUAL "MODULE_LIBRARY")
             foreach(_runtime_config DEBUG RELEASE)
+                string(TOLOWER "${_runtime_config}" _runtime_config_lower)
                 get_target_property(
                     _runtime_file
                     "${_runtime_candidate}"
@@ -277,10 +278,22 @@ function(_smrobot_export_private_runtime_dependencies TARGET_NAME)
                         string(REGEX REPLACE "\\.lib$" ".dll" _runtime_file "${_runtime_file}")
                     endif()
                     get_filename_component(_runtime_name "${_runtime_file}" NAME)
-                    string(TOLOWER "${_runtime_config}" _runtime_config_lower)
                     list(APPEND
                         _runtime_names_${_runtime_config_lower}
                         "${_runtime_name}"
+                    )
+                endif()
+
+                get_target_property(
+                    _runtime_declared_names
+                    "${_runtime_candidate}"
+                    "SMROBOT_PRIVATE_RUNTIME_DLLS_${_runtime_config}"
+                )
+                if(_runtime_declared_names AND
+                   NOT _runtime_declared_names MATCHES "-NOTFOUND$")
+                    list(APPEND
+                        _runtime_names_${_runtime_config_lower}
+                        ${_runtime_declared_names}
                     )
                 endif()
             endforeach()
@@ -347,6 +360,7 @@ function(_smrobot_collect_private_runtime_dependency_files OUT_DEBUG OUT_RELEASE
         if(_runtime_type STREQUAL "SHARED_LIBRARY" OR
            _runtime_type STREQUAL "MODULE_LIBRARY")
             foreach(_runtime_config DEBUG RELEASE)
+                string(TOLOWER "${_runtime_config}" _runtime_config_lower)
                 get_target_property(
                     _runtime_file
                     "${_runtime_candidate}"
@@ -370,11 +384,32 @@ function(_smrobot_collect_private_runtime_dependency_files OUT_DEBUG OUT_RELEASE
                             "Unable to install private runtime dependency for "
                             "${_runtime_candidate}: ${_runtime_file}")
                     endif()
-                    string(TOLOWER "${_runtime_config}" _runtime_config_lower)
                     list(APPEND
                         _runtime_files_${_runtime_config_lower}
                         "${_runtime_file}"
                     )
+
+                    get_filename_component(_runtime_directory "${_runtime_file}" DIRECTORY)
+                    get_target_property(
+                        _runtime_declared_names
+                        "${_runtime_candidate}"
+                        "SMROBOT_PRIVATE_RUNTIME_DLLS_${_runtime_config}"
+                    )
+                    if(_runtime_declared_names AND
+                       NOT _runtime_declared_names MATCHES "-NOTFOUND$")
+                        foreach(_runtime_declared_name IN LISTS _runtime_declared_names)
+                            set(_runtime_declared_file
+                                "${_runtime_directory}/${_runtime_declared_name}")
+                            if(NOT EXISTS "${_runtime_declared_file}")
+                                message(FATAL_ERROR
+                                    "Unable to install declared private runtime dependency for "
+                                    "${_runtime_candidate}: ${_runtime_declared_file}")
+                            endif()
+                            list(APPEND
+                                _runtime_files_${_runtime_config_lower}
+                                "${_runtime_declared_file}")
+                        endforeach()
+                    endif()
                 endif()
             endforeach()
         endif()
@@ -400,7 +435,7 @@ endfunction()
 function(function_InstallTarget)
     # Define function arguments
     set(oneValueArgs TARGET_NAME PACKAGE_NAME PACKAGE_INTERFACE_HEADERS)
-    set(multiValueArgs PRIVATE_RUNTIME_DEPENDENCIES)
+    set(multiValueArgs PRIVATE_RUNTIME_DEPENDENCIES PACKAGE_INTERFACE_HEADER_FILES)
     
     # Parse arguments
     cmake_parse_arguments(
@@ -477,6 +512,16 @@ function(function_InstallTarget)
                     _smrobot_private_runtime_files_release
                     ${ARG_PRIVATE_RUNTIME_DEPENDENCIES}
                 )
+                if(_smrobot_private_runtime_files_debug)
+                    set_property(TARGET "${TARGET_NAME}" PROPERTY
+                        SMROBOT_PRIVATE_RUNTIME_FILES_DEBUG
+                        "${_smrobot_private_runtime_files_debug}")
+                endif()
+                if(_smrobot_private_runtime_files_release)
+                    set_property(TARGET "${TARGET_NAME}" PROPERTY
+                        SMROBOT_PRIVATE_RUNTIME_FILES_RELEASE
+                        "${_smrobot_private_runtime_files_release}")
+                endif()
             endif()
             
             # Install target files
@@ -496,7 +541,43 @@ function(function_InstallTarget)
             set(HEADER_SOURCE_DIR "${INTERFACE_HEADERS}")            
             message(STATUS " Looking for headers in: ${HEADER_SOURCE_DIR}")
             
-            if(IS_DIRECTORY "${HEADER_SOURCE_DIR}")
+            if(ARG_PACKAGE_INTERFACE_HEADER_FILES)
+                if(NOT IS_DIRECTORY "${HEADER_SOURCE_DIR}")
+                    message(FATAL_ERROR
+                        " Explicit header installation requires a valid PACKAGE_INTERFACE_HEADERS base directory: "
+                        "${HEADER_SOURCE_DIR}")
+                endif()
+
+                message(STATUS " Installing explicit headers from: ${HEADER_SOURCE_DIR}")
+                foreach(_package_interface_header IN LISTS ARG_PACKAGE_INTERFACE_HEADER_FILES)
+                    if(IS_ABSOLUTE "${_package_interface_header}")
+                        set(_package_interface_header_source "${_package_interface_header}")
+                    else()
+                        set(_package_interface_header_source
+                            "${HEADER_SOURCE_DIR}/${_package_interface_header}")
+                    endif()
+
+                    if(NOT EXISTS "${_package_interface_header_source}")
+                        message(FATAL_ERROR
+                            " Explicit interface header does not exist: "
+                            "${_package_interface_header_source}")
+                    endif()
+
+                    file(RELATIVE_PATH _package_interface_header_relative
+                        "${HEADER_SOURCE_DIR}"
+                        "${_package_interface_header_source}")
+                    if(_package_interface_header_relative MATCHES "^\\.\\.")
+                        message(FATAL_ERROR
+                            " Explicit interface header is outside PACKAGE_INTERFACE_HEADERS: "
+                            "${_package_interface_header_source}")
+                    endif()
+                    get_filename_component(_package_interface_header_directory
+                        "${_package_interface_header_relative}" DIRECTORY)
+                    install(FILES "${_package_interface_header_source}"
+                        DESTINATION "${PACKAGE_NAME}/include/${_package_interface_header_directory}"
+                        COMPONENT ${SDK_TARGET_INSTALL_COMPONENT})
+                endforeach()
+            elseif(IS_DIRECTORY "${HEADER_SOURCE_DIR}")
                 message(STATUS " Installing headers from: ${HEADER_SOURCE_DIR}")
                 
                 # Install header files - using correct source and destination paths
@@ -550,11 +631,20 @@ function(function_InstallTarget)
                 endforeach()
                 list(REMOVE_DUPLICATES PUBLIC_DEPS)
             endif()
+
+            if(DEFINED ${TARGET_NAME}_INSTALL_RESOLVE_DEPENDENCIES)
+                set(RESOLVE_DEPS ${${TARGET_NAME}_INSTALL_RESOLVE_DEPENDENCIES})
+            else()
+                set(RESOLVE_DEPS ${PUBLIC_DEPS})
+            endif()
+            list(REMOVE_DUPLICATES PUBLIC_DEPS)
+            list(REMOVE_DUPLICATES RESOLVE_DEPS)
             
             # Generate dependency configuration file content
             set(DEPENDENCY_CONFIG_CONTENT "
 # Auto-generated dependencies for ${TARGET_NAME}
 set(${TARGET_NAME}_PUBLIC_DEPENDENCIES \"${PUBLIC_DEPS}\")
+set(${TARGET_NAME}_RESOLVE_DEPENDENCIES \"${RESOLVE_DEPS}\")
 set(${TARGET_NAME}_DEPENDENCY_FILE_DIR \"\${CMAKE_CURRENT_LIST_DIR}\")
 
 function(_${TARGET_NAME}_include_smrobot_dependency_bootstrap)
@@ -583,9 +673,9 @@ function(_${TARGET_NAME}_include_smrobot_dependency_bootstrap)
     endforeach()
 endfunction()
 
-if(DEFINED ${TARGET_NAME}_PUBLIC_DEPENDENCIES AND NOT \"\${${TARGET_NAME}_PUBLIC_DEPENDENCIES}\" STREQUAL \"\")
+if(DEFINED ${TARGET_NAME}_RESOLVE_DEPENDENCIES AND NOT \"\${${TARGET_NAME}_RESOLVE_DEPENDENCIES}\" STREQUAL \"\")
     set(${TARGET_NAME}_DEPENDENCY_NAMESPACES)
-    foreach(dep IN LISTS ${TARGET_NAME}_PUBLIC_DEPENDENCIES)
+    foreach(dep IN LISTS ${TARGET_NAME}_RESOLVE_DEPENDENCIES)
         string(REGEX REPLACE \"::.*\" \"\" namespace \"\${dep}\")
         list(APPEND ${TARGET_NAME}_DEPENDENCY_NAMESPACES \"\${namespace}\")
     endforeach()
@@ -599,8 +689,8 @@ function(resolve_${TARGET_NAME}_dependencies)
     set(${TARGET_NAME}_RESOLVING_DEPENDENCIES TRUE)
     _${TARGET_NAME}_include_smrobot_dependency_bootstrap()
 
-    if(DEFINED ${TARGET_NAME}_PUBLIC_DEPENDENCIES AND NOT \"\${${TARGET_NAME}_PUBLIC_DEPENDENCIES}\" STREQUAL \"\")
-        foreach(dep IN LISTS ${TARGET_NAME}_PUBLIC_DEPENDENCIES)
+    if(DEFINED ${TARGET_NAME}_RESOLVE_DEPENDENCIES AND NOT \"\${${TARGET_NAME}_RESOLVE_DEPENDENCIES}\" STREQUAL \"\")
+        foreach(dep IN LISTS ${TARGET_NAME}_RESOLVE_DEPENDENCIES)
             string(REGEX REPLACE \"::.*\" \"\" dep_namespace \"\${dep}\")
             string(REGEX REPLACE \".*::\" \"\" dep_component \"\${dep}\")
             if(NOT TARGET \${dep})

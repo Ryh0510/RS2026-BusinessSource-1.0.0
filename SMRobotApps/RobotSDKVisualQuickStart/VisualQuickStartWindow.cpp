@@ -79,6 +79,8 @@ VisualQuickStartWindow::VisualQuickStartWindow(QWidget* parent)
     m_runButton = new QPushButton("Pause", panel);
     m_resetButton = new QPushButton("Reset", panel);
     m_obstacleType = new QComboBox(panel);
+    m_obstacleType->setMinimumHeight(30);
+    m_obstacleType->setMaxVisibleItems(12);
     m_obstacleType->addItem("sphere");
     m_obstacleType->addItem("box");
     m_obstacleType->addItem("cylinder");

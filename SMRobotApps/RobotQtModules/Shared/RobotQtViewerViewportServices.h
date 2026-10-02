@@ -13,23 +13,10 @@
 
 #include "CollisionRuntimeViewModel.h"
 #include "RobotQtViewerEvents.h"
+#include "RobotQtViewerViewportPorts.h"
 
 namespace robot_qt_viewer
 {
-    struct SprayMeasurementResult
-    {
-        bool valid = false;
-        double distanceMeters = 0.0;
-        double angleDegrees = 0.0;
-        QString errorMessage;
-    };
-
-    struct RobotQtViewerViewportLoadResult
-    {
-        bool success = false;
-        QString errorMessage;
-    };
-
     class RobotQtViewerViewportServices
     {
     public:
@@ -43,6 +30,20 @@ namespace robot_qt_viewer
         virtual bool previewRobotMountTransform(
             const QString& robotMountId,
             const simulation_project::TransformDesc& transform) = 0;
+        virtual bool previewMountedAttachmentTransform(
+            const QString& attachmentId,
+            const simulation_project::TransformDesc& transform) = 0;
+        virtual bool previewAttachmentAsset(
+            const simulation_project::AttachmentAssetDesc& asset) = 0;
+        virtual bool previewAttachmentBinding(
+            const simulation_project::BindFramesRequest& request)
+        {
+            (void)request;
+            return false;
+        }
+        virtual void clearAttachmentBindingPreview()
+        {
+        }
         virtual bool previewRobotMountLink(
             const QString& robotMountId,
             const QString& linkName) = 0;

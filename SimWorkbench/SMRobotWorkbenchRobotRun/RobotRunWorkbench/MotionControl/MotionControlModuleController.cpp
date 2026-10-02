@@ -5,7 +5,7 @@
 #include "MotionControlWidget.h"
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/ProjectDocument.h>
 #include <SimulationProject/ProjectDocumentService.h>
@@ -19,6 +19,7 @@
 namespace
 {
     constexpr double kPi = 3.14159265358979323846;
+    constexpr qint64 kCollisionResultsRefreshIntervalMs = 100;
 
     bool isRevoluteJointType(const QString& jointType)
     {
@@ -141,7 +142,21 @@ namespace robot_qt_viewer
     void MotionControlModuleController::setCollisionDetailsWidget(CollisionResultsWidget* widget)
     {
         m_collisionDetailsWidget = widget;
-        refreshCollisionResults(m_widget.currentCollisionDetectorId());
+        refreshCollisionResults(m_widget.currentCollisionDetectorId(), true);
+    }
+
+    void MotionControlModuleController::setWorkbenchActive(bool active)
+    {
+        if(m_workbenchActive == active) {
+            return;
+        }
+        m_workbenchActive = active;
+        m_collisionResultsRefreshTimer.invalidate();
+    }
+
+    bool MotionControlModuleController::isWorkbenchActive() const
+    {
+        return m_workbenchActive;
     }
 
     void MotionControlModuleController::clearRuntime()
@@ -213,7 +228,7 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::refreshCollisionMonitor()
     {
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
         const std::vector<CollisionRuntimeDetectorInfo> runtimeDetectors =
             viewportServices != nullptr
                 ? viewportServices->collisionRuntimeDetectors()
@@ -241,7 +256,7 @@ namespace robot_qt_viewer
         if(m_selectedCollisionDetectorId.isEmpty()) {
             m_selectedCollisionDetectorId = detectorId;
         }
-        refreshCollisionResults(detectorId);
+        refreshCollisionResults(detectorId, true);
     }
 
     void MotionControlModuleController::refreshTrajectories()
@@ -263,6 +278,9 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::handleRobotStateUpdated()
     {
+        if(!m_workbenchActive) {
+            return;
+        }
         if(m_autoMotionStates.value(m_selectedRobotId).enabled) {
             updateRowsFromScene();
         }
@@ -271,6 +289,9 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::handleEvent(const RobotQtViewerEvent& event)
     {
+        if(!m_workbenchActive) {
+            return;
+        }
         switch(event.kind) {
         case RobotQtViewerEventKind::SelectionChanged:
             break;
@@ -514,7 +535,7 @@ namespace robot_qt_viewer
         }
 
         m_selectedCollisionDetectorId = detectorId;
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
         if(viewportServices != nullptr) {
             viewportServices->setActiveCollisionDetector(detectorId);
             if(m_widget.collisionMonitoringChecked()) {
@@ -534,7 +555,7 @@ namespace robot_qt_viewer
         }
 
         m_selectedCollisionDetectorId = detectorId;
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
         if(viewportServices == nullptr) {
             return;
         }
@@ -553,7 +574,7 @@ namespace robot_qt_viewer
 
     void MotionControlModuleController::handleCollisionGeometryVisibilityChanged(bool visible)
     {
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
+        IRobotQtViewerCollisionViewportPort* viewportServices = m_context.collisionViewport();
         if(viewportServices == nullptr) {
             return;
         }
@@ -624,29 +645,42 @@ namespace robot_qt_viewer
         return ids.isEmpty() ? QString() : ids.front();
     }
 
-    void MotionControlModuleController::refreshCollisionResults(const QString& detectorId)
+    void MotionControlModuleController::refreshCollisionResults(
+        const QString& detectorId,
+        bool force)
     {
-        CollisionResultsWidget* resultsWidget = m_widget.collisionResultsWidget();
-        if(resultsWidget == nullptr && m_collisionDetailsWidget == nullptr) {
+        if(!m_workbenchActive) {
             return;
         }
 
+        CollisionResultsWidget* resultsWidget = m_widget.collisionResultsWidget();
+        const bool updateDetails =
+            m_collisionDetailsWidget != nullptr && m_collisionDetailsWidget->isVisible();
+        if(resultsWidget == nullptr && !updateDetails) {
+            return;
+        }
+        if(!force && m_collisionResultsRefreshTimer.isValid() &&
+            m_collisionResultsRefreshTimer.elapsed() < kCollisionResultsRefreshIntervalMs) {
+            return;
+        }
+        m_collisionResultsRefreshTimer.restart();
+
         std::vector<CollisionRuntimeDetectorInfo> runtimeDetectors;
-        if(m_context.viewportServices() != nullptr) {
-            runtimeDetectors = m_context.viewportServices()->collisionRuntimeDetectors();
+        if(m_context.collisionViewport() != nullptr) {
+            runtimeDetectors = m_context.collisionViewport()->collisionRuntimeDetectors();
         }
 
         CollisionResultDocumentFacade facade(m_context.document());
         const CollisionResultsViewModel viewModel = facade.buildViewModel(
             detectorId,
-            m_context.viewportServices() != nullptr,
+            m_context.collisionViewport() != nullptr,
             runtimeDetectors,
             QString(),
             QString());
         if(resultsWidget != nullptr) {
             resultsWidget->setResults(viewModel);
         }
-        if(m_collisionDetailsWidget != nullptr) {
+        if(updateDetails) {
             m_collisionDetailsWidget->setResults(viewModel);
         }
     }

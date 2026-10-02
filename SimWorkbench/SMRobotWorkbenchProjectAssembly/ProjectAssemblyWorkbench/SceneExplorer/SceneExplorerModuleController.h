@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SceneExplorerWorkbenchShellPort.h"
+
 #include "RobotQtViewerEvents.h"
 #include "RobotQtViewerWorkbench.h"
 #include "SceneExplorerViewModel.h"
@@ -21,10 +23,11 @@ class QWidget;
 namespace robot_qt_viewer
 {
     class RobotQtViewerDocumentContext;
+    class IRobotQtViewerAssemblyViewportPort;
     class RobotQtViewerViewportServices;
     class SceneEntityWorkflowController;
 
-    class SceneExplorerModuleController : public QObject
+    class SceneExplorerModuleController : public QObject, public SceneExplorerWorkbenchShellPort
     {
         Q_OBJECT
 
@@ -44,8 +47,10 @@ namespace robot_qt_viewer
         void setSceneObjectRuntime(const QString& objectId, const QString& objectName);
         void clearRuntime();
         void refreshViewModel();
+        void setSummaryText(const QString& text) override;
         void setTaskWidget(SceneExplorerTaskWidget* taskWidget);
         void setSceneEntityWorkflow(SceneEntityWorkflowController* workflow);
+        void setAssemblyViewport(IRobotQtViewerAssemblyViewportPort* viewport);
         void setViewportServices(RobotQtViewerViewportServices* viewportServices);
         void setViewportInteractionMode(RobotQtViewerViewportInteractionMode mode);
         void setWorkbenchDescriptor(const RobotQtViewerWorkbenchDescriptor& descriptor);
@@ -60,9 +65,13 @@ namespace robot_qt_viewer
             const QString& preferredMountId) const;
         void focusTransformTask(const SceneExplorerNodeRef& node);
         void createObjectFrameForObject(const QString& objectId);
+        void createCameraDefinition(QWidget* parentWidget = nullptr);
         bool resolvePendingTransformPreviewIfTargetChanges(
             const SceneExplorerNodeRef& nextNode,
             QWidget* parentWidget);
+        bool hasPendingTransformPreview() const;
+        bool resolvePendingTransformPreview(QWidget* parentWidget);
+        void releaseProjectState() noexcept;
         bool linkFrameVisible(const QString& robotId, const QString& linkName) const;
         bool toggleLinkFrameVisible(const QString& robotId, const QString& linkName);
 
@@ -85,7 +94,6 @@ namespace robot_qt_viewer
         void handleObjectFrameVisibilityChanged(const SceneExplorerNodeRef& target, bool visible);
         bool sameTransformTarget(const SceneExplorerNodeRef& lhs, const SceneExplorerNodeRef& rhs) const;
         bool hasPendingTransformPreviewFor(const SceneExplorerNodeRef& target) const;
-        bool resolvePendingTransformPreview(QWidget* parentWidget);
         void discardPendingTransformPreview();
         void publishTaskStateChanged(const QString& sourceId);
         void mutateViewportPreview(
@@ -107,6 +115,7 @@ namespace robot_qt_viewer
         SceneExplorerTaskWidget* m_taskWidget = nullptr;
         RobotQtViewerDocumentContext& m_context;
         SceneEntityWorkflowController* m_sceneEntityWorkflow = nullptr;
+        IRobotQtViewerAssemblyViewportPort* m_assemblyViewport = nullptr;
         RobotQtViewerViewportServices* m_viewportServices = nullptr;
         QVector<SceneExplorerRobotRuntimeView> m_robots;
         QVector<SceneExplorerObjectRuntimeView> m_objects;
@@ -118,13 +127,10 @@ namespace robot_qt_viewer
         SceneExplorerObjectFrameMode m_objectFrameMode = SceneExplorerObjectFrameMode::Selection;
         bool m_hasObjectFrameEditSnapshot = false;
         bool m_objectFrameEditSnapshotIsNew = false;
-        bool m_hasObjectFrameRollbackDocument = false;
-        bool m_objectFrameRollbackDirty = false;
         QString m_activeObjectFrameObjectId;
         QString m_activeObjectFrameId;
         QString m_objectFrameDraftSourceObjectId;
         simulation_project::ObjectFrameDesc m_objectFrameEditSnapshot;
-        simulation_project::ProjectDocument m_objectFrameRollbackDocument;
         QSet<QString> m_visibleLinkFrameKeys;
     };
 }

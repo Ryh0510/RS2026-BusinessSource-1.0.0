@@ -1,0 +1,86 @@
+solid collision_visual_fixture
+facet normal 0 0 0
+outer loop
+vertex -0.1 -0.1 -0.1
+vertex 0.1 0.1 -0.1
+vertex 0.1 -0.1 -0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 -0.1 -0.1
+vertex -0.1 0.1 -0.1
+vertex 0.1 0.1 -0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 -0.1 0.1
+vertex 0.1 -0.1 0.1
+vertex 0.1 0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 -0.1 0.1
+vertex 0.1 0.1 0.1
+vertex -0.1 0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 -0.1 -0.1
+vertex 0.1 -0.1 -0.1
+vertex 0.1 -0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 -0.1 -0.1
+vertex 0.1 -0.1 0.1
+vertex -0.1 -0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 0.1 -0.1 -0.1
+vertex 0.1 0.1 -0.1
+vertex 0.1 0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 0.1 -0.1 -0.1
+vertex 0.1 0.1 0.1
+vertex 0.1 -0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 0.1 0.1 -0.1
+vertex -0.1 0.1 -0.1
+vertex -0.1 0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 0.1 0.1 -0.1
+vertex -0.1 0.1 0.1
+vertex 0.1 0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 0.1 -0.1
+vertex -0.1 -0.1 -0.1
+vertex -0.1 -0.1 0.1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex -0.1 0.1 -0.1
+vertex -0.1 -0.1 0.1
+vertex -0.1 0.1 0.1
+endloop
+endfacet
+endsolid collision_visual_fixture

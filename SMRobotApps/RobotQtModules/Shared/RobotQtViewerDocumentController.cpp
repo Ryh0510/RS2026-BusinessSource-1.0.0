@@ -1,8 +1,49 @@
 #include "RobotQtViewerDocumentController.h"
 
+#include <SimulationProject/ProjectAttachmentCommands.h>
 #include <SimulationProject/ProjectDocumentService.h>
 
+#include <exception>
 #include <utility>
+
+namespace
+{
+    simulation_project::ProjectChangeOrigin changeOrigin(
+        robot_qt_viewer::ProjectDirtyPolicy policy)
+    {
+        switch(policy) {
+        case robot_qt_viewer::ProjectDirtyPolicy::UserEdit:
+            return simulation_project::ProjectChangeOrigin::UserEdit;
+        case robot_qt_viewer::ProjectDirtyPolicy::LoadNormalization:
+            return simulation_project::ProjectChangeOrigin::LoadMigration;
+        case robot_qt_viewer::ProjectDirtyPolicy::PreviewOnly:
+            return simulation_project::ProjectChangeOrigin::Preview;
+        case robot_qt_viewer::ProjectDirtyPolicy::RuntimeOnly:
+            return simulation_project::ProjectChangeOrigin::RuntimeOnly;
+        }
+        return simulation_project::ProjectChangeOrigin::UserEdit;
+    }
+
+    simulation_project::ProjectDirtyEffect dirtyEffect(
+        robot_qt_viewer::ProjectDirtyPolicy policy)
+    {
+        return policy == robot_qt_viewer::ProjectDirtyPolicy::UserEdit
+            ? simulation_project::ProjectDirtyEffect::MarkDirty
+            : simulation_project::ProjectDirtyEffect::Preserve;
+    }
+
+    robot_qt_viewer::ProjectMutationResult makeMutationResult(
+        const simulation_project::ProjectTransactionResult& transaction)
+    {
+        robot_qt_viewer::ProjectMutationResult result;
+        result.success = transaction.success;
+        result.changed = transaction.changed;
+        result.message = QString::fromStdString(transaction.message);
+        result.hasProjectChange = transaction.changes.documentChanged;
+        result.projectChange = transaction.changes;
+        return result;
+    }
+}
 
 namespace robot_qt_viewer
 {
@@ -13,6 +54,7 @@ namespace robot_qt_viewer
         : QObject(parent)
         , m_session(session)
         , m_eventHub(eventHub)
+        , m_transactions(simulation_project::createProjectTransactionService(session))
     {
     }
 
@@ -26,13 +68,38 @@ namespace robot_qt_viewer
         return m_session;
     }
 
+    simulation_project::ProjectRevision RobotQtViewerDocumentController::revision() const
+    {
+        return m_transactions->revision();
+    }
+
+    const simulation_project::ProjectChangeSet&
+        RobotQtViewerDocumentController::lastProjectChange() const
+    {
+        return m_transactions->lastChange();
+    }
+
     void RobotQtViewerDocumentController::publishProjectOpened(const QString& sourceId)
     {
-        m_eventHub.publish(makeEvent(RobotQtViewerEventKind::ProjectOpened, sourceId));
+        const simulation_project::ProjectChangeOrigin origin = m_session.isDirty()
+            ? simulation_project::ProjectChangeOrigin::LoadMigration
+            : simulation_project::ProjectChangeOrigin::Load;
+        const simulation_project::ProjectChangeSet changes =
+            m_transactions->recordDocumentReplacement(
+                origin,
+                {simulation_project::ProjectChangeDomain::Document});
+        m_eventHub.publish(makeEvent(RobotQtViewerEventKind::ProjectOpened, sourceId, &changes));
+        if(changes.dirtyBefore != changes.dirtyAfter) {
+            m_eventHub.publish(makeEvent(
+                RobotQtViewerEventKind::ProjectDirtyChanged,
+                sourceId,
+                &changes));
+        }
     }
 
     void RobotQtViewerDocumentController::publishProjectSaved(const QString& sourceId)
     {
+        m_transactions->synchronizeSessionState();
         m_eventHub.publish(makeEvent(RobotQtViewerEventKind::ProjectSaved, sourceId));
         publishDirtyChanged(sourceId);
     }
@@ -57,47 +124,100 @@ namespace robot_qt_viewer
             return result;
         }
 
-        const bool previousDirty = m_session.isDirty();
-        const simulation_project::ProjectDocument previousDocument = m_session.document();
-        simulation_project::ProjectDocumentService service(m_session.document());
+        simulation_project::ProjectDocument candidate = m_transactions->snapshot();
+        simulation_project::ProjectDocumentService service(candidate);
         bool changed = false;
         std::string error;
-        if(!mutation(service, changed, error)) {
-            const std::filesystem::path path = m_session.path();
-            const bool requiresSaveAs = m_session.requiresSaveAs();
-            m_session.setDocument(previousDocument, path, previousDirty, requiresSaveAs);
-            publishDirtyChanged(sourceId);
+        bool succeeded = false;
+        try {
+            succeeded = mutation(service, changed, error);
+        } catch(const std::exception& exception) {
+            error = exception.what();
+        } catch(...) {
+            error = "Project mutation threw an unknown exception.";
+        }
+        if(!succeeded) {
             result.message = error.empty()
                 ? QStringLiteral("Project mutation failed.")
                 : QString::fromStdString(error);
             return result;
         }
 
-        result.success = true;
-        result.changed = changed;
-        if(!changed) {
-            if(m_session.isDirty() != previousDirty &&
-                dirtyPolicy != ProjectDirtyPolicy::UserEdit) {
-                m_session.setDirty(previousDirty);
-                publishDirtyChanged(sourceId);
-            }
+        simulation_project::ProjectTransactionRequest request;
+        request.candidate = std::move(candidate);
+        request.origin = changeOrigin(dirtyPolicy);
+        request.dirtyEffect = dirtyEffect(dirtyPolicy);
+        request.domains = {simulation_project::ProjectChangeDomain::Document};
+        request.changed = changed;
+        const simulation_project::ProjectTransactionResult transaction =
+            m_transactions->execute(std::move(request));
+        result = makeMutationResult(transaction);
+        if(result.success && result.changed) {
+            publishCommittedChange(sourceId, result.projectChange);
+        }
+        return result;
+    }
+
+    ProjectBindFramesMutationResult RobotQtViewerDocumentController::executeBindFrames(
+        const QString& sourceId,
+        const simulation_project::BindFramesRequest& request)
+    {
+        ProjectBindFramesMutationResult result;
+        simulation_project::ProjectDocument candidate = m_transactions->snapshot();
+        simulation_project::ProjectAttachmentCommands commands(candidate);
+        result.command = commands.bindFrames(request);
+        if(!result.command.success) {
+            result.transaction.message = QString::fromStdString(result.command.message);
             return result;
         }
 
-        if(dirtyPolicy == ProjectDirtyPolicy::UserEdit) {
-            m_session.markDirty();
-        } else if(m_session.isDirty() != previousDirty) {
-            m_session.setDirty(previousDirty);
+        simulation_project::ProjectTransactionRequest transactionRequest;
+        transactionRequest.candidate = std::move(candidate);
+        transactionRequest.origin = simulation_project::ProjectChangeOrigin::UserEdit;
+        transactionRequest.dirtyEffect = simulation_project::ProjectDirtyEffect::MarkDirty;
+        transactionRequest.domains = {simulation_project::ProjectChangeDomain::Assembly};
+        transactionRequest.affectedIds = {
+            result.command.assetId,
+            result.command.attachmentId,
+            request.hostFrame.owner.id,
+            request.boundEntity.id};
+        transactionRequest.changed = result.command.projectChanged;
+        const simulation_project::ProjectTransactionResult transaction =
+            m_transactions->execute(std::move(transactionRequest));
+        result.transaction = makeMutationResult(transaction);
+        if(result.transaction.success && result.transaction.changed) {
+            publishCommittedChange(sourceId, result.transaction.projectChange);
+        }
+        return result;
+    }
+
+    ProjectMutationResult RobotQtViewerDocumentController::executeRebindFrames(
+        const QString& sourceId,
+        const simulation_project::RebindFramesRequest& request)
+    {
+        simulation_project::ProjectDocument candidate = m_transactions->snapshot();
+        simulation_project::ProjectAttachmentCommands commands(candidate);
+        const simulation_project::ProjectCommandResult command = commands.rebindFrames(request);
+        if(!command.success) {
+            ProjectMutationResult result;
+            result.message = QString::fromStdString(command.message);
+            return result;
         }
 
-        if(dirtyPolicy != ProjectDirtyPolicy::PreviewOnly &&
-            dirtyPolicy != ProjectDirtyPolicy::RuntimeOnly) {
-            m_eventHub.publish(makeEvent(RobotQtViewerEventKind::ProjectDocumentChanged, sourceId));
-        }
-        if(m_session.isDirty() != previousDirty ||
-            dirtyPolicy == ProjectDirtyPolicy::UserEdit ||
-            dirtyPolicy == ProjectDirtyPolicy::LoadNormalization) {
-            publishDirtyChanged(sourceId);
+        simulation_project::ProjectTransactionRequest transactionRequest;
+        transactionRequest.candidate = std::move(candidate);
+        transactionRequest.origin = simulation_project::ProjectChangeOrigin::UserEdit;
+        transactionRequest.dirtyEffect = simulation_project::ProjectDirtyEffect::MarkDirty;
+        transactionRequest.domains = {simulation_project::ProjectChangeDomain::Assembly};
+        transactionRequest.affectedIds = {
+            request.attachmentId,
+            request.hostFrame.owner.id};
+        transactionRequest.changed = command.projectChanged;
+        const simulation_project::ProjectTransactionResult transaction =
+            m_transactions->execute(std::move(transactionRequest));
+        ProjectMutationResult result = makeMutationResult(transaction);
+        if(result.success && result.changed) {
+            publishCommittedChange(sourceId, result.projectChange);
         }
         return result;
     }
@@ -108,15 +228,30 @@ namespace robot_qt_viewer
         bool dirty,
         bool publishDocumentChanged)
     {
-        const std::filesystem::path path = m_session.path();
-        const bool requiresSaveAs = m_session.requiresSaveAs();
         const bool previousDirty = m_session.isDirty();
-        m_session.setDocument(std::move(document), path, dirty, requiresSaveAs);
-        if(publishDocumentChanged) {
-            m_eventHub.publish(makeEvent(RobotQtViewerEventKind::ProjectDocumentChanged, sourceId));
+        simulation_project::ProjectTransactionRequest request;
+        request.candidate = std::move(document);
+        request.origin = simulation_project::ProjectChangeOrigin::CompatibilityRestore;
+        request.dirtyEffect = dirty
+            ? simulation_project::ProjectDirtyEffect::MarkDirty
+            : simulation_project::ProjectDirtyEffect::Clear;
+        request.domains = {simulation_project::ProjectChangeDomain::Document};
+        const simulation_project::ProjectTransactionResult transaction =
+            m_transactions->execute(std::move(request));
+        if(!transaction.success) {
+            return;
         }
-        if(previousDirty != dirty || publishDocumentChanged) {
-            publishDirtyChanged(sourceId);
+        if(publishDocumentChanged && transaction.changed) {
+            m_eventHub.publish(makeEvent(
+                RobotQtViewerEventKind::ProjectDocumentChanged,
+                sourceId,
+                &transaction.changes));
+        }
+        if(previousDirty != m_session.isDirty() || publishDocumentChanged) {
+            m_eventHub.publish(makeEvent(
+                RobotQtViewerEventKind::ProjectDirtyChanged,
+                sourceId,
+                &transaction.changes));
         }
     }
 
@@ -192,15 +327,39 @@ namespace robot_qt_viewer
         m_eventHub.publish(event);
     }
 
+    void RobotQtViewerDocumentController::publishCommittedChange(
+        const QString& sourceId,
+        const simulation_project::ProjectChangeSet& changes)
+    {
+        m_eventHub.publish(makeEvent(
+            RobotQtViewerEventKind::ProjectDocumentChanged,
+            sourceId,
+            &changes));
+        if(changes.dirtyBefore != changes.dirtyAfter) {
+            m_eventHub.publish(makeEvent(
+                RobotQtViewerEventKind::ProjectDirtyChanged,
+                sourceId,
+                &changes));
+        }
+    }
+
     RobotQtViewerEvent RobotQtViewerDocumentController::makeEvent(
         RobotQtViewerEventKind kind,
-        const QString& sourceId) const
+        const QString& sourceId,
+        const simulation_project::ProjectChangeSet* changes) const
     {
         RobotQtViewerEvent event;
         event.kind = kind;
         event.sourceId = sourceId;
         event.projectChanged = m_session.isDirty();
         event.projectDirty = m_session.isDirty();
+        if(changes != nullptr) {
+            event.hasProjectChange = true;
+            event.projectChange = *changes;
+            for(const std::string& id : changes->affectedIds) {
+                event.affectedIds.push_back(QString::fromStdString(id));
+            }
+        }
         return event;
     }
 }

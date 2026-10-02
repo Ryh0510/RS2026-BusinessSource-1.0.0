@@ -6,7 +6,11 @@
 
 class QDoubleSpinBox;
 class QLineEdit;
+class QGroupBox;
 class QPushButton;
+class QSpinBox;
+class QLabel;
+class QTabWidget;
 class ToolFrameDiagramWidget;
 class ToolTransformEditorWidget;
 
@@ -43,6 +47,14 @@ private:
     QLineEdit* m_typeEdit = nullptr;
     QLineEdit* m_visualPathEdit = nullptr;
     QDoubleSpinBox* m_visualScaleSpin = nullptr;
+    QGroupBox* m_cameraGroup = nullptr;
+    QLabel* m_sharedAssetHint = nullptr;
+    QTabWidget* m_tabs = nullptr;
+    QSpinBox* m_cameraWidthSpin = nullptr;
+    QSpinBox* m_cameraHeightSpin = nullptr;
+    QDoubleSpinBox* m_cameraFovYSpin = nullptr;
+    QDoubleSpinBox* m_cameraNearSpin = nullptr;
+    QDoubleSpinBox* m_cameraFarSpin = nullptr;
     ToolFrameDiagramWidget* m_frameDiagram = nullptr;
     ToolTransformEditorWidget* m_visualTransformEditor = nullptr;
     ToolTransformEditorWidget* m_tcpTransformEditor = nullptr;

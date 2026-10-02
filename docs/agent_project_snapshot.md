@@ -1,3 +1,12 @@
+## 2026-10-02 合并 Business Source 1.0.5
+
+- 用户授权将新版所有新增内容整合到当前 main，保留全逆解、构型分类、Top-K/APF/CDF/QP 和 UI 卡顿修复；此次完整版本升级适用多模块范围。
+- 原根 HEAD d7c1594，开始时工作树干净。已有 SDK 实际为 1.0.3，部分应用曾局部迁入 1.0.4；不能把所有版本差异当成本地定制。
+- 业务源码按文件三方比较/手工合并，SDK 整体更新为 1.0.5。原 740 个业务文件和完整原 SDK 保存在外层 build/upgrade-105/backup；data、thirdparty 和本地依赖配置保留。
+- 新版采用 typed viewport ports 与拆分场景系统；本地规划通过独立窄接口接入，保持领域算法归属。喷嘴标定、实际模型 FK 和运行时对象移动/复制需要重点验证。
+- 使用独立 C:/b/rs105-merge 进行 CMake、Release/Debug 主程序与新旧回归验证，不覆盖原 build 中运行的程序。Release/Debug 构建与主程序启动通过，两配置各31项回归最终通过（Debug查询首轮180秒超时，独立延长预算复验195.78秒通过）。
+- 不改项目持久化格式，不引入额外第三方依赖。实际749点5986逆解候选/双页Top-K及CDF传递通过，最大实际FK误差约0.001mm。完整说明见 docs/upgrade_1_0_5_report.md，文件级清单见 docs/upgrade_1_0_5_file_changes.csv。
+
 # 当前项目快照
 
 ## 2026-09-23 Basic Planning 关节导出和轨迹点开关

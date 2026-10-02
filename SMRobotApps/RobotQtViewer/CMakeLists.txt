@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 set(APP_TARGET_NAME RobotQtViewer)
 
-if(NOT TARGET Qt5::Widgets OR NOT TARGET Qt5::OpenGL)
-    message(FATAL_ERROR "${APP_TARGET_NAME} requires Qt5::Widgets and Qt5::OpenGL.")
+if(NOT TARGET Qt5::Widgets)
+    message(FATAL_ERROR "${APP_TARGET_NAME} requires Qt5::Widgets.")
 endif()
 
 if(NOT TARGET SMRobotCore::RobotSDK)
@@ -33,19 +33,25 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-set(ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS
-    SMRobotWorkbenchProjectAssembly::ProjectAssemblyWorkbench
-    SMRobotWorkbenchCollisionConfig::CollisionConfigWorkbench
-    SMRobotWorkbenchRobotRun::RobotRunWorkbench
-    SMRobotWorkbenchMotionPlanning::MotionPlanningWorkbench
-    SMRobotWorkbenchPaintingAnalysis::PaintingAnalysisWorkbench
-    SMRobotWorkbenchSprayProcess::SprayProcessWorkbench
-    SMRobotWorkbenchDigitalTwin::DigitalTwinWorkbench
-)
+set(ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS)
+foreach(required_target_ IN LISTS ${APP_TARGET_NAME}_REQUIRED_TARGETS)
+    get_target_property(workbench_registrar_header_
+        ${required_target_} SMROBOT_WORKBENCH_REGISTRAR_HEADER)
+    get_target_property(workbench_registrar_function_
+        ${required_target_} SMROBOT_WORKBENCH_REGISTRAR_FUNCTION)
+    if(workbench_registrar_header_ OR workbench_registrar_function_)
+        if(NOT workbench_registrar_header_ OR NOT workbench_registrar_function_)
+            message(FATAL_ERROR
+                "Workbench target ${required_target_} exposes incomplete registrar metadata.")
+        endif()
+        list(APPEND ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS ${required_target_})
+    endif()
+endforeach()
 set(SMROBOT_ROBOT_QT_VIEWER_EXTRA_WORKBENCH_TARGETS "" CACHE STRING
     "Additional static Workbench targets contributing to RobotQtViewer.")
 list(APPEND ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS
     ${SMROBOT_ROBOT_QT_VIEWER_EXTRA_WORKBENCH_TARGETS})
+list(REMOVE_DUPLICATES ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS)
 
 set(ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_INCLUDES)
 set(ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_CALLS)
@@ -62,18 +68,10 @@ foreach(workbench_target_ IN LISTS ROBOT_QT_VIEWER_BUILTIN_WORKBENCH_TARGETS)
         message(FATAL_ERROR
             "Workbench target ${workbench_target_} does not expose registrar metadata.")
     endif()
-    get_target_property(workbench_target_imported_ ${workbench_target_} IMPORTED)
-    if(workbench_target_imported_)
-        set(workbench_source_kind_
-            "RobotQtViewerWorkbenchPackageSource::Prebuilt")
-    else()
-        set(workbench_source_kind_
-            "RobotQtViewerWorkbenchPackageSource::BuiltInSource")
-    endif()
     string(APPEND ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_INCLUDES
         "#include \"${workbench_registrar_header_}\"\n")
     string(APPEND ROBOT_QT_VIEWER_WORKBENCH_REGISTRAR_CALLS
-        "        if(!${workbench_registrar_function_}(catalog, ${workbench_source_kind_})) {\n"
+        "        if(!${workbench_registrar_function_}(catalog)) {\n"
         "            if(errorMessage != nullptr) {\n"
         "                *errorMessage = QStringLiteral(\"Workbench contribution registration failed: ${workbench_target_}\");\n"
         "            }\n"
@@ -96,8 +94,6 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
     ${ROBOT_QT_VIEWER_GENERATED_DIR}/RobotQtViewerBuiltWorkbenchCatalog.cpp
     RobotQtViewerPlatformConfigurationDialog.cpp
     RobotQtViewerPlatformConfigurationDialog.h
-    RobotQtViewerProductProfileConfigurationDialog.cpp
-    RobotQtViewerProductProfileConfigurationDialog.h
     RobotQtViewerRibbonModel.cpp
     RobotQtViewerRibbonModel.h
     RobotQtViewerResources.qrc
@@ -141,8 +137,6 @@ add_executable(Applications::${APP_TARGET_NAME} ALIAS ${APP_TARGET_NAME})
 
 target_link_libraries(${APP_TARGET_NAME}
     PRIVATE
-        SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
-        SMRobotWorkbenchCommon::RobotQtModulesShared
         RobotQtModulesStatus
         ${${APP_TARGET_NAME}_REQUIRED_TARGETS}
 )
@@ -231,6 +225,11 @@ if(ExportPacakge${PACKAGE_NAME})
         ${PROJECT_SOURCE_DIR}/config/platforms/
         DESTINATION ${PACKAGE_NAME}/bin/config/platforms
         FILES_MATCHING PATTERN "*.platform.json"
+    )
+
+    install(FILES
+        ${PROJECT_SOURCE_DIR}/config/simulation-platform.json
+        DESTINATION ${PACKAGE_NAME}/bin/config
     )
 endif()
 

@@ -24,6 +24,7 @@
 namespace
 {
     using robot_qt_viewer::configureInspectorCombo;
+    using robot_qt_viewer::configureInspectorEntityCombo;
     using robot_qt_viewer::configureActionButton;
     using robot_qt_viewer::configureInspectorGrid;
     using robot_qt_viewer::configureInspectorList;
@@ -121,7 +122,7 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     configureInspectorGrid(selectorLayout);
 
     m_detectorCombo = new QComboBox(this);
-    configureInspectorCombo(m_detectorCombo);
+    configureInspectorEntityCombo(m_detectorCombo);
     m_detectorCombo->setToolTip("Selects the collision detector to configure.");
     makeHorizontallyCompressible(m_detectorCombo);
     connect(m_detectorCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this]() {
@@ -170,6 +171,17 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     m_showSelectedButton->setToolTip("Shows the selected detector overlay and hides the others.");
     connect(m_showSelectedButton, &QPushButton::clicked, this, &CollisionDetectorsWidget::showSelectedRequested);
     setupButtonLayout->addWidget(m_showSelectedButton, 1, 1);
+
+    m_refreshNearestButton = new QPushButton("Refresh Nearest", this);
+    configureActionButton(m_refreshNearestButton, robot_qt_viewer::UiActionRole::Accent);
+    m_refreshNearestButton->setToolTip(
+        "Runs one explicit distance query for the selected detector.");
+    connect(
+        m_refreshNearestButton,
+        &QPushButton::clicked,
+        this,
+        &CollisionDetectorsWidget::refreshNearestRequested);
+    setupButtonLayout->addWidget(m_refreshNearestButton, 2, 0, 1, 2);
 
     setupButtonLayout->setColumnStretch(0, 1);
     setupButtonLayout->setColumnStretch(1, 1);
@@ -582,6 +594,9 @@ void CollisionDetectorsWidget::updateActionState()
     }
     if(m_showSelectedButton != nullptr) {
         m_showSelectedButton->setEnabled(m_hasDetector);
+    }
+    if(m_refreshNearestButton != nullptr) {
+        m_refreshNearestButton->setEnabled(m_hasDetector && m_properties.nearest && !m_dirty);
     }
     if(m_removeDetectorButton != nullptr) {
         m_removeDetectorButton->setEnabled(m_canRemove);

@@ -16,15 +16,15 @@ namespace robot_qt_viewer
             return package;
         }
 
-        RobotQtViewerWorkbenchModeDesc makeMode(
+        RobotQtViewerWorkbenchDesc makeWorkbench(
             const QString& packageId,
             RobotQtViewerWorkbenchKind kind)
         {
-            RobotQtViewerWorkbenchModeDesc mode;
-            mode.packageId = packageId;
-            mode.descriptor = robotQtViewerWorkbenchDescriptor(kind);
-            mode.enabled = true;
-            return mode;
+            RobotQtViewerWorkbenchDesc workbench;
+            workbench.packageId = packageId;
+            workbench.descriptor = robotQtViewerWorkbenchDescriptor(kind);
+            workbench.enabled = true;
+            return workbench;
         }
     }
 
@@ -38,38 +38,20 @@ namespace robot_qt_viewer
         return true;
     }
 
-    bool RobotQtViewerWorkbenchPackageRegistry::registerMode(
-        const RobotQtViewerWorkbenchModeDesc& mode)
-    {
-        if(mode.packageId.isEmpty() || mode.descriptor.id.isEmpty() ||
-            !hasPackage(mode.packageId) || registeredMode(mode.descriptor.id) != nullptr) {
-            return false;
-        }
-        for(const RobotQtViewerWorkbenchModeDesc& registered : m_modes) {
-            if(registered.descriptor.kind == mode.descriptor.kind) {
-                return false;
-            }
-        }
-        m_modes.push_back(mode);
-        return true;
-    }
-
     bool RobotQtViewerWorkbenchPackageRegistry::registerWorkbench(
         const RobotQtViewerWorkbenchDesc& workbench)
     {
         if(workbench.packageId.isEmpty() || workbench.descriptor.id.isEmpty() ||
-            !hasPackage(workbench.packageId) ||
-            registeredWorkbench(workbench.descriptor.id) != nullptr) {
+            !hasPackage(workbench.packageId) || registeredWorkbench(workbench.descriptor.id) != nullptr) {
             return false;
         }
-        m_modes.push_back(workbench);
+        m_workbenches.push_back(workbench);
         return true;
     }
 
     RobotQtViewerWorkbenchPackageDesc makeRobotQtViewerWorkbenchPackage(
         const QString& id,
         const QString& displayName,
-        RobotQtViewerWorkbenchPackageSource source,
         const QString& version)
     {
         RobotQtViewerWorkbenchPackageDesc package;
@@ -77,39 +59,7 @@ namespace robot_qt_viewer
         package.displayName = displayName;
         package.version = version;
         package.extensionApiVersion = QStringLiteral("1");
-        package.source = source;
         return package;
-    }
-
-    RobotQtViewerWorkbenchPackageDesc makeRobotQtViewerWorkbenchPackage(
-        const QString& id,
-        const QString& displayName,
-        const QString& version)
-    {
-        return makeRobotQtViewerWorkbenchPackage(
-            id,
-            displayName,
-            RobotQtViewerWorkbenchPackageSource::BuiltInSource,
-            version);
-    }
-
-    RobotQtViewerWorkbenchModeDesc makeRobotQtViewerWorkbenchMode(
-        const QString& packageId,
-        RobotQtViewerWorkbenchKind kind,
-        const QString& toolbarActionId,
-        int defaultOrder,
-        const QStringList& featureIds,
-        const QStringList& requiredModeIds)
-    {
-        RobotQtViewerWorkbenchModeDesc mode;
-        mode.packageId = packageId;
-        mode.descriptor = robotQtViewerWorkbenchDescriptor(kind);
-        mode.toolbarActionId = toolbarActionId;
-        mode.defaultOrder = defaultOrder;
-        mode.featureIds = featureIds;
-        mode.requiredModeIds = requiredModeIds;
-        mode.requiredWorkbenchIds = requiredModeIds;
-        return mode;
     }
 
     RobotQtViewerWorkbenchDesc makeRobotQtViewerWorkbench(
@@ -143,7 +93,6 @@ namespace robot_qt_viewer
         workbench.toolbarActionId = toolbarActionId;
         workbench.defaultOrder = defaultOrder;
         workbench.featureIds = featureIds;
-        workbench.requiredModeIds = requiredWorkbenchIds;
         workbench.requiredWorkbenchIds = requiredWorkbenchIds;
         return workbench;
     }
@@ -152,13 +101,13 @@ namespace robot_qt_viewer
         const QString& id,
         const QString& displayName,
         const QString& packageId,
-        const QStringList& requiredModeIds)
+        const QStringList& requiredWorkbenchIds)
     {
         RobotQtViewerWorkbenchFeatureDesc feature;
         feature.id = id;
         feature.displayName = displayName;
         feature.packageId = packageId;
-        feature.requiredModeIds = requiredModeIds;
+        feature.requiredWorkbenchIds = requiredWorkbenchIds;
         return feature;
     }
 
@@ -171,22 +120,6 @@ namespace robot_qt_viewer
         }
         m_features.push_back(featureDesc);
         return true;
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::bindModeLifecycle(
-        RobotQtViewerWorkbenchKind kind,
-        IRobotQtViewerWorkbenchLifecycle& lifecycle,
-        const RobotQtViewerWorkbenchLifecyclePolicy& policy)
-    {
-        for(RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            if(modeDesc.descriptor.kind != kind || modeDesc.lifecycle != nullptr) {
-                continue;
-            }
-            modeDesc.lifecycle = &lifecycle;
-            modeDesc.lifecyclePolicy = policy;
-            return true;
-        }
-        return false;
     }
 
     bool RobotQtViewerWorkbenchPackageRegistry::bindWorkbenchLifecycle(
@@ -202,28 +135,13 @@ namespace robot_qt_viewer
         IRobotQtViewerWorkbenchLifecycle& lifecycle,
         const RobotQtViewerWorkbenchLifecyclePolicy& policy)
     {
-        for(RobotQtViewerWorkbenchDesc& workbenchDesc : m_modes) {
-            if(workbenchDesc.descriptor.id != workbenchId ||
-                workbenchDesc.lifecycle != nullptr) {
+        for(RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            if(workbenchDesc.descriptor.id != workbenchId || workbenchDesc.lifecycle != nullptr) {
                 continue;
             }
             workbenchDesc.lifecycle = &lifecycle;
             workbenchDesc.lifecyclePolicy = policy;
             return true;
-        }
-        return false;
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::bindModeLanguageParticipant(
-        RobotQtViewerWorkbenchKind kind,
-        IRobotQtViewerLanguageParticipant& participant)
-    {
-        for(RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            if(modeDesc.descriptor.kind == kind && modeDesc.enabled &&
-                hasPackage(modeDesc.packageId)) {
-                modeDesc.languageParticipant = &participant;
-                return true;
-            }
         }
         return false;
     }
@@ -239,7 +157,7 @@ namespace robot_qt_viewer
         const QString& workbenchId,
         IRobotQtViewerLanguageParticipant& participant)
     {
-        for(RobotQtViewerWorkbenchDesc& workbenchDesc : m_modes) {
+        for(RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
             if(workbenchDesc.descriptor.id == workbenchId && workbenchDesc.enabled &&
                 hasPackage(workbenchDesc.packageId)) {
                 workbenchDesc.languageParticipant = &participant;
@@ -249,38 +167,34 @@ namespace robot_qt_viewer
         return false;
     }
 
+    bool RobotQtViewerWorkbenchPackageRegistry::clearWorkbenchRuntimeBindings(
+        const QString& workbenchId)
+    {
+        for(RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            if(workbenchDesc.descriptor.id != workbenchId) {
+                continue;
+            }
+            workbenchDesc.lifecycle = nullptr;
+            workbenchDesc.lifecyclePolicy = {};
+            workbenchDesc.languageParticipant = nullptr;
+            return true;
+        }
+        return false;
+    }
+
     bool RobotQtViewerWorkbenchPackageRegistry::hasPackage(const QString& packageId) const
     {
         return package(packageId) != nullptr;
     }
 
-    bool RobotQtViewerWorkbenchPackageRegistry::hasMode(RobotQtViewerWorkbenchKind kind) const
-    {
-        return mode(kind) != nullptr;
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::hasMode(const QString& modeId) const
-    {
-        return mode(modeId) != nullptr;
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::hasWorkbench(
-        RobotQtViewerWorkbenchKind kind) const
+    bool RobotQtViewerWorkbenchPackageRegistry::hasWorkbench(RobotQtViewerWorkbenchKind kind) const
     {
         return workbench(kind) != nullptr;
     }
 
-    bool RobotQtViewerWorkbenchPackageRegistry::hasWorkbench(
-        const QString& workbenchId) const
+    bool RobotQtViewerWorkbenchPackageRegistry::hasWorkbench(const QString& workbenchId) const
     {
         return workbench(workbenchId) != nullptr;
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::isModeReady(
-        RobotQtViewerWorkbenchKind kind) const
-    {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc != nullptr && modeDesc->lifecycle != nullptr;
     }
 
     bool RobotQtViewerWorkbenchPackageRegistry::isWorkbenchReady(
@@ -296,17 +210,11 @@ namespace robot_qt_viewer
         return workbenchDesc != nullptr && workbenchDesc->lifecycle != nullptr;
     }
 
-    bool RobotQtViewerWorkbenchPackageRegistry::isModeLanguageReady(
+    bool RobotQtViewerWorkbenchPackageRegistry::isWorkbenchLanguageReady(
         RobotQtViewerWorkbenchKind kind) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc != nullptr && modeDesc->languageParticipant != nullptr;
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::isModeEnabled(
-        RobotQtViewerWorkbenchKind kind) const
-    {
-        return mode(kind) != nullptr;
+        const RobotQtViewerWorkbenchDesc* workbenchDesc = workbench(kind);
+        return workbenchDesc != nullptr && workbenchDesc->languageParticipant != nullptr;
     }
 
     bool RobotQtViewerWorkbenchPackageRegistry::isWorkbenchEnabled(
@@ -321,59 +229,24 @@ namespace robot_qt_viewer
         return workbench(workbenchId) != nullptr;
     }
 
-    bool RobotQtViewerWorkbenchPackageRegistry::setEnabledModeIds(
-        const QStringList& enabledModeIds,
-        QString* errorMessage)
-    {
-        for(const QString& modeId : enabledModeIds) {
-            if(registeredMode(modeId) == nullptr) {
-                if(errorMessage != nullptr) {
-                    *errorMessage = QStringLiteral("Workbench mode is not in the build catalog: %1")
-                        .arg(modeId);
-                }
-                return false;
-            }
-        }
-        for(RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            modeDesc.enabled = enabledModeIds.contains(modeDesc.descriptor.id);
-            if(!modeDesc.enabled) {
-                modeDesc.lifecycle = nullptr;
-                modeDesc.languageParticipant = nullptr;
-            }
-        }
-        if(errorMessage != nullptr) {
-            errorMessage->clear();
-        }
-        return true;
-    }
-
     bool RobotQtViewerWorkbenchPackageRegistry::setEnabledWorkbenchIds(
         const QStringList& enabledWorkbenchIds,
         QString* errorMessage)
     {
-        return setEnabledModeIds(enabledWorkbenchIds, errorMessage);
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::validateEnabledModes(
-        QString* errorMessage) const
-    {
-        for(const RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            if(!modeDesc.enabled || !hasPackage(modeDesc.packageId)) {
-                continue;
-            }
-            if(modeDesc.lifecycle == nullptr) {
+        for(const QString& workbenchId : enabledWorkbenchIds) {
+            if(registeredWorkbench(workbenchId) == nullptr) {
                 if(errorMessage != nullptr) {
-                    *errorMessage = QStringLiteral("Workbench mode has no lifecycle: %1 (%2)")
-                        .arg(modeDesc.descriptor.id, modeDesc.packageId);
+                    *errorMessage = QStringLiteral("Workbench is not in the build catalog: %1")
+                        .arg(workbenchId);
                 }
                 return false;
             }
-            if(modeDesc.languageParticipant == nullptr) {
-                if(errorMessage != nullptr) {
-                    *errorMessage = QStringLiteral("Workbench mode has no language participant: %1 (%2)")
-                        .arg(modeDesc.descriptor.id, modeDesc.packageId);
-                }
-                return false;
+        }
+        for(RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            workbenchDesc.enabled = enabledWorkbenchIds.contains(workbenchDesc.descriptor.id);
+            if(!workbenchDesc.enabled) {
+                workbenchDesc.lifecycle = nullptr;
+                workbenchDesc.languageParticipant = nullptr;
             }
         }
         if(errorMessage != nullptr) {
@@ -385,20 +258,21 @@ namespace robot_qt_viewer
     bool RobotQtViewerWorkbenchPackageRegistry::validateEnabledWorkbenches(
         QString* errorMessage) const
     {
-        return validateEnabledModes(errorMessage);
-    }
-
-    bool RobotQtViewerWorkbenchPackageRegistry::validateEnabledModeLanguages(
-        QString* errorMessage) const
-    {
-        for(const RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            if(!modeDesc.enabled || !hasPackage(modeDesc.packageId)) {
+        for(const RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            if(!workbenchDesc.enabled || !hasPackage(workbenchDesc.packageId)) {
                 continue;
             }
-            if(modeDesc.languageParticipant == nullptr) {
+            if(workbenchDesc.lifecycle == nullptr) {
                 if(errorMessage != nullptr) {
-                    *errorMessage = QStringLiteral("Workbench mode has no language participant: %1 (%2)")
-                        .arg(modeDesc.descriptor.id, modeDesc.packageId);
+                    *errorMessage = QStringLiteral("Workbench has no lifecycle: %1 (%2)")
+                        .arg(workbenchDesc.descriptor.id, workbenchDesc.packageId);
+                }
+                return false;
+            }
+            if(workbenchDesc.languageParticipant == nullptr) {
+                if(errorMessage != nullptr) {
+                    *errorMessage = QStringLiteral("Workbench has no language participant: %1 (%2)")
+                        .arg(workbenchDesc.descriptor.id, workbenchDesc.packageId);
                 }
                 return false;
             }
@@ -409,11 +283,25 @@ namespace robot_qt_viewer
         return true;
     }
 
-    QString RobotQtViewerWorkbenchPackageRegistry::packageIdForMode(
-        RobotQtViewerWorkbenchKind kind) const
+    bool RobotQtViewerWorkbenchPackageRegistry::validateEnabledWorkbenchLanguages(
+        QString* errorMessage) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc == nullptr ? QString() : modeDesc->packageId;
+        for(const RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            if(!workbenchDesc.enabled || !hasPackage(workbenchDesc.packageId)) {
+                continue;
+            }
+            if(workbenchDesc.languageParticipant == nullptr) {
+                if(errorMessage != nullptr) {
+                    *errorMessage = QStringLiteral("Workbench has no language participant: %1 (%2)")
+                        .arg(workbenchDesc.descriptor.id, workbenchDesc.packageId);
+                }
+                return false;
+            }
+        }
+        if(errorMessage != nullptr) {
+            errorMessage->clear();
+        }
+        return true;
     }
 
     QString RobotQtViewerWorkbenchPackageRegistry::packageIdForWorkbench(
@@ -432,8 +320,7 @@ namespace robot_qt_viewer
     IRobotQtViewerWorkbenchLifecycle* RobotQtViewerWorkbenchPackageRegistry::lifecycle(
         RobotQtViewerWorkbenchKind kind) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc == nullptr ? nullptr : modeDesc->lifecycle;
+        return lifecycle(robotQtViewerWorkbenchId(kind));
     }
 
     IRobotQtViewerWorkbenchLifecycle* RobotQtViewerWorkbenchPackageRegistry::lifecycle(
@@ -447,18 +334,15 @@ namespace robot_qt_viewer
     RobotQtViewerWorkbenchPackageRegistry::languageParticipant(
         RobotQtViewerWorkbenchKind kind) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc == nullptr ? nullptr : modeDesc->languageParticipant;
+        const RobotQtViewerWorkbenchDesc* workbenchDesc = workbench(kind);
+        return workbenchDesc == nullptr ? nullptr : workbenchDesc->languageParticipant;
     }
 
     const RobotQtViewerWorkbenchLifecyclePolicy*
     RobotQtViewerWorkbenchPackageRegistry::lifecyclePolicy(
         RobotQtViewerWorkbenchKind kind) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc == nullptr || modeDesc->lifecycle == nullptr
-            ? nullptr
-            : &modeDesc->lifecyclePolicy;
+        return lifecyclePolicy(robotQtViewerWorkbenchId(kind));
     }
 
     const RobotQtViewerWorkbenchLifecyclePolicy*
@@ -482,55 +366,36 @@ namespace robot_qt_viewer
         return nullptr;
     }
 
-    const RobotQtViewerWorkbenchModeDesc* RobotQtViewerWorkbenchPackageRegistry::mode(
+    const RobotQtViewerWorkbenchDesc* RobotQtViewerWorkbenchPackageRegistry::workbench(
         RobotQtViewerWorkbenchKind kind) const
     {
-        for(const RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            if(modeDesc.descriptor.kind == kind && modeDesc.enabled &&
-                hasPackage(modeDesc.packageId)) {
-                return &modeDesc;
+        for(const RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            if(workbenchDesc.descriptor.kind == kind && workbenchDesc.enabled &&
+                hasPackage(workbenchDesc.packageId)) {
+                return &workbenchDesc;
             }
         }
         return nullptr;
     }
 
-    const RobotQtViewerWorkbenchModeDesc* RobotQtViewerWorkbenchPackageRegistry::mode(
-        const QString& modeId) const
+    const RobotQtViewerWorkbenchDesc* RobotQtViewerWorkbenchPackageRegistry::workbench(
+        const QString& workbenchId) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = registeredMode(modeId);
-        return modeDesc != nullptr && modeDesc->enabled && hasPackage(modeDesc->packageId)
-            ? modeDesc
+        const RobotQtViewerWorkbenchDesc* workbenchDesc = registeredWorkbench(workbenchId);
+        return workbenchDesc != nullptr && workbenchDesc->enabled && hasPackage(workbenchDesc->packageId)
+            ? workbenchDesc
             : nullptr;
     }
 
-    const RobotQtViewerWorkbenchModeDesc*
-    RobotQtViewerWorkbenchPackageRegistry::registeredMode(const QString& modeId) const
+    const RobotQtViewerWorkbenchDesc*
+    RobotQtViewerWorkbenchPackageRegistry::registeredWorkbench(const QString& workbenchId) const
     {
-        for(const RobotQtViewerWorkbenchModeDesc& modeDesc : m_modes) {
-            if(modeDesc.descriptor.id == modeId) {
-                return &modeDesc;
+        for(const RobotQtViewerWorkbenchDesc& workbenchDesc : m_workbenches) {
+            if(workbenchDesc.descriptor.id == workbenchId) {
+                return &workbenchDesc;
             }
         }
         return nullptr;
-    }
-
-    const RobotQtViewerWorkbenchDesc* RobotQtViewerWorkbenchPackageRegistry::workbench(
-        RobotQtViewerWorkbenchKind kind) const
-    {
-        return mode(kind);
-    }
-
-    const RobotQtViewerWorkbenchDesc* RobotQtViewerWorkbenchPackageRegistry::workbench(
-        const QString& workbenchId) const
-    {
-        return mode(workbenchId);
-    }
-
-    const RobotQtViewerWorkbenchDesc*
-    RobotQtViewerWorkbenchPackageRegistry::registeredWorkbench(
-        const QString& workbenchId) const
-    {
-        return registeredMode(workbenchId);
     }
 
     const RobotQtViewerWorkbenchFeatureDesc* RobotQtViewerWorkbenchPackageRegistry::feature(
@@ -547,8 +412,7 @@ namespace robot_qt_viewer
     const RobotQtViewerWorkbenchDescriptor* RobotQtViewerWorkbenchPackageRegistry::descriptor(
         RobotQtViewerWorkbenchKind kind) const
     {
-        const RobotQtViewerWorkbenchModeDesc* modeDesc = mode(kind);
-        return modeDesc == nullptr ? nullptr : &modeDesc->descriptor;
+        return descriptor(robotQtViewerWorkbenchId(kind));
     }
 
     const RobotQtViewerWorkbenchDescriptor* RobotQtViewerWorkbenchPackageRegistry::descriptor(
@@ -564,16 +428,10 @@ namespace robot_qt_viewer
         return m_packages;
     }
 
-    const QVector<RobotQtViewerWorkbenchModeDesc>&
-    RobotQtViewerWorkbenchPackageRegistry::modes() const
-    {
-        return m_modes;
-    }
-
     const QVector<RobotQtViewerWorkbenchDesc>&
     RobotQtViewerWorkbenchPackageRegistry::workbenches() const
     {
-        return m_modes;
+        return m_workbenches;
     }
 
     const QVector<RobotQtViewerWorkbenchFeatureDesc>&
@@ -602,14 +460,14 @@ namespace robot_qt_viewer
         registry.registerPackage(makePackage(paintingAnalysisPackageId, QStringLiteral("Painting Analysis")));
         registry.registerPackage(makePackage(digitalTwinPackageId, QStringLiteral("Digital Twin")));
 
-        registry.registerMode(makeMode(projectAssemblyPackageId, RobotQtViewerWorkbenchKind::Browse));
-        registry.registerMode(makeMode(robotRunPackageId, RobotQtViewerWorkbenchKind::Motion));
-        registry.registerMode(makeMode(projectAssemblyPackageId, RobotQtViewerWorkbenchKind::ToolSetup));
-        registry.registerMode(makeMode(collisionConfigPackageId, RobotQtViewerWorkbenchKind::Collision));
-        registry.registerMode(makeMode(motionPlanningPackageId, RobotQtViewerWorkbenchKind::TrajectoryPlanning));
-        registry.registerMode(makeMode(sprayProcessPackageId, RobotQtViewerWorkbenchKind::SprayProcess));
-        registry.registerMode(makeMode(paintingAnalysisPackageId, RobotQtViewerWorkbenchKind::CoatingAnalysis));
-        registry.registerMode(makeMode(digitalTwinPackageId, RobotQtViewerWorkbenchKind::DigitalTwin));
+        registry.registerWorkbench(makeWorkbench(projectAssemblyPackageId, RobotQtViewerWorkbenchKind::Browse));
+        registry.registerWorkbench(makeWorkbench(robotRunPackageId, RobotQtViewerWorkbenchKind::Motion));
+        registry.registerWorkbench(makeWorkbench(projectAssemblyPackageId, RobotQtViewerWorkbenchKind::ToolSetup));
+        registry.registerWorkbench(makeWorkbench(collisionConfigPackageId, RobotQtViewerWorkbenchKind::Collision));
+        registry.registerWorkbench(makeWorkbench(motionPlanningPackageId, RobotQtViewerWorkbenchKind::TrajectoryPlanning));
+        registry.registerWorkbench(makeWorkbench(sprayProcessPackageId, RobotQtViewerWorkbenchKind::SprayProcess));
+        registry.registerWorkbench(makeWorkbench(paintingAnalysisPackageId, RobotQtViewerWorkbenchKind::CoatingAnalysis));
+        registry.registerWorkbench(makeWorkbench(digitalTwinPackageId, RobotQtViewerWorkbenchKind::DigitalTwin));
 
         return registry;
     }

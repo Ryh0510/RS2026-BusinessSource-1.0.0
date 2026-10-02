@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CollisionConfigWorkbenchShellPort.h"
+
 #include "CollisionWorkbenchServices.h"
 #include "RobotQtViewerEvents.h"
 
@@ -25,7 +27,7 @@ namespace robot_qt_viewer
     class CollisionLinkModelSetupModuleController;
     class RobotQtViewerDocumentContext;
 
-    class CollisionWorkbenchModuleController : public QObject
+    class CollisionWorkbenchModuleController : public QObject, public CollisionConfigWorkbenchShellPort
     {
         Q_OBJECT
 
@@ -37,6 +39,8 @@ namespace robot_qt_viewer
             QObject* parent = nullptr);
         ~CollisionWorkbenchModuleController() override;
 
+        void setWorkbenchActive(bool active);
+        bool isWorkbenchActive() const;
         void handleEvent(const RobotQtViewerEvent& event);
         bool isUpdating() const;
         bool isCollisionModelConfigurationActive() const;
@@ -82,6 +86,9 @@ namespace robot_qt_viewer
         void generateMissingCollisionProxiesFromVisual();
         void removeSelectedCollisionElement();
         void saveOverridesToProject();
+        void requestSaveOverridesToProject() override;
+        void requestSaveOverridesAsSidecar(QWidget* parentWidget) override;
+        void requestExportRobotUrdfWithCollision(QWidget* parentWidget) override;
         bool selectedRobotHasCollisionOverrides() const;
         std::filesystem::path selectedRobotSourcePath() const;
         void saveOverridesAsSidecar(
@@ -107,6 +114,7 @@ namespace robot_qt_viewer
         void saveCollisionOverridesSidecarRequested();
         void exportCollisionUrdfRequested();
         void viewportReloadRequested();
+        void projectSaveAsRequested();
         void statusMessageRequested(const QString& message, int timeoutMs);
 
     private:
@@ -116,6 +124,7 @@ namespace robot_qt_viewer
         std::unique_ptr<CollisionDocumentEventPublisher> m_documentEvents;
         std::unique_ptr<CollisionLinkModelSetupModuleController> m_linkModelSetupController;
         std::unique_ptr<CollisionDetectorConfigModuleController> m_detectorConfigController;
+        bool m_workbenchActive = false;
         bool m_updating = false;
         bool m_collisionModelConfigurationActive = false;
     };

@@ -16,7 +16,7 @@ target_link_libraries(${TARGET_NAME}
         SMRobotWorkbenchCommon::WorkbenchCommon
         $<BUILD_INTERFACE:RobotRunMotionControl>
         $<INSTALL_INTERFACE:SMRobotWorkbenchRobotRun::RobotRunMotionControl>
-        SMRobotWorkbenchCollisionConfig::CollisionRuntimeResults
+        SMRobotWorkbenchCommon::CollisionRuntimeResultsView
 )
 
 target_compile_features(${TARGET_NAME}
@@ -27,7 +27,7 @@ target_compile_features(${TARGET_NAME}
 set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
     SMRobotWorkbenchCommon::WorkbenchCommon
     SMRobotWorkbenchRobotRun::RobotRunMotionControl
-    SMRobotWorkbenchCollisionConfig::CollisionRuntimeResults
+    SMRobotWorkbenchCommon::CollisionRuntimeResultsView
 )
 
 set_target_properties(${TARGET_NAME}

@@ -3,7 +3,7 @@
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
 #include "RobotQtViewerOperationStatus.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/ProjectDocument.h>
 #include <SimulationProject/ProjectSession.h>
@@ -67,8 +67,9 @@ namespace robot_qt_viewer
         m_context.documentController().publishViewportReloadRequested(sourceId);
         printProfileRow("Viewport publish request", elapsedMilliseconds(requestStart), sourceId);
 
-        RobotQtViewerViewportServices* viewportServices = m_context.viewportServices();
-        if(viewportServices == nullptr) {
+        IRobotQtViewerDocumentViewportPort* documentViewport = m_context.documentViewport();
+        IRobotQtViewerCollisionViewportPort* collisionViewport = m_context.collisionViewport();
+        if(documentViewport == nullptr || collisionViewport == nullptr) {
             result.errorMessage = QStringLiteral("Viewport is not available.");
             result.elapsedMs = elapsedMilliseconds(reloadStart);
             printProfileRow("Viewport reload total", result.elapsedMs, result.errorMessage);
@@ -93,7 +94,7 @@ namespace robot_qt_viewer
 
         const auto loadStart = std::chrono::steady_clock::now();
         const RobotQtViewerViewportLoadResult loadResult =
-            viewportServices->loadProjectDocument(m_context.document(), basePath);
+            documentViewport->loadProjectDocument(m_context.document(), basePath);
         printProfileRow(
             "Viewport load document",
             elapsedMilliseconds(loadStart),
@@ -117,7 +118,7 @@ namespace robot_qt_viewer
         }
 
         const auto visibilityStart = std::chrono::steady_clock::now();
-        viewportServices->setCollisionGeometryVisible(result.showCollisionGeometry);
+        collisionViewport->setCollisionGeometryVisible(result.showCollisionGeometry);
         printProfileRow(
             "Viewport collision visible",
             elapsedMilliseconds(visibilityStart),

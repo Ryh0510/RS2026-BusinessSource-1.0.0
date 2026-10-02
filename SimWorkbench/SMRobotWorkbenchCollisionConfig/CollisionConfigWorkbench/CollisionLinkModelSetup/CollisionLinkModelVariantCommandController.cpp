@@ -1,7 +1,7 @@
 #include "CollisionLinkModelVariantCommandController.h"
 
 #include "CollisionLinkModelDocumentFacade.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <SimulationProject/CollisionModelSelectionIds.h>
 #include <SimulationProject/ProjectDocumentService.h>
@@ -20,7 +20,7 @@ namespace
 }
 
 CollisionLinkModelVariantCommandResult CollisionLinkModelVariantCommandController::showVariantOnly(
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& robotId,
     const QString& linkName,
     const QString& variantId)
@@ -43,7 +43,7 @@ CollisionLinkModelVariantCommandResult CollisionLinkModelVariantCommandControlle
 
 CollisionLinkModelVariantCommandResult CollisionLinkModelVariantCommandController::useVariantInDetector(
     simulation_project::ProjectDocumentService& service,
-    robot_qt_viewer::RobotQtViewerViewportServices* viewportServices,
+    robot_qt_viewer::IRobotQtViewerCollisionViewportPort* viewportServices,
     const QString& detectorId,
     const QString& robotId,
     const QString& linkName,

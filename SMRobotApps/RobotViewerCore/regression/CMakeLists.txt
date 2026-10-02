@@ -1,3 +1,5 @@
 # RobotViewerCore regression tests
 
 add_subdirectory(CollisionModelWorkflowSmokeTest)
+add_subdirectory(CustomMeshViewportSmokeTest)
+add_subdirectory(ProjectSceneSystemsTest)

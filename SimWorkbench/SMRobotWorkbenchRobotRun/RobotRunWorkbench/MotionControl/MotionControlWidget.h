@@ -9,7 +9,6 @@ class QDoubleSpinBox;
 class QFrame;
 class QLabel;
 class QPushButton;
-class QScrollArea;
 class QSlider;
 class QString;
 class QStringList;
@@ -80,6 +79,7 @@ signals:
     void collisionDetectorSelectionChanged(const QString& detectorId);
     void collisionMonitoringChanged(bool enabled);
     void collisionGeometryVisibilityChanged(bool visible);
+    void collisionDetailsRequested();
 
 private:
     struct JointControlRow
@@ -100,7 +100,6 @@ private:
 
     QComboBox* m_robotCombo = nullptr;
     QLabel* m_jointRobotLabel = nullptr;
-    QScrollArea* m_jointScrollArea = nullptr;
     QWidget* m_jointRowsWidget = nullptr;
     QVBoxLayout* m_jointRowsLayout = nullptr;
     QCheckBox* m_autoMotionCheck = nullptr;
@@ -118,9 +117,10 @@ private:
     QComboBox* m_collisionDetectorCombo = nullptr;
     QPushButton* m_collisionMonitoringButton = nullptr;
     QPushButton* m_collisionGeometryButton = nullptr;
+    QPushButton* m_collisionDetailsButton = nullptr;
+    QLabel* m_collisionRuntimeStatus = nullptr;
     CollisionResultsWidget* m_collisionResultsWidget = nullptr;
     QVector<JointControlRow> m_jointRows;
     bool m_collisionMonitoringAvailable = false;
     bool m_updatingUi = false;
 };
-

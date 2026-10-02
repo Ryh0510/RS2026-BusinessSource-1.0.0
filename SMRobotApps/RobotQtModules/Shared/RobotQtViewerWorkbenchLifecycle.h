@@ -23,6 +23,7 @@ namespace robot_qt_viewer
 
     enum class RobotQtViewerWorkbenchTransitionCause
     {
+        SelectionChange,
         UserWorkbenchSwitch,
         UserModeSwitch = UserWorkbenchSwitch,
         TaskHandoff,

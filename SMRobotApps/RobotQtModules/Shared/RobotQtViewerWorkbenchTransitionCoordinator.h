@@ -32,6 +32,10 @@ namespace robot_qt_viewer
             QWidget* promptParent = nullptr,
             RobotQtViewerWorkbenchTransitionCause cause =
                 RobotQtViewerWorkbenchTransitionCause::UserWorkbenchSwitch);
+        RobotQtViewerWorkbenchTransitionResult requestReturn(
+            const QString& fallbackWorkbenchId,
+            const QString& sourceId,
+            QWidget* promptParent = nullptr);
 
         RobotQtViewerWorkbenchTransitionResult prepareActiveDeactivation(
             RobotQtViewerWorkbenchTransitionCause cause,
@@ -87,11 +91,13 @@ namespace robot_qt_viewer
         RobotQtViewerWorkbenchManager& m_manager;
         RobotQtViewerEventHub& m_eventHub;
         std::map<QString, RobotQtViewerWorkbenchLifecycleState> m_states;
+        std::map<QString, QString> m_returnWorkbenchIds;
         std::uint64_t m_transitionSequence = 0;
         std::uint64_t m_projectGeneration = 1;
         RobotQtViewerWorkbenchTransitionContext m_preparedContext;
         bool m_transitionInProgress = false;
         bool m_hasPreparedDeactivation = false;
         bool m_shutdownComplete = false;
+        bool m_suppressReturnTargetUpdate = false;
     };
 }

@@ -73,6 +73,8 @@ else()
     rs_add_example_category_roots()
 endif()
 
+rs_add_installed_sdk_examples()
+
 
 
 # #############################################################
@@ -93,6 +95,7 @@ endif()
 if( ${ExportPacakge${PACKAGE_NAME}} AND NOT UsingPrebuilt_${PACKAGE_NAME} )
     include(CMakePackageConfigHelpers)
     set(SUPPORTED_COMPONENTS ${${PACKAGE_NAME}_ExportComponents})
+    set(SDK_PACKAGE_INSTALL_COMPONENT smrobot_sdk_${PACKAGE_NAME}_package)
 
     configure_package_config_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
@@ -110,18 +113,34 @@ if( ${ExportPacakge${PACKAGE_NAME}} AND NOT UsingPrebuilt_${PACKAGE_NAME} )
         ${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE_NAME}Config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE_NAME}ConfigVersion.cmake
         DESTINATION ${PACKAGE_NAME}/lib/cmake
+        COMPONENT ${SDK_PACKAGE_INSTALL_COMPONENT}
     )
 
     install(FILES
         ${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE_NAME}Config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE_NAME}ConfigVersion.cmake
         DESTINATION ${PACKAGE_NAME}/lib/cmake/${PACKAGE_NAME}
+        COMPONENT ${SDK_PACKAGE_INSTALL_COMPONENT}
     )
 
     rs_install_compat_package(
         Applications
         ${PACKAGE_NAME}
         COMPONENTS ${${PACKAGE_NAME}_ExportComponents}
+        INSTALL_COMPONENT ${SDK_PACKAGE_INSTALL_COMPONENT}
+    )
+
+    include(${PROJECT_SOURCE_DIR}/cmake/FuncDef_SdkPackageContent.cmake)
+    smrobot_install_sdk_package_content(
+        PACKAGE_NAME ${PACKAGE_NAME}
+        VERSION ${PROJECT_VERSION}
+        README_FILE ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+        DOCS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs
+        EXAMPLES_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples
+        INSTALL_COMPONENT ${SDK_PACKAGE_INSTALL_COMPONENT}
+        COMPONENTS RobotViewerCore
+        ARTIFACT_KIND static-library-sdk
+        RUNTIME_DIRECTORY lib
     )
 endif()
 

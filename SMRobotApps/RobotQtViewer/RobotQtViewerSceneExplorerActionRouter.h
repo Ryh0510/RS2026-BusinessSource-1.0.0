@@ -10,25 +10,26 @@ class QWidget;
 
 namespace robot_qt_viewer
 {
-    class CollisionWorkbenchModuleController;
-    class SceneExplorerModuleController;
-    class ToolSetupModuleController;
+    class CollisionConfigWorkbenchShellPort;
+    class SceneExplorerWorkbenchShellPort;
+    class ToolSetupWorkbenchShellPort;
 
     class RobotQtViewerSceneExplorerActionRouter
     {
     public:
         using StatusCallback = std::function<void(const QString&, int)>;
         using VoidCallback = std::function<void()>;
+        using TransitionCallback = std::function<bool()>;
         using RobotLinkCallback = std::function<void(const QString&, const QString&)>;
         using ObjectCallback = std::function<void(const QString&)>;
 
         RobotQtViewerSceneExplorerActionRouter() = default;
 
         void setParentWidget(QWidget* parentWidget);
-        void setSceneExplorerController(SceneExplorerModuleController* controller);
-        void setToolSetupController(ToolSetupModuleController* controller);
-        void setCollisionWorkbenchController(CollisionWorkbenchModuleController* controller);
-        void setEnterToolSetupWorkbenchCallback(VoidCallback callback);
+        void setSceneExplorerPort(SceneExplorerWorkbenchShellPort* port);
+        void setToolSetupPort(ToolSetupWorkbenchShellPort* port);
+        void setCollisionWorkbenchPort(CollisionConfigWorkbenchShellPort* port);
+        void setEnterToolSetupWorkbenchCallback(TransitionCallback callback);
         void setDeleteSelectedEntityCallback(VoidCallback callback);
         void setReloadViewportCallback(VoidCallback callback);
         void setSelectRobotContextCallback(RobotLinkCallback callback);
@@ -40,10 +41,10 @@ namespace robot_qt_viewer
 
     private:
         QWidget* m_parentWidget = nullptr;
-        SceneExplorerModuleController* m_sceneExplorerController = nullptr;
-        ToolSetupModuleController* m_toolSetupController = nullptr;
-        CollisionWorkbenchModuleController* m_collisionWorkbenchController = nullptr;
-        VoidCallback m_enterToolSetupWorkbenchCallback;
+        SceneExplorerWorkbenchShellPort* m_sceneExplorerPort = nullptr;
+        ToolSetupWorkbenchShellPort* m_toolSetupPort = nullptr;
+        CollisionConfigWorkbenchShellPort* m_collisionWorkbenchPort = nullptr;
+        TransitionCallback m_enterToolSetupWorkbenchCallback;
         VoidCallback m_deleteSelectedEntityCallback;
         VoidCallback m_reloadViewportCallback;
         RobotLinkCallback m_selectRobotContextCallback;

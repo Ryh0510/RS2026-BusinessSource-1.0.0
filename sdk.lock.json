@@ -1,11 +1,11 @@
-﻿{
+{
     "businessPackage":  "RS2026-BusinessSource",
-    "businessVersion":  "1.0.3",
+    "businessVersion":  "1.0.5",
     "platform":  "win64-vs2019",
-    "sourceCommit":  "37177fbee61f86eb0ac9520343c73ca19d8e379d",
+    "sourceCommit":  "1a2056d4d18e1b2173f646e992a29ac84fadca93",
     "sourceBranch":  "branch-codex-dev",
-    "sourceDirty":  true,
-    "generatedAtUtc":  "2026-08-25T13:45:21Z",
+    "sourceDirty":  false,
+    "generatedAtUtc":  "2026-09-30T10:01:32Z",
     "sourceAllowlist":  [
                             "cmake",
                             "config",
@@ -24,20 +24,20 @@
     "sdk":  {
                 "name":  "SMRobotSDK",
                 "pathHint":  "PrebuiltPackages",
-                "manifestSha256":  "575eef727400a5596911ee3639b21ab8292d77d22bfac7665f3a4908b0df5880",
+                "manifestSha256":  "b5b98d8b6c6146e1c49f3004803cf5dd808f5b4e269e08f52f938f742b1fca32",
                 "copiedThirdParty":  true
             },
     "thirdparty":  {
                        "name":  "SMRobotWindowsThirdParty",
                        "mode":  "sdk-curated-windows-external-fcl",
                        "pathHint":  "PrebuiltPackages\\thirdparty",
-                       "gitCommit":  "e4e016f9729ff2a5df9409189f0d537d5c45f1f9"
+                       "gitCommit":  "56a5287ff45211f90ec20e4ec67c957e66de4903"
                    },
     "data":  {
                  "name":  "SMRobotData",
                  "mode":  "external",
                  "pathHint":  "data",
-                 "gitCommit":  "17f8941a974a333190ee25de760e05ef3ad63f24"
+                 "gitCommit":  "34044d253c26ebe0ef18e2a53e389ad8940e9d44"
              },
     "cmake":  {
                   "prebuiltPackageRoot":  "PrebuiltPackages",

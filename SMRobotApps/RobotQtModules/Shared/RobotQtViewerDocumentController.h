@@ -4,11 +4,13 @@
 #include "RobotQtViewerEvents.h"
 
 #include <SimulationProject/ProjectSession.h>
+#include <SimulationProject/ProjectTransaction.h>
 
 #include <QObject>
 #include <QString>
 
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace simulation_project
@@ -31,6 +33,14 @@ namespace robot_qt_viewer
         bool success = false;
         bool changed = false;
         QString message;
+        bool hasProjectChange = false;
+        simulation_project::ProjectChangeSet projectChange;
+    };
+
+    struct ProjectBindFramesMutationResult
+    {
+        ProjectMutationResult transaction;
+        simulation_project::BindFramesResult command;
     };
 
     using ProjectMutation =
@@ -46,6 +56,8 @@ namespace robot_qt_viewer
 
         simulation_project::ProjectSession& session();
         const simulation_project::ProjectSession& session() const;
+        simulation_project::ProjectRevision revision() const;
+        const simulation_project::ProjectChangeSet& lastProjectChange() const;
 
         void publishProjectOpened(const QString& sourceId = QString());
         void publishProjectSaved(const QString& sourceId = QString());
@@ -54,6 +66,12 @@ namespace robot_qt_viewer
             const QString& sourceId,
             ProjectDirtyPolicy dirtyPolicy,
             const ProjectMutation& mutation);
+        ProjectBindFramesMutationResult executeBindFrames(
+            const QString& sourceId,
+            const simulation_project::BindFramesRequest& request);
+        ProjectMutationResult executeRebindFrames(
+            const QString& sourceId,
+            const simulation_project::RebindFramesRequest& request);
         void restoreProjectSnapshot(
             const QString& sourceId,
             simulation_project::ProjectDocument document,
@@ -81,9 +99,16 @@ namespace robot_qt_viewer
             const QString& sourceId = QString());
 
     private:
-        RobotQtViewerEvent makeEvent(RobotQtViewerEventKind kind, const QString& sourceId) const;
+        void publishCommittedChange(
+            const QString& sourceId,
+            const simulation_project::ProjectChangeSet& changes);
+        RobotQtViewerEvent makeEvent(
+            RobotQtViewerEventKind kind,
+            const QString& sourceId,
+            const simulation_project::ProjectChangeSet* changes = nullptr) const;
 
         simulation_project::ProjectSession& m_session;
         RobotQtViewerEventHub& m_eventHub;
+        std::unique_ptr<simulation_project::IProjectTransactionService> m_transactions;
     };
 }

@@ -32,6 +32,7 @@ namespace robot_qt_viewer
     void configureInspectorForm(QFormLayout* form);
     void configureInspectorList(QListWidget* list, bool alternatingRows = false, bool uniformItems = true);
     void configureInspectorCombo(QComboBox* combo, int minimumContentsLength = 8);
+    void configureInspectorEntityCombo(QComboBox* combo, int minimumContentsLength = 12);
     QListWidgetItem* addInspectorListItem(QListWidget* list, const QString& text);
 }
 

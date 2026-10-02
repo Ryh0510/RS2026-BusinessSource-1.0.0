@@ -9,6 +9,7 @@ set(SOURCES
     MotionControlWidget.h
     RobotRunWorkbenchLifecycle.cpp
     RobotRunWorkbenchLifecycle.h
+    RobotRunWorkbenchShellPort.h
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES})
@@ -29,7 +30,7 @@ target_link_libraries(${TARGET_NAME}
     PRIVATE
         SMRobotCore::RobotRuntime
         SMRobotMotionPlanning::MotionPlanningCore
-        SMRobotWorkbenchCollisionConfig::CollisionRuntimeResults
+        SMRobotWorkbenchCommon::CollisionRuntimeResultsView
         $<BUILD_INTERFACE:RobotQtModulesCoreWidgets>
         $<INSTALL_INTERFACE:SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets>
 )
@@ -50,9 +51,9 @@ if(ExportPacakge${PACKAGE_NAME})
     set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
         SMRobotWorkbenchCommon::RobotQtModulesShared
         SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
+        SMRobotWorkbenchCommon::CollisionRuntimeResultsView
         SMRobotCore::RobotRuntime
         SMRobotMotionPlanning::MotionPlanningCore
-        SMRobotWorkbenchCollisionConfig::CollisionRuntimeResults
     )
 
     set(${TARGET_NAME}_INSTALL_HEADER_STAGING_DIR

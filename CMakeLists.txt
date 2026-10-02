@@ -10,14 +10,37 @@ cmake_minimum_required( VERSION 3.20 )
 ######################################################################################
 #   Define the project
 project( RobotSimulator2026
-    VERSION 1.0.3
+    VERSION 1.0.5
     LANGUAGES CXX C
     DESCRIPTION "Robot Simulator!"
 )
 
-option( BuildTests "Build headless tests" OFF )
-if( BuildTests )
-    enable_testing()
+set(_smrobot_build_testing_default OFF)
+if(DEFINED CACHE{BuildTests} AND NOT DEFINED CACHE{BUILD_TESTING})
+    set(_smrobot_build_testing_default "$CACHE{BuildTests}")
+endif()
+option(BUILD_TESTING "Build project tests" ${_smrobot_build_testing_default})
+if(DEFINED CACHE{BuildTests}
+   AND DEFINED CACHE{BUILD_TESTING}
+   AND NOT "$CACHE{BuildTests}" STREQUAL "$CACHE{BUILD_TESTING}")
+    message(WARNING
+        "BuildTests and BUILD_TESTING differ; BUILD_TESTING is authoritative. "
+        "BuildTests is a compatibility seed for build trees created before this migration.")
+endif()
+set(BuildTests "${BUILD_TESTING}")
+include(CTest)
+unset(_smrobot_build_testing_default)
+
+if(BUILD_TESTING)
+    add_test(
+        NAME SoftwareArchitecture-BoundaryCheck
+        COMMAND ${CMAKE_COMMAND}
+            "-DSMROBOT_SOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckSoftwareArchitectureBoundaries.cmake
+    )
+    set_tests_properties(SoftwareArchitecture-BoundaryCheck PROPERTIES
+        LABELS "Architecture;Modularity"
+    )
 endif()
 option( BuildRobotQtViewer "Build SMRobotApps Qt desktop viewer prototype" ON )
 set(RS2026_LICENSE_ENFORCEMENT_MODE "Enforce" CACHE STRING
@@ -91,6 +114,15 @@ option( DisplayTargetProperties "Whether display the targets' properties" OFF )
 
 #   Define user and find third-party packages
 include( UserConfig )
+
+if(BUILD_TESTING AND WIN32)
+    # Thin Business Source SDKs do not ship the source-only GTest helper.
+    if(EXISTS "${SMROBOT_THIRDPARTY_ROOT}/Windows/FindGTest_3rdParty.cmake")
+        include("${SMROBOT_THIRDPARTY_ROOT}/Windows/FindGTest_3rdParty.cmake")
+    else()
+        find_package(GTest QUIET)
+    endif()
+endif()
 
 # OpenGL is a direct source-build dependency of Common targets. Some user
 # profiles used to obtain OpenGL::GL indirectly through PCL/VTK, so ensure the
@@ -560,5 +592,14 @@ endif()
 
 
 
+
+# An independent prebuilt SDK cannot embed this consumer's local data root.
+# Give regressions the explicitly configured root without changing user/global env.
+if(BUILD_TESTING)
+    configure_file(cmake/TestAssetEnvironment.cmake.in
+        "${CMAKE_CURRENT_BINARY_DIR}/TestAssetEnvironment.cmake" @ONLY)
+    set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/TestAssetEnvironment.cmake")
+endif()
 
 message( STATUS "==================== End of RobotSimulator ${PROJECT_VERSION} CMake ====================\n" )

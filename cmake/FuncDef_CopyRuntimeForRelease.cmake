@@ -35,6 +35,31 @@ function(_smrobot_collect_private_runtime_dlls TARGET_NAME OUT_DEBUG OUT_RELEASE
         endif()
         list(APPEND _runtime_visited "${_runtime_target}")
 
+        foreach(_runtime_config DEBUG RELEASE)
+            get_target_property(
+                _runtime_local_files
+                "${_runtime_target}"
+                "SMROBOT_PRIVATE_RUNTIME_FILES_${_runtime_config}"
+            )
+            if(NOT _runtime_local_files OR
+               _runtime_local_files MATCHES "-NOTFOUND$")
+                continue()
+            endif()
+
+            string(TOLOWER "${_runtime_config}" _runtime_config_lower)
+            foreach(_runtime_file IN LISTS _runtime_local_files)
+                if(NOT EXISTS "${_runtime_file}")
+                    message(FATAL_ERROR
+                        "${_runtime_target} requires private runtime file "
+                        "'${_runtime_file}', but it does not exist.")
+                endif()
+                list(APPEND
+                    _runtime_files_${_runtime_config_lower}
+                    "${_runtime_file}"
+                )
+            endforeach()
+        endforeach()
+
         get_target_property(_runtime_is_imported "${_runtime_target}" IMPORTED)
         if(_runtime_is_imported)
             foreach(_runtime_config DEBUG RELEASE)

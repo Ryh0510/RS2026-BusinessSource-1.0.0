@@ -1,9 +1,9 @@
 #include "RobotQtViewerSceneExplorerActionRouter.h"
 
-#include "CollisionWorkbenchModuleController.h"
+#include "CollisionConfigWorkbenchShellPort.h"
 #include "SceneCollisionTargetResolver.h"
-#include "SceneExplorerModuleController.h"
-#include "ToolSetupModuleController.h"
+#include "SceneExplorerWorkbenchShellPort.h"
+#include "ToolSetupWorkbenchShellPort.h"
 
 #include <utility>
 
@@ -14,24 +14,25 @@ namespace robot_qt_viewer
         m_parentWidget = parentWidget;
     }
 
-    void RobotQtViewerSceneExplorerActionRouter::setSceneExplorerController(
-        SceneExplorerModuleController* controller)
+    void RobotQtViewerSceneExplorerActionRouter::setSceneExplorerPort(
+        SceneExplorerWorkbenchShellPort* port)
     {
-        m_sceneExplorerController = controller;
+        m_sceneExplorerPort = port;
     }
 
-    void RobotQtViewerSceneExplorerActionRouter::setToolSetupController(ToolSetupModuleController* controller)
+    void RobotQtViewerSceneExplorerActionRouter::setToolSetupPort(ToolSetupWorkbenchShellPort* port)
     {
-        m_toolSetupController = controller;
+        m_toolSetupPort = port;
     }
 
-    void RobotQtViewerSceneExplorerActionRouter::setCollisionWorkbenchController(
-        CollisionWorkbenchModuleController* controller)
+    void RobotQtViewerSceneExplorerActionRouter::setCollisionWorkbenchPort(
+        CollisionConfigWorkbenchShellPort* port)
     {
-        m_collisionWorkbenchController = controller;
+        m_collisionWorkbenchPort = port;
     }
 
-    void RobotQtViewerSceneExplorerActionRouter::setEnterToolSetupWorkbenchCallback(VoidCallback callback)
+    void RobotQtViewerSceneExplorerActionRouter::setEnterToolSetupWorkbenchCallback(
+        TransitionCallback callback)
     {
         m_enterToolSetupWorkbenchCallback = std::move(callback);
     }
@@ -68,25 +69,28 @@ namespace robot_qt_viewer
 
         switch(action.kind) {
         case SceneTreeIntentController::ContextMenuActionKind::ConfigureRobotFlange:
-            if(m_toolSetupController == nullptr) {
+            if(m_toolSetupPort == nullptr) {
                 showStatus(QStringLiteral("Frame Editor is not available."), 3000);
                 return;
             }
             if(m_enterToolSetupWorkbenchCallback) {
-                m_enterToolSetupWorkbenchCallback();
+                if(!m_enterToolSetupWorkbenchCallback()) {
+                    showStatus(QStringLiteral("Tool Setup was not opened."), 3000);
+                    return;
+                }
             }
-            if(action.node.kind == SceneExplorerNodeKind::RobotMount && m_sceneExplorerController != nullptr) {
-                const SceneSelectionIntent intent = m_sceneExplorerController->selectionIntentForNode(action.node);
+            if(action.node.kind == SceneExplorerNodeKind::RobotMount && m_sceneExplorerPort != nullptr) {
+                const SceneSelectionIntent intent = m_sceneExplorerPort->selectionIntentForNode(action.node);
                 if(intent.kind != SceneSelectionIntentKind::SelectRobotMount) {
                     showStatus(QStringLiteral("Mount frame is not available."), 3000);
                     return;
                 }
-                m_toolSetupController->focusRobotMountTask(intent.robotId, intent.linkName, intent.mountId);
+                m_toolSetupPort->focusRobotMountTask(intent.robotId, intent.linkName, intent.mountId);
             } else if(action.node.kind == SceneExplorerNodeKind::Link && !action.node.linkName.isEmpty()) {
-                m_toolSetupController->focusRobotMountTask(action.node.id, action.node.linkName);
-                m_toolSetupController->createRobotMountForSelectedLink();
+                m_toolSetupPort->focusRobotMountTask(action.node.id, action.node.linkName);
+                m_toolSetupPort->createRobotMountForSelectedLink();
             } else {
-                m_toolSetupController->focusRobotMountTask(
+                m_toolSetupPort->focusRobotMountTask(
                     action.node.id,
                     action.node.linkName.isEmpty() && !action.robotLinks.isEmpty()
                         ? action.robotLinks.first()
@@ -94,8 +98,8 @@ namespace robot_qt_viewer
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::MoveRobotBase:
-            if(m_sceneExplorerController != nullptr) {
-                m_sceneExplorerController->focusTransformTask(action.node);
+            if(m_sceneExplorerPort != nullptr) {
+                m_sceneExplorerPort->focusTransformTask(action.node);
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::DeleteRobot:
@@ -104,39 +108,45 @@ namespace robot_qt_viewer
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::MoveSceneObject:
-            if(m_sceneExplorerController != nullptr) {
-                m_sceneExplorerController->focusTransformTask(action.node);
+            if(m_sceneExplorerPort != nullptr) {
+                m_sceneExplorerPort->focusTransformTask(action.node);
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::AddObjectFrame:
-            if(m_sceneExplorerController != nullptr) {
-                m_sceneExplorerController->createObjectFrameForObject(action.node.id);
+            if(m_sceneExplorerPort != nullptr) {
+                m_sceneExplorerPort->createObjectFrameForObject(action.node.id);
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::EditObjectFrame:
-            if(m_sceneExplorerController != nullptr) {
-                m_sceneExplorerController->focusTransformTask(action.node);
+            if(m_sceneExplorerPort != nullptr) {
+                m_sceneExplorerPort->focusTransformTask(action.node);
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::BindItemToMount:
-            if(m_toolSetupController == nullptr) {
+            if(m_toolSetupPort == nullptr) {
                 showStatus(QStringLiteral("Frame Editor is not available."), 3000);
                 return;
             }
             if(m_enterToolSetupWorkbenchCallback) {
-                m_enterToolSetupWorkbenchCallback();
+                if(!m_enterToolSetupWorkbenchCallback()) {
+                    showStatus(QStringLiteral("Tool Setup was not opened."), 3000);
+                    return;
+                }
             }
-            m_toolSetupController->focusObjectBindingTask(action.node.id);
+            m_toolSetupPort->focusObjectBindingTask(action.node.id);
             break;
         case SceneTreeIntentController::ContextMenuActionKind::BindObjectToMount:
-            if(m_toolSetupController == nullptr) {
+            if(m_toolSetupPort == nullptr) {
                 showStatus(QStringLiteral("Frame Editor is not available."), 3000);
                 return;
             }
             if(m_enterToolSetupWorkbenchCallback) {
-                m_enterToolSetupWorkbenchCallback();
+                if(!m_enterToolSetupWorkbenchCallback()) {
+                    showStatus(QStringLiteral("Tool Setup was not opened."), 3000);
+                    return;
+                }
             }
-            m_toolSetupController->focusObjectBindingTask(
+            m_toolSetupPort->focusObjectBindingTask(
                 QString(),
                 action.node.id,
                 action.node.kind == SceneExplorerNodeKind::ObjectFrame
@@ -144,16 +154,16 @@ namespace robot_qt_viewer
                     : QString());
             break;
         case SceneTreeIntentController::ContextMenuActionKind::CreateToolAssetFromObject:
-            if(m_toolSetupController != nullptr) {
-                m_toolSetupController->createToolAssetFromSceneObject(action.node.id);
+            if(m_toolSetupPort != nullptr) {
+                m_toolSetupPort->createToolAssetFromSceneObject(action.node.id);
             }
             break;
         case SceneTreeIntentController::ContextMenuActionKind::UnbindMountedAttachment:
-            if(m_toolSetupController == nullptr) {
+            if(m_toolSetupPort == nullptr) {
                 showStatus(QStringLiteral("Frame Editor is not available."), 3000);
                 return;
             }
-            m_toolSetupController->unbindMountedAttachment(action.node.id);
+            m_toolSetupPort->unbindMountedAttachment(action.node.id);
             break;
         case SceneTreeIntentController::ContextMenuActionKind::DeleteObject:
         case SceneTreeIntentController::ContextMenuActionKind::DeletePointCloud:
@@ -169,7 +179,7 @@ namespace robot_qt_viewer
                 showStatus(QStringLiteral("Select a robot, link, object, or attachment to configure collision geometry."), 3000);
                 return;
             }
-            if(m_collisionWorkbenchController == nullptr) {
+            if(m_collisionWorkbenchPort == nullptr) {
                 showStatus(QStringLiteral("Collision configuration is not available."), 3000);
                 return;
             }
@@ -187,10 +197,10 @@ namespace robot_qt_viewer
             } else if(action.node.kind == SceneExplorerNodeKind::Object && m_selectObjectContextCallback) {
                 m_selectObjectContextCallback(action.node.id);
             } else if(action.node.kind == SceneExplorerNodeKind::ToolAttachment &&
-                m_toolSetupController != nullptr) {
-                m_toolSetupController->selectToolAttachmentById(action.node.id.toStdString());
+                m_toolSetupPort != nullptr) {
+                m_toolSetupPort->selectToolAttachmentById(action.node.id.toStdString());
             }
-            m_collisionWorkbenchController->showCollisionModelConfiguration();
+            m_collisionWorkbenchPort->showCollisionModelConfiguration();
             showStatus(QStringLiteral("Collision model configuration opened."), 3000);
             break;
         case SceneTreeIntentController::ContextMenuActionKind::AddToDetectorSetA:
@@ -198,8 +208,8 @@ namespace robot_qt_viewer
                 showStatus(QStringLiteral("Select a robot, link, object, or attachment."), 3000);
                 return;
             }
-            if(m_collisionWorkbenchController != nullptr) {
-                m_collisionWorkbenchController->addMemberToDetectorDraftSet(
+            if(m_collisionWorkbenchPort != nullptr) {
+                m_collisionWorkbenchPort->addMemberToDetectorDraftSet(
                     QStringLiteral("A"),
                     action.displayName,
                     action.robotLinks,
@@ -211,8 +221,8 @@ namespace robot_qt_viewer
                 showStatus(QStringLiteral("Select a robot, link, object, or attachment."), 3000);
                 return;
             }
-            if(m_collisionWorkbenchController != nullptr) {
-                m_collisionWorkbenchController->addMemberToDetectorDraftSet(
+            if(m_collisionWorkbenchPort != nullptr) {
+                m_collisionWorkbenchPort->addMemberToDetectorDraftSet(
                     QStringLiteral("B"),
                     action.displayName,
                     action.robotLinks,

@@ -90,6 +90,7 @@ signals:
     void addDetectorRequested();
     void editDetectorRequested();
     void showSelectedDetectorsRequested();
+    void refreshDetectorNearestRequested();
     void removeDetectorRequested();
     void bindDetectorDraftSetsRequested();
     void removeDetectorPairGeneratorsRequested(const QVector<int>& generatorIndexes);

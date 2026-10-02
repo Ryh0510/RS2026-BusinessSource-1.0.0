@@ -28,16 +28,9 @@ namespace robot_qt_viewer
     struct RobotQtViewerPlatformProfile
     {
         QString schema = QStringLiteral("smrobot.platform-profile");
-        int version = 1;
+        int version = 2;
         QString id;
         QString displayName;
-        QStringList requiredFeatureIds;
-        QStringList requiredModeIds;
-        QStringList optionalModeIds;
-        QStringList defaultEnabledOptionalModeIds;
-        QString defaultModeId;
-        QStringList modeOrder;
-        bool allowUserOverrides = true;
         QStringList workbenchIds;
         QString defaultWorkbenchId;
     };
@@ -49,29 +42,15 @@ namespace robot_qt_viewer
         QString profileId = QStringLiteral("base-robot");
     };
 
-    struct RobotQtViewerPlatformUserOverlay
-    {
-        QString schema = QStringLiteral("smrobot.platform-profile-overlay");
-        int version = 1;
-        QString profileId;
-        QStringList enabledOptionalModeIds;
-        QStringList disabledOptionalModeIds;
-    };
-
     struct RobotQtViewerResolvedPlatformComposition
     {
         QString profileId;
         QString displayName;
-        QString defaultModeId;
         QString defaultWorkbenchId;
-        QStringList enabledModeIds;
         QStringList enabledWorkbenchIds;
-        QStringList requiredModeIds;
         QVector<RobotQtViewerPlatformDiagnostic> diagnostics;
 
         bool succeeded() const;
-        bool containsMode(const QString& modeId) const;
-        bool containsMode(RobotQtViewerWorkbenchKind kind) const;
         bool containsWorkbench(const QString& workbenchId) const;
         bool containsWorkbench(RobotQtViewerWorkbenchKind kind) const;
         QString diagnosticText() const;
@@ -82,8 +61,7 @@ namespace robot_qt_viewer
     public:
         static RobotQtViewerResolvedPlatformComposition resolve(
             const RobotQtViewerWorkbenchPackageRegistry& catalog,
-            const RobotQtViewerPlatformProfile& profile,
-            const RobotQtViewerPlatformUserOverlay& overlay = {});
+            const RobotQtViewerPlatformProfile& profile);
     };
 
     RobotQtViewerPlatformProfile makeRobotQtViewerBuiltInBaseProfile(
@@ -96,6 +74,10 @@ namespace robot_qt_viewer
             const std::filesystem::path& path,
             RobotQtViewerPlatformProfile* profile,
             QString* errorMessage = nullptr);
+        static bool saveProfile(
+            const std::filesystem::path& path,
+            const RobotQtViewerPlatformProfile& profile,
+            QString* errorMessage = nullptr);
         static bool loadSelection(
             const std::filesystem::path& path,
             RobotQtViewerPlatformSelection* selection,
@@ -103,14 +85,6 @@ namespace robot_qt_viewer
         static bool saveSelection(
             const std::filesystem::path& path,
             const RobotQtViewerPlatformSelection& selection,
-            QString* errorMessage = nullptr);
-        static bool loadOverlay(
-            const std::filesystem::path& path,
-            RobotQtViewerPlatformUserOverlay* overlay,
-            QString* errorMessage = nullptr);
-        static bool saveOverlay(
-            const std::filesystem::path& path,
-            const RobotQtViewerPlatformUserOverlay& overlay,
             QString* errorMessage = nullptr);
         static QVector<std::filesystem::path> discoverProfiles(
             const std::filesystem::path& profilesDirectory);

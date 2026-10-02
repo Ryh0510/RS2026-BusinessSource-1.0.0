@@ -8,7 +8,10 @@
 #include <vector>
 
 #include <SimulationProject/ProjectDocument.h>
+#include <VisualizationSDK/CustomMesh.h>
 #include <VisualizationSDK/SurfaceScalarOverlay.h>
+
+#include "ProjectSceneEnvironment.h"
 
 namespace simulation_project
 {
@@ -44,7 +47,7 @@ enum class ProjectSceneCameraView
     Bottom
 };
 
-class ProjectScene
+class ProjectScene : public smrobot::visualization::ICustomMeshScene
 {
 public:
     struct RobotJointInfo
@@ -194,6 +197,17 @@ public:
         bool sensorPreview = true;
     };
 
+    struct CameraInfo
+    {
+        std::string attachmentId;
+        std::string name;
+        std::string robotId;
+        std::string linkName;
+        int width = 640;
+        int height = 480;
+        bool enabled = true;
+    };
+
     ProjectScene();
     ~ProjectScene();
 
@@ -206,6 +220,8 @@ public:
         const std::filesystem::path& basePath);
     const std::filesystem::path& projectBasePath() const;
     void setDefaultBackgroundColor(const simulation_project::ColorDesc& color);
+    void setEnvironmentPreset(ProjectSceneEnvironmentPreset preset);
+    ProjectSceneEnvironmentPreset environmentPreset() const;
     bool refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
@@ -217,6 +233,13 @@ public:
     void resize(int width, int height);
     void update(double timeSeconds);
     void render();
+    std::vector<CameraInfo> cameras() const;
+    bool renderCameraFrame(
+        const std::string& attachmentId,
+        int width,
+        int height,
+        std::vector<unsigned char>& rgbaPixels,
+        std::string* errorMessage = nullptr);
 
     void onMouseMove(float dx, float dy, int button);
     void onScroll(float delta);
@@ -256,6 +279,28 @@ public:
         const std::string& objectId,
         int x,
         int y) const;
+    smrobot::visualization::CustomMeshResult upsertCustomMesh(
+        const smrobot::visualization::CustomMeshDesc& desc,
+        smrobot::visualization::CustomMeshHandle& handle) override;
+    smrobot::visualization::CustomMeshResult updateCustomMeshGeometry(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::MeshData& mesh) override;
+    smrobot::visualization::CustomMeshResult updateCustomMeshColors(
+        smrobot::visualization::CustomMeshHandle handle,
+        const std::vector<smrobot::visualization::Color4f>& colors) override;
+    smrobot::visualization::CustomMeshResult setCustomMeshTransform(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::TransformMatrix& transform) override;
+    smrobot::visualization::CustomMeshResult setCustomMeshAppearance(
+        smrobot::visualization::CustomMeshHandle handle,
+        const smrobot::visualization::MeshAppearance& appearance) override;
+    smrobot::visualization::CustomMeshResult setCustomMeshVisible(
+        smrobot::visualization::CustomMeshHandle handle,
+        bool visible) override;
+    smrobot::visualization::CustomMeshResult removeCustomMesh(
+        smrobot::visualization::CustomMeshHandle handle) override;
+    smrobot::visualization::CustomMeshResult clearCustomMeshes(
+        const std::string& ownerId) override;
     void setShowCollisionGeometry(bool visible);
     void setSelectedLink(const std::string& robotId, const std::string& linkName);
     void setSelectedJointFrame(const std::string& robotId, const std::string& jointName);
@@ -280,6 +325,10 @@ public:
     bool setPreviewRobotMountTransform(
         const std::string& robotMountId,
         const simulation_project::TransformDesc& transform);
+    bool setPreviewMountedAttachmentTransform(
+        const std::string& attachmentId,
+        const simulation_project::TransformDesc& transform);
+    bool setPreviewAttachmentAsset(const simulation_project::AttachmentAssetDesc& asset);
     bool setPreviewRobotMountLink(
         const std::string& robotMountId,
         const std::string& linkName);
@@ -370,6 +419,7 @@ public:
     bool collisionQueriesEnabled() const;
     bool setCollisionQueriesEnabled(bool enabled);
     bool setActiveCollisionDetector(const std::string& id);
+    bool refreshCollisionDetectorNearest(const std::string& id);
     bool setCollisionDetectorEnabled(const std::string& id, bool enabled);
     bool setCollisionDetectorVisible(const std::string& id, bool visible);
     bool updateCollisionDetectorRuntimeOptions(const simulation_project::CollisionDetectorDesc& desc);

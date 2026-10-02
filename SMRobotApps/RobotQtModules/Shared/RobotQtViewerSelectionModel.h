@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RobotQtViewerEventHub.h"
+#include "RobotQtViewerEditSession.h"
 #include "RobotQtViewerEvents.h"
 
 #include <QString>
@@ -31,8 +32,13 @@ namespace robot_qt_viewer
     public:
         explicit RobotQtViewerSelectionModel(RobotQtViewerEventHub& eventHub);
 
+        void setEditSessionCoordinator(
+            RobotQtViewerEditSessionCoordinator* coordinator,
+            QWidget* promptParent = nullptr);
+
         const RobotQtViewerSelectionState& state() const;
         RobotQtViewerSelectionPayload payload() const;
+        bool prepareSelectionChange(const QString& sourceId = QString());
 
         void clear(const QString& sourceId = QString());
         void selectRobotLink(
@@ -73,6 +79,20 @@ namespace robot_qt_viewer
             const QString& sourceId = QString());
 
     private:
+        struct Snapshot
+        {
+            RobotQtViewerSelectionState state;
+            QString toolAssetId;
+            QString objectFrameId;
+            QString jointName;
+            QString collisionDetectorId;
+            QString collisionPairRobotA;
+            QString collisionPairLinkA;
+        };
+
+        Snapshot capture() const;
+        void restore(const Snapshot& snapshot);
+        bool prepareCommit(const Snapshot& previous, const QString& sourceId);
         void publish(const QString& sourceId);
 
         RobotQtViewerEventHub& m_eventHub;
@@ -83,5 +103,7 @@ namespace robot_qt_viewer
         QString m_collisionDetectorId;
         QString m_collisionPairRobotA;
         QString m_collisionPairLinkA;
+        RobotQtViewerEditSessionCoordinator* m_editSessionCoordinator = nullptr;
+        QWidget* m_promptParent = nullptr;
     };
 }

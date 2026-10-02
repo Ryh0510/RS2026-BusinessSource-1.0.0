@@ -1,7 +1,16 @@
 #pragma once
 
 #include "RobotQtViewerWorkbenchLifecycle.h"
+#include "RobotQtViewerWorkbenchContribution.h"
 #include "RobotQtViewerWorkbenchPackageRegistry.h"
+#include "RobotRunWorkbenchShellPort.h"
+
+#include <functional>
+
+class QObject;
+class QDockWidget;
+class QMainWindow;
+class QWidget;
 
 namespace robotruntime
 {
@@ -10,7 +19,24 @@ namespace robotruntime
 
 namespace robot_qt_viewer
 {
+    class RobotQtViewerDocumentContext;
+    class RobotQtViewerDocumentViewRegistry;
     class MotionControlModuleController;
+
+    struct RobotRunWorkbenchComposition
+    {
+        RobotQtViewerDocumentContext* documentContext = nullptr;
+        RobotQtViewerDocumentViewRegistry* documentViewRegistry = nullptr;
+        robotruntime::IRobotRunService* runService = nullptr;
+        QMainWindow* mainWindow = nullptr;
+        QString detailsTitle;
+        std::function<void(const QString&, int)> showStatus;
+        std::function<void(bool)> collisionQueriesChanged;
+        std::function<void(bool)> collisionGeometryVisibilityChanged;
+        std::function<void(bool)> detailsVisibilityChanged;
+        std::function<void(QDockWidget*)> bindDetailsDock;
+        std::function<void(RobotRunWorkbenchShellPort*)> bindShellPort;
+    };
 
     class RobotRunWorkbenchLifecycle final : public IRobotQtViewerWorkbenchLifecycle
     {
@@ -38,6 +64,15 @@ namespace robot_qt_viewer
     };
 
     bool registerRobotRunWorkbenchContribution(
-        RobotQtViewerWorkbenchPackageRegistry& catalog,
-        RobotQtViewerWorkbenchPackageSource source);
+        RobotQtViewerWorkbenchPackageRegistry& catalog);
+    RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
+        makeRobotRunWorkbenchRuntimeContributionFactory(
+            MotionControlModuleController& controller,
+            robotruntime::IRobotRunService& runService,
+            QWidget& taskPanel,
+            QObject& motionControlRoot,
+            QObject* collisionDetailsRoot);
+    RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
+        makeOwnedRobotRunWorkbenchRuntimeContributionFactory(
+            RobotRunWorkbenchComposition composition);
 }

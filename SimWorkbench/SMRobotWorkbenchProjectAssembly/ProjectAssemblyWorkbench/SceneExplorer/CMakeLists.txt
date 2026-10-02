@@ -9,6 +9,9 @@ set(SOURCES
     SceneCollisionTargetResolver.h
     SceneExplorerModuleController.cpp
     SceneExplorerModuleController.h
+    SceneExplorerWorkbenchLifecycle.cpp
+    SceneExplorerWorkbenchLifecycle.h
+    SceneExplorerWorkbenchShellPort.h
     SceneExplorerViewModel.cpp
     SceneExplorerViewModelBuilder.cpp
     SceneExplorerViewModelBuilder.h

@@ -23,6 +23,8 @@ function(smrobot_install_sdk_package_content)
         DOCS_DIRECTORY
         EXAMPLES_DIRECTORY
         INSTALL_COMPONENT
+        ARTIFACT_KIND
+        RUNTIME_DIRECTORY
     )
     set(_multi_value_args COMPONENTS)
     cmake_parse_arguments(SDK_CONTENT "" "${_one_value_args}" "${_multi_value_args}" ${ARGN})
@@ -56,10 +58,26 @@ function(smrobot_install_sdk_package_content)
         endif()
     endforeach()
 
-    if(WIN32)
+    if(SDK_CONTENT_ARTIFACT_KIND)
+        set(_artifact_kind "${SDK_CONTENT_ARTIFACT_KIND}")
+    else()
+        set(_artifact_kind "shared-library-sdk")
+    endif()
+    if(NOT _artifact_kind MATCHES "^(shared|static)-library-sdk$")
+        message(FATAL_ERROR
+            "Unsupported SDK package artifact kind: ${_artifact_kind}")
+    endif()
+
+    if(SDK_CONTENT_RUNTIME_DIRECTORY)
+        set(_runtime_directory "${SDK_CONTENT_RUNTIME_DIRECTORY}")
+    elseif(WIN32)
         set(_runtime_directory "bin")
     else()
         set(_runtime_directory "lib")
+    endif()
+    if(NOT _runtime_directory MATCHES "^(bin|lib)$")
+        message(FATAL_ERROR
+            "Unsupported SDK package runtime directory: ${_runtime_directory}")
     endif()
 
     _smrobot_sdk_manifest_json_array(_component_json ${SDK_CONTENT_COMPONENTS})
@@ -76,7 +94,7 @@ function(smrobot_install_sdk_package_content)
   \"formatVersion\": 1,
   \"name\": \"${SDK_CONTENT_PACKAGE_NAME}\",
   \"version\": \"${SDK_CONTENT_VERSION}\",
-  \"artifactKind\": \"shared-library-sdk\",
+  \"artifactKind\": \"${_artifact_kind}\",
   \"cmakePackage\": \"${SDK_CONTENT_PACKAGE_NAME}\",
   \"targetNamespace\": \"${SDK_CONTENT_PACKAGE_NAME}::\",
   \"runtimeDirectory\": \"${_runtime_directory}\",

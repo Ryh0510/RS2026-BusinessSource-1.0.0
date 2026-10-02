@@ -13,6 +13,7 @@
 #include <SceneCore/ModelNode.h>
 #include <SceneCore/PointCloudNode.h>
 #include <SceneCore/RenderQueue.h>
+#include <SimulationRuntime/ProjectParallelMechanismRuntime.h>
 #include <VisualizationSDK/SurfaceScalarOverlay.h>
 
 #include <Eigen/Core>
@@ -25,6 +26,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+namespace simulation_runtime
+{
+    struct RuntimeSceneObject;
+    struct RuntimePointCloud;
+}
 
 class VisibleModelNode : public scenecore::ModelNode
 {
@@ -57,66 +64,66 @@ struct MeshOverlay
     std::string linkName;
 };
 
-struct StewartLegRuntimeControl
-{
-    bool enabled = false;
-    int legIndex = -1;
-    std::string lowerLink;
-    std::string upperLink;
-    std::array<int, 2> baseRevoluteDofIndices{ { -1, -1 } };
-    int actuatorDofIndex = -1;
-    double actuatorSign = 1.0;
-    double homeLength = 0.0;
-    collision::Vec3 platformAnchorLocalInUpperLink = collision::Vec3::Zero();
-};
+using StewartLegRuntimeControl = simulation_runtime::ParallelLegRuntimeControl;
 
 struct RuntimeRobot
 {
-    uint64_t runtimeId = 0;
-    std::string documentId;
-    robot::RobotModel model;
-    std::shared_ptr<robotinstance::RobotInstance> instance;
+    RuntimeRobot();
+    explicit RuntimeRobot(simulation_runtime::ProjectParallelRobotState& state);
+    RuntimeRobot(const RuntimeRobot& other);
+    RuntimeRobot(RuntimeRobot&& other) noexcept;
+    RuntimeRobot& operator=(const RuntimeRobot& other);
+    RuntimeRobot& operator=(RuntimeRobot&& other) noexcept;
+    ~RuntimeRobot();
+
+    std::shared_ptr<simulation_runtime::ProjectParallelRobotState> ownedParallelState;
+    simulation_runtime::ProjectParallelRobotState* parallelState = nullptr;
+    simulation_runtime::RuntimeRobot* simulationRobot = nullptr;
+    uint64_t& runtimeId;
+    std::string& documentId;
+    robot::RobotModel& model;
+    std::shared_ptr<robotinstance::RobotInstance>& instance;
     std::shared_ptr<robot_render::RobotVisualBridge> visualBridge;
     collision::RobotCollisionModelPtr collisionModel;
     collision::RobotCollisionInstancePtr collisionInstance;
     std::unordered_map<collision::ObjectID, MeshOverlay> meshOverlays;
     std::unordered_map<std::string, std::vector<std::shared_ptr<rendercore::Material>>> linkOriginalMaterials;
     std::unordered_set<std::string> highlightedLinks;
-    std::string name;
-    std::string sourceType;
-    std::string sourcePath;
-    int sourceModelIndex = 0;
-    collision::Transform3 baseTransform = collision::Transform3::Identity();
+    std::string& name;
+    std::string& sourceType;
+    std::string& sourcePath;
+    int& sourceModelIndex;
+    collision::Transform3& baseTransform;
+    bool& collisionEnabled;
+    bool& autoMotionEnabled;
+    double& autoMotionAmplitude;
+    double& autoMotionSpeed;
+    bool& parallelControlEnabled;
+    collision::Transform3& parallelHomeBaseTransform;
+    kine::StewartPlatformGeometry& parallelGeometry;
+    kine::StewartPlatformPose& parallelPose;
+    std::array<double, 6>& parallelActuatorLengths;
+    std::array<double, 6>& parallelActuatorHomeLengths;
+    std::array<double, 6>& parallelActuatorRates;
+    std::array<int, 6>& parallelActuatorDofIndices;
+    std::array<double, 6>& parallelActuatorSigns;
+    std::array<StewartLegRuntimeControl, 6>& parallelLegControls;
+    bool& parallelInternalPlatformVisualsEnabled;
+    std::vector<std::string>& parallelInternalPlatformDrivenLinks;
+    std::unordered_map<std::string, collision::Transform3>& parallelInternalPlatformHomeLocalTransforms;
+    bool& parallelFollowerEnabled;
+    int& parallelFollowerLegIndex;
+    collision::Transform3& parallelFollowerHomeTransform;
+    bool& parallelFollowerAnchorsValid;
+    collision::Vec3& parallelFollowerHomeBaseAnchor;
+    collision::Vec3& parallelFollowerHomePlatformAnchor;
+    int& parallelFollowerActuatorDofIndex;
+    double& parallelFollowerActuatorSign;
+    double& parallelFollowerHomeLength;
+    std::vector<std::string>& parallelFollowerDrivenLinks;
+    std::unordered_map<std::string, collision::Transform3>& parallelFollowerHomeLinkTransforms;
     std::string sprayNozzleLinkName;
     collision::Transform3 sprayNozzleLocalTransform = collision::Transform3::Identity();
-    bool collisionEnabled = true;
-    bool autoMotionEnabled = false;
-    double autoMotionAmplitude = 0.5;
-    double autoMotionSpeed = 1.0;
-    bool parallelControlEnabled = false;
-    collision::Transform3 parallelHomeBaseTransform = collision::Transform3::Identity();
-    kine::StewartPlatformGeometry parallelGeometry;
-    kine::StewartPlatformPose parallelPose;
-    std::array<double, 6> parallelActuatorLengths{};
-    std::array<double, 6> parallelActuatorHomeLengths{};
-    std::array<double, 6> parallelActuatorRates{};
-    std::array<int, 6> parallelActuatorDofIndices{ { -1, -1, -1, -1, -1, -1 } };
-    std::array<double, 6> parallelActuatorSigns{ { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 } };
-    std::array<StewartLegRuntimeControl, 6> parallelLegControls;
-    bool parallelInternalPlatformVisualsEnabled = false;
-    std::vector<std::string> parallelInternalPlatformDrivenLinks;
-    std::unordered_map<std::string, collision::Transform3> parallelInternalPlatformHomeLocalTransforms;
-    bool parallelFollowerEnabled = false;
-    int parallelFollowerLegIndex = -1;
-    collision::Transform3 parallelFollowerHomeTransform = collision::Transform3::Identity();
-    bool parallelFollowerAnchorsValid = false;
-    collision::Vec3 parallelFollowerHomeBaseAnchor = collision::Vec3::Zero();
-    collision::Vec3 parallelFollowerHomePlatformAnchor = collision::Vec3::Zero();
-    int parallelFollowerActuatorDofIndex = -1;
-    double parallelFollowerActuatorSign = 1.0;
-    double parallelFollowerHomeLength = 0.0;
-    std::vector<std::string> parallelFollowerDrivenLinks;
-    std::unordered_map<std::string, collision::Transform3> parallelFollowerHomeLinkTransforms;
 };
 
 struct RuntimeSceneCollisionObject
@@ -146,6 +153,8 @@ struct RuntimeSurfaceScalarOverlay
 
 struct RuntimeSceneObject
 {
+    simulation_runtime::RuntimeSceneObject* simulationObject = nullptr;
+    simulation_runtime::RuntimePointCloud* simulationPointCloud = nullptr;
     uint64_t runtimeId = 0;
     std::string documentId;
     std::string name;

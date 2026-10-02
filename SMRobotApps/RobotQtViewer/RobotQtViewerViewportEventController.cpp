@@ -1,19 +1,23 @@
 #include "RobotQtViewerViewportEventController.h"
 
 #include "RobotQtViewerViewportPreviewState.h"
-#include "RobotQtViewerViewportServices.h"
+#include "RobotQtViewerViewportPorts.h"
 
 #include <utility>
 
 namespace robot_qt_viewer
 {
     RobotQtViewerViewportEventController::RobotQtViewerViewportEventController(
-        RobotQtViewerViewportServices& viewportServices,
+        IRobotQtViewerSelectionViewportPort& selectionViewport,
+        IRobotQtViewerAssemblyViewportPort& assemblyViewport,
+        IRobotQtViewerCollisionViewportPort& collisionViewport,
         const RobotQtViewerViewportPreviewState& viewportPreviewState,
         LinkFrameVisibleQuery linkFrameVisible,
         QObject* parent)
         : QObject(parent)
-        , m_viewportServices(viewportServices)
+        , m_selectionViewport(selectionViewport)
+        , m_assemblyViewport(assemblyViewport)
+        , m_collisionViewport(collisionViewport)
         , m_viewportPreviewState(viewportPreviewState)
         , m_linkFrameVisible(std::move(linkFrameVisible))
     {
@@ -41,149 +45,163 @@ namespace robot_qt_viewer
     void RobotQtViewerViewportEventController::applySelection(
         const RobotQtViewerSelectionPayload& selection)
     {
-        m_viewportServices.setActiveToolFrameRobot(selection.robotId);
+        m_selectionViewport.setActiveToolFrameRobot(selection.robotId);
         if(selection.attachmentId.isEmpty()) {
-            m_viewportServices.setActiveMountedAttachment(QString());
+            m_assemblyViewport.setActiveMountedAttachment(QString());
         }
         if(selection.objectFrameId.isEmpty()) {
-            m_viewportServices.clearObjectFrameObjectFocus();
-            m_viewportServices.selectObjectFrame(QString(), QString());
+            m_selectionViewport.clearObjectFrameObjectFocus();
+            m_selectionViewport.selectObjectFrame(QString(), QString());
         }
 
         if(selection.jointName.isEmpty()) {
-            m_viewportServices.selectRobotJointFrame(QString(), QString());
+            m_selectionViewport.selectRobotJointFrame(QString(), QString());
         }
 
         if(!selection.objectFrameId.isEmpty()) {
-            m_viewportServices.setActivePreviewRobotMount(QString());
-            m_viewportServices.setRobotMountFrameVisibility(false, false);
-            m_viewportServices.clearObjectFrameObjectFocus();
-            m_viewportServices.selectObjectFrame(selection.objectId, selection.objectFrameId);
+            m_assemblyViewport.setActivePreviewRobotMount(QString());
+            m_assemblyViewport.setRobotMountFrameVisibility(false, false);
+            m_selectionViewport.clearObjectFrameObjectFocus();
+            m_selectionViewport.selectObjectFrame(selection.objectId, selection.objectFrameId);
             return;
         }
 
         if(!selection.jointName.isEmpty()) {
-            m_viewportServices.setActivePreviewRobotMount(QString());
-            m_viewportServices.setRobotMountFrameVisibility(false, false);
-            m_viewportServices.selectRobotJointFrame(selection.robotId, selection.jointName);
+            m_assemblyViewport.setActivePreviewRobotMount(QString());
+            m_assemblyViewport.setRobotMountFrameVisibility(false, false);
+            m_selectionViewport.selectRobotJointFrame(selection.robotId, selection.jointName);
             return;
         }
 
         if(!selection.attachmentId.isEmpty()) {
-            m_viewportServices.setActivePreviewRobotMount(QString());
-            m_viewportServices.setRobotMountFrameVisibility(false, false);
-            m_viewportServices.selectMountedAttachment(selection.attachmentId);
-            m_viewportServices.setActiveMountedAttachment(selection.attachmentId);
+            m_assemblyViewport.setActivePreviewRobotMount(QString());
+            m_assemblyViewport.setRobotMountFrameVisibility(false, false);
+            m_selectionViewport.selectMountedAttachment(selection.attachmentId);
+            m_assemblyViewport.setActiveMountedAttachment(selection.attachmentId);
             return;
         }
 
         if(!selection.mountId.isEmpty()) {
-            m_viewportServices.selectRobotMount(selection.robotId, selection.linkName, selection.mountId);
-            m_viewportServices.setActivePreviewRobotMount(QString());
-            m_viewportServices.setRobotMountFrameVisibility(false, false);
+            m_selectionViewport.selectRobotMount(selection.robotId, selection.linkName, selection.mountId);
+            m_assemblyViewport.setActivePreviewRobotMount(QString());
+            m_assemblyViewport.setRobotMountFrameVisibility(false, false);
             return;
         }
 
         if(!selection.objectId.isEmpty()) {
-            m_viewportServices.setActivePreviewRobotMount(QString());
-            m_viewportServices.setRobotMountFrameVisibility(false, false);
-            m_viewportServices.selectSceneObject(selection.objectId);
+            m_assemblyViewport.setActivePreviewRobotMount(QString());
+            m_assemblyViewport.setRobotMountFrameVisibility(false, false);
+            m_selectionViewport.selectSceneObject(selection.objectId);
             return;
         }
 
         if(!selection.robotId.isEmpty()) {
             const bool showLinkFrame =
                 m_linkFrameVisible && m_linkFrameVisible(selection.robotId, selection.linkName);
-            m_viewportServices.selectRobotLink(selection.robotId, selection.linkName);
-            m_viewportServices.setActivePreviewRobotMount(QString());
-            m_viewportServices.setRobotMountFrameVisibility(showLinkFrame, false);
+            m_selectionViewport.selectRobotLink(selection.robotId, selection.linkName);
+            m_assemblyViewport.setActivePreviewRobotMount(QString());
+            m_assemblyViewport.setRobotMountFrameVisibility(showLinkFrame, false);
             return;
         }
 
-        m_viewportServices.selectRobotLink(QString(), QString());
-        m_viewportServices.setActivePreviewRobotMount(QString());
-        m_viewportServices.setRobotMountFrameVisibility(false, false);
+        m_selectionViewport.selectRobotLink(QString(), QString());
+        m_assemblyViewport.setActivePreviewRobotMount(QString());
+        m_assemblyViewport.setRobotMountFrameVisibility(false, false);
     }
 
     void RobotQtViewerViewportEventController::applyViewportPreview(
         const RobotQtViewerViewportPreviewPayload& preview)
     {
         if(preview.removePreviewRobotMount) {
-            m_viewportServices.removePreviewRobotMount(preview.removePreviewRobotMountId);
+            m_assemblyViewport.removePreviewRobotMount(preview.removePreviewRobotMountId);
         }
         if(preview.upsertPreviewRobotMount) {
-            m_viewportServices.upsertPreviewRobotMount(preview.robotMount);
+            m_assemblyViewport.upsertPreviewRobotMount(preview.robotMount);
         }
         if(preview.previewRobotMountTransform) {
-            m_viewportServices.previewRobotMountTransform(
+            m_assemblyViewport.previewRobotMountTransform(
                 preview.previewRobotMountId,
                 preview.robotMountTransform);
         }
+        if(preview.previewMountedAttachmentTransform) {
+            m_assemblyViewport.previewMountedAttachmentTransform(
+                preview.previewMountedAttachmentId,
+                preview.mountedAttachmentTransform);
+        }
+        if(preview.previewAttachmentAsset) {
+            m_assemblyViewport.previewAttachmentAsset(preview.attachmentAsset);
+        }
+        if(preview.clearAttachmentBindingPreview) {
+            m_assemblyViewport.clearAttachmentBindingPreview();
+        }
+        if(preview.previewAttachmentBinding) {
+            m_assemblyViewport.previewAttachmentBinding(preview.attachmentBinding);
+        }
         if(preview.setActivePreviewRobotMount) {
-            m_viewportServices.setActivePreviewRobotMount(preview.activePreviewRobotMountId);
+            m_assemblyViewport.setActivePreviewRobotMount(preview.activePreviewRobotMountId);
         }
         if(preview.setRobotMountFrameVisibility) {
-            m_viewportServices.setRobotMountFrameVisibility(
+            m_assemblyViewport.setRobotMountFrameVisibility(
                 preview.selectedLinkFrameVisible,
                 preview.mountFrameVisible);
         }
         if(preview.upsertPreviewObjectFrame) {
-            m_viewportServices.upsertPreviewObjectFrame(
+            m_assemblyViewport.upsertPreviewObjectFrame(
                 preview.objectFrameObjectId,
                 preview.objectFrame);
         }
         if(preview.previewRobotBaseTransform) {
-            m_viewportServices.previewRobotBaseTransform(
+            m_assemblyViewport.previewRobotBaseTransform(
                 preview.robotBaseRobotId,
                 preview.robotBaseTransform);
         }
         if(preview.previewObjectFrameTransform) {
-            m_viewportServices.previewObjectFrameTransform(
+            m_assemblyViewport.previewObjectFrameTransform(
                 preview.previewObjectFrameObjectId,
                 preview.previewObjectFrameId,
                 preview.objectFrameTransform);
         }
         if(preview.previewSceneObjectTransform) {
-            m_viewportServices.previewSceneObjectTransform(
+            m_assemblyViewport.previewSceneObjectTransform(
                 preview.sceneObjectId,
                 preview.sceneObjectTransform);
         }
         if(preview.clearObjectFrameObjectFocus) {
-            m_viewportServices.clearObjectFrameObjectFocus();
+            m_selectionViewport.clearObjectFrameObjectFocus();
         }
         if(preview.focusObjectFrameObject) {
-            m_viewportServices.focusObjectFrameObject(preview.focusObjectFrameObjectId);
+            m_selectionViewport.focusObjectFrameObject(preview.focusObjectFrameObjectId);
         }
         if(preview.clearMountFrameLinkFocus) {
-            m_viewportServices.clearMountFrameLinkFocus();
+            m_selectionViewport.clearMountFrameLinkFocus();
         }
         if(preview.focusMountFrameLink) {
-            m_viewportServices.focusMountFrameLink(
+            m_selectionViewport.focusMountFrameLink(
                 preview.focusMountFrameRobotId,
                 preview.focusMountFrameLinkName);
         }
         if(preview.clearMountedAttachmentFocus) {
-            m_viewportServices.clearMountedAttachmentFocus();
+            m_selectionViewport.clearMountedAttachmentFocus();
         }
         if(preview.focusMountedAttachment) {
-            m_viewportServices.focusMountedAttachment(preview.focusMountedAttachmentId);
+            m_selectionViewport.focusMountedAttachment(preview.focusMountedAttachmentId);
         }
         if(preview.clearObjectCollisionModelVariantPreview) {
-            m_viewportServices.clearObjectCollisionModelVariantPreview();
+            m_collisionViewport.clearObjectCollisionModelVariantPreview();
         }
         if(preview.previewObjectCollisionModelVariant) {
-            m_viewportServices.previewObjectCollisionModelVariant(
+            m_collisionViewport.previewObjectCollisionModelVariant(
                 preview.previewObjectCollisionModelObjectId,
                 preview.previewObjectCollisionModelVariantId);
         }
         if(preview.setActiveMountedAttachment) {
-            m_viewportServices.setActiveMountedAttachment(preview.activeMountedAttachmentId);
+            m_assemblyViewport.setActiveMountedAttachment(preview.activeMountedAttachmentId);
         }
         if(preview.setToolFrameVisibility) {
-            m_viewportServices.setToolFrameVisibility(preview.toolFrameVisibility);
+            m_assemblyViewport.setToolFrameVisibility(preview.toolFrameVisibility);
         }
         if(preview.setPinnedRobotMountFrames) {
-            m_viewportServices.setPinnedRobotMountFrames(preview.pinnedRobotMountFrameIds);
+            m_assemblyViewport.setPinnedRobotMountFrames(preview.pinnedRobotMountFrameIds);
         }
     }
 }

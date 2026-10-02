@@ -1000,34 +1000,29 @@ namespace robot_qt_viewer
         }
 
         if(showAssemblyRelations) {
-            const QString assetsGroupId = QStringLiteral("group:toolAssets");
-            int toolAssetCount = 0;
-            for(const simulation_project::AttachmentAssetDesc& asset : document.attachmentAssets) {
-                if(asset.assetKind != "sensor") {
-                    ++toolAssetCount;
-                }
-            }
+            const QString assetsGroupId = QStringLiteral("group:deviceDefinitions");
+            const int toolAssetCount = static_cast<int>(document.attachmentAssets.size());
             view.nodes.push_back(makeNode(
                 assetsGroupId,
                 QString(),
                 SceneExplorerNodeKind::Group,
-                QStringLiteral("Tool Assets"),
+                QStringLiteral("Device Definitions"),
                 QString(),
-                QStringLiteral("Tool Assets"),
+                QStringLiteral("Device Definitions"),
                 QString(),
                 QString(),
                 toolAssetCount > 0));
             for(const simulation_project::AttachmentAssetDesc& asset : document.attachmentAssets) {
-                if(asset.assetKind == "sensor") {
-                    continue;
-                }
                 const QString assetId = QString::fromStdString(asset.id);
                 const QString assetName = QString::fromStdString(asset.name.empty() ? asset.id : asset.name);
+                const QString typeName = asset.assetType == "camera"
+                    ? QStringLiteral("Camera")
+                    : QString::fromStdString(asset.assetType.empty() ? asset.assetKind : asset.assetType);
                 view.nodes.push_back(makeNode(
                     assetsGroupId + QStringLiteral(":") + assetId,
                     assetsGroupId,
                     SceneExplorerNodeKind::ToolAsset,
-                    assetName == assetId ? assetName : QString("%1 (%2)").arg(assetName, conciseText(asset.id, 32)),
+                    QStringLiteral("%1 [%2]").arg(assetName, typeName),
                     assetId,
                     assetName,
                     QString(),

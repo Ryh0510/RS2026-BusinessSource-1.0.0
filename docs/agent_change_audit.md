@@ -428,3 +428,17 @@
 - 同一界面回归的旧版在第二个起点明细替换处 30 秒超时；修复版 14 次完整明细替换各约 27–31 ms（本机 Release、合成完整长度 UI 数据，不代表 IK/APF/QP 计算耗时）。日志同级 build/topk-table-before.log、topk-table-after.log，截图 topk-table-after.png。
 
 - 验收完成：Release/Debug 主程序与 smoke 目标构建通过，两配置各 5/5 回归通过；新版 Release 启动检查退出 0，截图视觉核对及 UTF-8/CRLF、git diff --check 通过。运行中的原 EXE 未覆盖、未终止；交付同级 build/Release/bin/RobotQtViewer_TopKFixrx64.exe，SHA256 4B84F3C0013B718EA8C4B0902AC093E00D253C086A44ECCF429A310B728EFAB0。测试日志 topk-fix-tests-release.log / topk-fix-tests-debug.log。无新增公共 API、第三方依赖或持久化字段。
+
+
+## 2026-10-02 合并 Business Source 1.0.5
+
+- 用户明确授权比较指定两个版本目录并把新版内容更新到现有目标。原根 HEAD d7c1594、规划算法子仓 eb15cde、规划工作台子仓 47ac0b1，开始时工作树干净。目标虽命名 1.0.0，原 SDK 实际 1.0.3；以发布包 1.0.3/1.0.4 辅助三方比较，保留真实定制。
+- 来源 2432 文件中相同1968、同路径不同363、新增101；另有3493个目标独有文件。完整比较和处理清单在外层 build/upgrade-105，最终人类说明见 upgrade_1_0_5_report.md。
+- 业务部分74个新增、147个更新（不含本轮说明文档）；PrebuiltPackages 成套升级到1.0.5，1875文件逐个SHA256一致，原SDK的506个额外文件保存在备份而非混入新SDK。原740个业务文件及整个SDK已备份；data、thirdparty、用户工程、现有build输出保留。
+- 合入 Camera-on-Hand、CustomMesh/高度场、Collision新接口、Project事务/runtime session、场景系统拆分、工作台贡献/生命周期、界面/渲染/本地化、新示例与测试。
+- 本地运动规划接入新增窄 MotionPlanning viewport port；喷嘴标定迁入新 runtime 引用结构并补全复制/移动；48个算法与关键UI文件对比备份无变化，保留全逆解、肩肘腕/turn、双页Top-K、APF/单轮CDF-QP、后台进度、轨迹线和分页卡顿修复。
+- 修复消费工程缺失ShaderResources DLL部署、外部SDK数据根指向原开发机、旧工作台名称重复；旧碰撞测试迁移typed port/project asset store并使用自包含STL。Business Source架构门禁只检查可见业务源码，明确跳过未分发的私有源码；不伪造SDK内部验证。
+- C:/b/rs105-merge 全量启用目标 Release/Debug 构建成功，两配置主程序默认ABB4600启动退出0。Release31项回归最终均通过；CDF GUI专项通过。Debug31项最终均通过：30项全套通过，查询测试首轮180秒预算不足，使用900秒预算专项复验，195.78秒退出0、最大梯度差0。
+- 真实11111.txt 749/749点、5986候选、0层截断，最大FK位置误差0.000999176mm、姿态0.0000541424度；全局Top30、8起点各Top3通过独立路径代价/时间/关节值验证，单点应用/播放/CDF传递/导出保持正确。数值多种子不宣称全逆解完备。
+- 未新增第三方依赖；新增应用窄接口，公开SDK接口由1.0.5包提供；项目version3保留。208个变更源码/构建文件UTF-8/CRLF及冲突标记检查通过。
+- 新Release EXE：C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 34C353815433C6E894654E04536D5E6E4818FEDD31526940EF136BCC71294B1A。需连同当前目录DLL/config使用，旧EXE仍在原build，不直接覆盖。

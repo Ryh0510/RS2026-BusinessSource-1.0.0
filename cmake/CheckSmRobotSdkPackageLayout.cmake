@@ -37,6 +37,8 @@ function(_smrobot_validate_package package_name)
     string(JSON _version ERROR_VARIABLE _version_error GET "${_manifest_content}" version)
     string(JSON _runtime_directory ERROR_VARIABLE _runtime_error
         GET "${_manifest_content}" runtimeDirectory)
+    string(JSON _artifact_kind ERROR_VARIABLE _artifact_kind_error
+        GET "${_manifest_content}" artifactKind)
     string(JSON _component_count ERROR_VARIABLE _component_error
         LENGTH "${_manifest_content}" publicComponents)
     string(JSON _required_directory_count ERROR_VARIABLE _required_directory_error
@@ -53,6 +55,10 @@ function(_smrobot_validate_package package_name)
     endif()
     if(_runtime_error OR NOT _runtime_directory MATCHES "^(bin|lib)$")
         message(FATAL_ERROR "Invalid runtimeDirectory in ${_manifest}")
+    endif()
+    if(_artifact_kind_error
+       OR NOT _artifact_kind MATCHES "^(shared|static)-library-sdk$")
+        message(FATAL_ERROR "Invalid artifactKind in ${_manifest}")
     endif()
     if(_component_error OR _component_count LESS 1)
         message(FATAL_ERROR "No public components declared in ${_manifest}")
@@ -97,7 +103,9 @@ function(_smrobot_validate_package package_name)
         message(FATAL_ERROR "${package_name} contains no independently buildable example.")
     endif()
 
-    if(_runtime_directory STREQUAL "bin")
+    if(_artifact_kind STREQUAL "static-library-sdk")
+        file(GLOB _runtime_libraries "${_package_root}/lib/*.lib" "${_package_root}/lib/*.a")
+    elseif(_runtime_directory STREQUAL "bin")
         file(GLOB _runtime_libraries "${_package_root}/bin/*.dll")
     else()
         file(GLOB _runtime_libraries
@@ -106,7 +114,8 @@ function(_smrobot_validate_package package_name)
             "${_package_root}/lib/*.dylib")
     endif()
     if(NOT _runtime_libraries)
-        message(FATAL_ERROR "${package_name} contains no shared runtime libraries.")
+        message(FATAL_ERROR
+            "${package_name} contains no ${_artifact_kind} libraries.")
     endif()
 
     file(GLOB_RECURSE _package_files RELATIVE "${_package_root}" "${_package_root}/*")
@@ -179,5 +188,8 @@ endif()
 
 _smrobot_validate_package(SMRobotCore)
 _smrobot_validate_package(SMRobotPlatform)
+if(IS_DIRECTORY "${_sdk_prefix}/SMRobotApps")
+    _smrobot_validate_package(SMRobotApps)
+endif()
 
 message(STATUS "SMRobot SDK package layout passed: ${_sdk_prefix}")
