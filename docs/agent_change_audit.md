@@ -404,3 +404,27 @@
 - 本轮完成：全局 Top-M 第 1 条实测 1012.320 → 439.964 秒；难段 1660→1813 为 726.794 → 277.199 秒。两版 4592 点导出 TXT 逐字节一致，SHA-256 为 c73a1ea0998ec31a7b4fd5ae2e5bfb579fe0bc5d1cbdc3e8cdfc811b2a4381ce；独立 0.001 rad 复验均 0 碰撞段，安全间距未达标的返回 1 状态保持。
 - CMake configure、Release/Debug 主程序与相关目标构建通过；两配置各 6 项领域回归及新 GUI 阶段/线程/过期结果回归通过。阶段窗口已视觉核对，主程序 smoke 退出 0，源码 UTF-8/CRLF 与 diff 检查通过。
 - 当前 GUI：同级 build/Release/bin/RobotQtViewerrx64.exe；每次运行日志位于 EXE 同目录 log/cdf，结束摘要给出路径。完整证据/口径见 docs/cdf_qp_performance.md 第二轮；未把第一轮原始文件基准推广为任意 Top-K 的耗时保证。未新增公共 API、第三方依赖或项目持久化字段。
+
+## 2026-09-30 ABB4600 固定肩/肘/腕构型显示
+
+- 根因：多逆解按实际关节向量排序，图中使用候选行号；行号在不同目标点不能代表同一运动学分支。
+- ProjectMotionPlanning 新增 CartesianIkConfiguration、可选分类回调及实际模型分类快照工厂。S/E/W 来自实际关节轴和腕中心几何，沿用原符号映射；规则及 B1～B8 对照见 ik_configuration_branches.md。三分支边界显示 0，未知模型不猜测；不使用旧理想 DH，也不是厂家 confdata。
+- 每个候选在原 FK/限位验证后附带分类；按固定分支、turn、关节值排序。未分类时保留原数值排序；不会合并多圈解、改变关节角、删图边或加入节点代价。追加领域接口/结果元数据，既有单逆解接口保留，无新增依赖或项目存储格式。
+- Workbench controller 统一投影分类；全逆解表显示 B 标签与调试候选序号。两页图结果、逐点明细、对比窗口同步显示，单点应用/播放/CDF 仍以原候选身份取值。对比图默认按分支绘制阶梯线，可恢复候选视图；悬停显示 turn，摘要区分候选差异与分支差异，轴宽随字体测量。
+- 真实 11111.txt：749 点、5986 候选，8 种分支；普通八根层均一一对应八个标签。第 121 点为 B1～B4；第 171 点为 B1、B2、B3、B4、B5、B7，不把 B7 重编号成 B6。候选独立实际 FK 最大位置误差 0.000999176 mm、姿态误差 0.0000541424 度。全局 Top-30、每起点 Top-3 共24条均保留原时间、关节值和独立计算的代价。
+- 回归覆盖整圈不变性、世界基座刚体变换不变性、腕部边界显式处理、原符号、连续多次应用、选解播放、双页图表/CDF 传递、源失效清理和导出。全量报告在同级 build/branch-final-real.csv、branch-final-real.log。
+- GUI 在 QT_QPA_PLATFORM=offscreen 下退出 0xc0000409；该 OpenGL viewer 的验收改用原生 Windows Qt 平台，相关测试正常通过。未把 offscreen 失败当成功，也未修改渲染后端。
+
+- 完成：CMake configure、Release/Debug 主程序和相关测试目标构建通过，两配置各四项回归通过；真实 749 点完整 FK/构型/Top-M/按起点序列回归通过。新增分支图和候选表已截图检查，修复了长标签裁切；最终 Release 启动 smoke 退出 0。
+- Release 原 EXE 被运行中进程占用，保持该进程，按同项目 TargetName 覆盖另存 `build/Release/bin/RobotQtViewer_Branchrx64.exe`。SHA256：`2D2D055FD190E67680C42122538E75803FC37DF57931908ECFAC92BF80EFC679`。Debug 为正常 `RobotQtViewerdx64.exe`；其既有 OMPL 缺失 PDB 警告不影响构建/运行。
+- 界面预览：同级 build/branch-ui-final.png；测试日志：branch-final-test-release.log、branch-final-test-debug.log、branch-delivery-test-release.log、branch-delivery-test-debug.log。源码 UTF-8/CRLF 和根仓/两子仓 diff 检查通过。
+
+## 2026-09-30 按起点 Top-K 结果表切换卡顿修复
+
+- 用户最终截图确认故障位于 Basic Planning 主面板的分层图结果分页，K=1。卡住进程 UI 线程栈为 QTableWidget 模型 dataChanged → QAbstractItemView::update/visualRect → QHeaderView::resizeSections → QTableView::sizeHintForColumn → QStyledItemDelegate::sizeHint → 字体布局。
+- 根因：明细表开启 ResizeToContents，逐格填充时仍通过模型通知反复扫描列内容；setUpdatesEnabled(false) 只能禁用绘制，无法阻止尺寸测量。已有明细再次替换时出现近似平方级工作量。
+- 修复归属 MotionPlanningEditorWidget 的临时显示层：三个分层图表共用 replaceLayeredGraphRows，批量更新期间固定列几何并阻止表级选择通知，填充完成后一次性恢复自适应列宽。不屏蔽底层模型通知，不更改候选、排名、构型分类、关节值或 CDF 初始解映射。
+- 新增 RobotQtViewerConfigurationTabsSmoke，使用主程序真实主题与中文标签，30 条全局结果、8 个起点 K=1、每条 749 点明细，覆盖连续选行、窄面板缩放、双页切换、末点数据和使用结果信号；60 秒超时防回归。此前只有短轨迹 GUI 测试，没有覆盖长明细替换。
+- 同一界面回归的旧版在第二个起点明细替换处 30 秒超时；修复版 14 次完整明细替换各约 27–31 ms（本机 Release、合成完整长度 UI 数据，不代表 IK/APF/QP 计算耗时）。日志同级 build/topk-table-before.log、topk-table-after.log，截图 topk-table-after.png。
+
+- 验收完成：Release/Debug 主程序与 smoke 目标构建通过，两配置各 5/5 回归通过；新版 Release 启动检查退出 0，截图视觉核对及 UTF-8/CRLF、git diff --check 通过。运行中的原 EXE 未覆盖、未终止；交付同级 build/Release/bin/RobotQtViewer_TopKFixrx64.exe，SHA256 4B84F3C0013B718EA8C4B0902AC093E00D253C086A44ECCF429A310B728EFAB0。测试日志 topk-fix-tests-release.log / topk-fix-tests-debug.log。无新增公共 API、第三方依赖或持久化字段。

@@ -8,6 +8,8 @@ set(EXAMPLE_TARGET_NAME RobotQtViewer-SprayMeasurementSmoke)
 set(ROBOT_QT_VIEWER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 add_executable(${EXAMPLE_TARGET_NAME}
     main.cpp
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerTheme.cpp"
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerResources.qrc"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerViewportServicesAdapter.cpp")
 target_include_directories(${EXAMPLE_TARGET_NAME} PRIVATE "${ROBOT_QT_VIEWER_SOURCE_DIR}")
 target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE
@@ -16,13 +18,22 @@ target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE
     SMRobotMotionPlanning::ProjectMotionPlanning
     ${RobotQtViewer_REQUIRED_TARGETS})
 target_compile_features(${EXAMPLE_TARGET_NAME} PRIVATE cxx_std_17)
+if(WIN32)
+    target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE dwmapi)
+endif()
 set_target_properties(${EXAMPLE_TARGET_NAME} PROPERTIES
+    AUTORCC ON
     FOLDER "Regression/SMRobotApps/RobotQtViewer"
     DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX}
     RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX})
 copy_runtime_dlls(${EXAMPLE_TARGET_NAME})
 deploy_qt(${EXAMPLE_TARGET_NAME})
 if(BuildTests)
+    add_test(NAME RobotQtViewerConfigurationTabsSmoke COMMAND ${EXAMPLE_TARGET_NAME} --configuration-tabs)
+    set_tests_properties(RobotQtViewerConfigurationTabsSmoke PROPERTIES
+        LABELS "RobotQtViewer;Regression;IK"
+        TIMEOUT 60
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
     add_test(NAME RobotQtViewerIkPlaybackSmoke COMMAND ${EXAMPLE_TARGET_NAME}
         --ik-project "${CMAKE_SOURCE_DIR}/config/projects/ABB4600-burnner.sys.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/ik_tcp_poses.txt")

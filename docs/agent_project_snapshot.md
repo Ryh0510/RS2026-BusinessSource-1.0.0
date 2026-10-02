@@ -202,3 +202,21 @@
 - 推荐先保持原网格的 GPU 批量后端与 CPU 回退/最终高密度复验；SDF 是另外一种近似路线，不在未经说明时替换。必须将距离误差、碰撞误判、最近点/梯度一致性、CPU/GPU 传输与端到端耗时分开验证，不预先承诺倍数。
 - 用户已确认只有当前工程和预编译 SDK。现有接口可读部分几何缓存、显示描述及 ACM 单对查询，但不提供可替换后端或带完整过滤语义的批量场景快照；不能据此宣称可直接替换原 FCL。没有修改预编译 SDK 或在 UI 中伪装 GPU 开关。
 - 完整精确后端迁移需要可扩展的 Collision SDK。当前工程内可考虑独立 GPU 距离场辅助 APF/CDF，由 CPU 保留精确运动检查及最终验收，但这是近似搜索路线，会影响梯度和结果轨迹，不能按此前“保持现有功能/查询语义”要求擅自替换。后续须明确是否接受这一范围变化；目前仅完成环境与接口核对，未安装 CUDA Toolkit、未新增 GPU 内核或更改程序。
+
+## 2026-09-30 ABB 构型分类与图表
+
+- 分支 main；开始时根仓和两个相关子仓干净。修改 ProjectMotionPlanning 与 MotionPlanningEditor 及已有 smoke 回归。
+- 旧实现按关节数值排序，绘图只投影点内行号。新增实际模型 FK 的肩/肘/腕几何标签，固定 B1～B8；候选身份和 turn 保留，分支边界/未分类不硬塞八类。不是 ABB RAPID confdata。
+- 分类归领域结果，controller 统一投影，两页结果与绘图消费同一快照。原始候选选择、播放、Top-M/固定起点 DP 与 CDF 传递不改语义。
+- 验证：Release/Debug 目标、真实 11111.txt 全轨迹 FK/构型与周期不变性、GUI 两页/CDF/应用/播放及分层图回归。当前旧 Release 主程序正在运行，必要时另名交付，不终止用户进程。
+
+- 完成：固定 B1～B8 分类、两页结果/对比图和 turn 调试已接入；真实 749 点 5986 候选分类/FK/分层图验证通过。Release/Debug 构建、各四项回归通过，界面视觉核对及新版启动通过。
+- 当前新版入口为同级 build/Release/bin/RobotQtViewer_Branchrx64.exe（原 EXE 运行中，未覆盖）。使用前重新执行全逆解和分层图筛选；定义及限制见 docs/ik_configuration_branches.md。
+
+## 2026-09-30 按起点结果表卡顿
+
+- 用户截图明确故障在 Basic Planning 主面板结果分页，K=1；问题为长轨迹明细逐格替换时 ResizeToContents 重复测量，归 UI 临时显示层。
+- 三个分层图表统一批量更新期间禁用自动列宽，结束后测量一次；保留全部原始行、固定构型标签、原始候选身份与 CDF 传递。旧版长明细替换 30 秒超时，修复版 749 行约 27–31 ms。
+- 回归入口 RobotQtViewerConfigurationTabsSmoke / --configuration-tabs；使用主程序主题、8 起点 K=1，并保留现有真实 IK、播放、分层图与 CDF 传递测试。源码已有构型分类等未提交修改均保留。
+
+- 验收完成：Release/Debug 主程序与 smoke 目标构建通过，两配置各 5/5 回归通过；新版 Release 启动检查退出 0，截图视觉核对及 UTF-8/CRLF、git diff --check 通过。运行中的原 EXE 未覆盖、未终止；交付同级 build/Release/bin/RobotQtViewer_TopKFixrx64.exe，SHA256 4B84F3C0013B718EA8C4B0902AC093E00D253C086A44ECCF429A310B728EFAB0。测试日志 topk-fix-tests-release.log / topk-fix-tests-debug.log。无新增公共 API、第三方依赖或持久化字段。

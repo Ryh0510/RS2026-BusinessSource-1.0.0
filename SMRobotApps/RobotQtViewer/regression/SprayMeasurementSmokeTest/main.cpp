@@ -1,6 +1,7 @@
 #include <ProjectScene.h>
 #include <MotionPlanningEditorWidget.h>
 #include <ConfigurationSelectionDialog.h>
+#include "RobotQtViewerTheme.h"
 #include <QListWidget>
 #include <QPointer>
 #include <MotionPlanningModuleController.h>
@@ -420,6 +421,10 @@ namespace
         std::vector<double> modelLower, modelUpper;
         require(ProjectTrajectoryInverseKinematics::readRevoluteJointLimits(document, projectPath.parent_path(),
             options.model.robotId, options.model.jointNames, modelLower, modelUpper, error), "Actual URDF limits load without collision detectors");
+        options.classifyConfiguration = ProjectTrajectoryInverseKinematics::createIrb4600ConfigurationClassifier(
+            document, projectPath.parent_path(), options.model.robotId, options.model.jointNames, true, error);
+        require(static_cast<bool>(options.classifyConfiguration), "Actual ABB geometry classifier loads");
+        if(!options.classifyConfiguration) { return; }
         options.seedCount = seeds;
         options.progress = [](std::size_t done, std::size_t total) {
             if(done % 25 == 0 || done == total) { std::cout << "Multi IK progress " << done << '/' << total << '\n'; }
@@ -431,15 +436,38 @@ namespace
         require(result.success, "Every imported target has valid multi IK candidates");
         std::size_t minCount = 999999, maxCount = 0, total = 0;
         double maxPosition = 0, maxOrientation = 0;
+        bool branchesValid = true, periodicBranches = true, orderedBranches = true, distinctBranches = true;
+        std::set<int> allBranches;
+        ConfigurationSelectionCatalog catalog;
+        for(int i = 0; i < 8; ++i) {
+            catalog.categoryLabels << QStringLiteral("B%1 \u80a9%2 / \u8098%3 / \u8155%4").arg(i + 1)
+                .arg(i & 4 ? "-" : "+").arg(i & 2 ? "-" : "+").arg(i & 1 ? "-" : "+");
+        }
+        catalog.categoryLabels << QStringLiteral("Boundary");
         std::ofstream report(reportPath);
-        report << "point,candidate,j1_deg,j2_deg,j3_deg,j4_deg,j5_deg,j6_deg,position_error_mm,orientation_error_deg\n" << std::setprecision(12);
+        report << "point,candidate,j1_deg,j2_deg,j3_deg,j4_deg,j5_deg,j6_deg,position_error_mm,orientation_error_deg,branch,shoulder,elbow,wrist\n" << std::setprecision(12);
         for(const auto& layer : result.layers) {
             minCount = std::min(minCount, layer.candidates.size()); maxCount = std::max(maxCount, layer.candidates.size());
+            std::set<int> layerBranches;
+            QVector<int> categories;
+            QStringList details;
+            int previousBranch = 0;
             const auto& target = imported.plan.cartesianControlPoints.points[layer.pointIndex].tcpPose;
             const Eigen::JacobiSVD<Eigen::Matrix3d> svd(target.linear(), Eigen::ComputeFullU | Eigen::ComputeFullV);
             const Eigen::Matrix3d desiredRotation = svd.matrixU() * svd.matrixV().transpose();
             for(std::size_t c = 0; c < layer.candidates.size(); ++c) {
                 const auto& candidate = layer.candidates[c];
+                const auto& config = candidate.configuration;
+                const int branch = config.stableId();
+                branchesValid &= config.available && branch >= 1 && branch <= 8;
+                layerBranches.insert(branch); allBranches.insert(branch);
+                orderedBranches &= branch >= previousBranch;
+                previousBranch = branch;
+                categories << (branch ? branch : 9);
+                details << QStringLiteral("B%1 candidate %2").arg(branch).arg(c + 1);
+                auto lifted = candidate.joints;
+                for(int j = 0; j < 6; ++j) { lifted[j] += (j % 2 ? -2 : 2) * pi; }
+                periodicBranches &= options.classifyConfiguration(lifted).stableId() == branch;
                 const auto actual = options.model.worldForwardKinematics(candidate.joints);
                 const double pe = (actual.translation() - target.translation()).norm();
                 const double re = Eigen::AngleAxisd(actual.linear().transpose() * desiredRotation).angle();
@@ -447,9 +475,19 @@ namespace
                 ++total;
                 report << layer.pointIndex + 1 << ',' << c + 1;
                 for(double q : candidate.joints) { report << ',' << q * 180 / pi; }
-                report << ',' << pe * 1000 << ',' << re * 180 / pi << '\n';
+                report << ',' << pe * 1000 << ',' << re * 180 / pi << ',' << branch << ','
+                    << config.shoulder << ',' << config.elbow << ',' << config.wrist << '\n';
             }
+            if(layer.candidates.size() == 8) {
+                distinctBranches &= layerBranches.size() == 8;
+            }
+            catalog.categories << categories;
+            catalog.candidateDetails << details;
         }
+        require(distinctBranches, "Eight-root layers have eight distinct shoulder/elbow/wrist branches");
+        require(branchesValid && periodicBranches && orderedBranches,
+            "Actual geometry branch labels are available, sorted, and invariant under every joint turn");
+        std::cout << "Distinct geometric branches=" << allBranches.size() << '\n';
         std::cout << "Multi IK min=" << minCount << " max=" << maxCount << " total=" << total
             << " max_mm=" << maxPosition * 1000 << " max_deg=" << maxOrientation * 180 / pi << '\n';
         require(minCount >= 2 && maxPosition <= options.positionTolerance && maxOrientation <= options.orientationTolerance,
@@ -534,7 +572,48 @@ namespace
         }
         require(groupedValid && coveredStarts.size() == result.layers.front().candidates.size(),
             "Real conditional paths cover every start, preserve all points/turns/times, and have independently verified costs");
-        auto* plot = new ConfigurationSelectionDialog(globalPlot, startPlot, startLabels, 0, true);
+        // A rigid base displacement must never change a geometric branch identity.
+        auto relocated = document;
+        for(auto& robot : relocated.robots) {
+            if(robot.id == options.model.robotId) {
+                robot.baseTransform.x += 2.0; robot.baseTransform.y -= 0.7;
+                robot.baseTransform.roll += 0.31; robot.baseTransform.yaw -= 1.2;
+            }
+        }
+        const auto relocatedClassifier = ProjectTrajectoryInverseKinematics::createIrb4600ConfigurationClassifier(
+            relocated, projectPath.parent_path(), options.model.robotId, options.model.jointNames, true, error);
+        bool baseInvariant = bool(relocatedClassifier);
+        for(const auto& candidate : result.layers.front().candidates) {
+            baseInvariant &= relocatedClassifier &&
+                relocatedClassifier(candidate.joints).stableId() == candidate.configuration.stableId();
+        }
+        require(baseInvariant, "Geometric classification is independent of world base rotation/translation");
+        require(!options.classifyConfiguration({}).available, "Invalid joints stay unclassified");
+
+        auto boundaryJoints = result.layers.front().candidates.front().joints;
+        bool foundBoundary = false;
+        double left = -pi;
+        boundaryJoints[4] = left;
+        int leftSign = options.classifyConfiguration(boundaryJoints).wrist;
+        for(int step = 1; step <= 100 && !foundBoundary; ++step) {
+            double right = -pi + step * 2 * pi / 100;
+            boundaryJoints[4] = right;
+            const auto rightConfig = options.classifyConfiguration(boundaryJoints);
+            if(rightConfig.wrist == 0) { foundBoundary = rightConfig.stableId() == 0; break; }
+            if(rightConfig.wrist != leftSign) {
+                for(int iteration = 0; iteration < 50; ++iteration) {
+                    const double middle = (left + right) / 2;
+                    boundaryJoints[4] = middle;
+                    const auto middleConfig = options.classifyConfiguration(boundaryJoints);
+                    if(middleConfig.wrist == 0) { foundBoundary = middleConfig.stableId() == 0; break; }
+                    if(middleConfig.wrist == leftSign) { left = middle; } else { right = middle; }
+                }
+                break;
+            }
+            left = right; leftSign = rightConfig.wrist;
+        }
+        require(foundBoundary, "Wrist branch boundary is explicit instead of being forced into B1..B8");
+        auto* plot = new ConfigurationSelectionDialog(globalPlot, startPlot, startLabels, 0, true, nullptr, catalog);
         plot->show(); QApplication::processEvents();
         auto plotPath = reportPath; plotPath.replace_extension(".start-topk.png");
         require(plot->grab().save(QString::fromStdWString(plotPath.wstring())), "Save real fixed-start comparison plot");
@@ -796,6 +875,68 @@ namespace
         single->close(); QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 
+    void verifyGraphResultTabs(QApplication& application, const QString& screenshot = {})
+    {
+        robot_qt_viewer::ThemeManager::apply(application, robot_qt_viewer::ThemeKind::Modern);
+        MotionPlanningEditorWidget widget;
+        QVector<QStringList> globalRows, startRows;
+        QVector<QVector<QStringList>> paths(8);
+        for(int branch = 1; branch <= 8; ++branch) {
+            const auto label = QStringLiteral("B%1 \u80a9%2 / \u8098%3 / \u8155%4").arg(branch)
+                .arg(branch <= 4 ? "+" : "-").arg((branch - 1) % 4 < 2 ? "+" : "-")
+                .arg(branch % 2 ? "+" : "-");
+            startRows.push_back({QString::number(branch), "1", branch == 1 ? "1" : ">30",
+                QString::number(148.219446481662 + branch), "749", "1", label, label});
+            for(int point = 1; point <= 749; ++point) {
+                paths[branch - 1].push_back({QString::number(point), QString::number(point * 0.02, 'f', 6),
+                    QString::number(branch), QStringLiteral("97.440865, 1.199759, 33.972933, 97.983219, -105.415134, -24.306064"),
+                    QStringLiteral("0, 0, 0, 0, 0, 0"), label});
+            }
+        }
+        for(int rank = 1; rank <= 30; ++rank) {
+            globalRows.push_back({QString::number(rank), QString::number(148.219446481662 + rank),
+                "749", "1", "1", startRows.front()[6], startRows.front()[7]});
+        }
+        widget.setMultiIkPoints({}, QStringLiteral("Complete multi IK fixture"), true);
+        widget.setLayeredGraphResults(globalRows, QStringLiteral("Top-M=30, per-start K=1"), startRows);
+        auto* tabs = widget.findChild<QTabWidget*>(QStringLiteral("layeredGraphResultTabs"));
+        auto* starts = widget.findChild<QTableWidget*>(QStringLiteral("layeredGraphStartResults"));
+        auto* details = widget.findChild<QTableWidget*>(QStringLiteral("layeredGraphPath"));
+        widget.resize(440, 800); widget.show(); application.processEvents();
+        int notifications = 0;
+        QObject::connect(&widget, &MotionPlanningEditorWidget::layeredGraphSelectionChanged, &widget,
+            [&](int row, bool byStart) {
+                ++notifications;
+                std::cout << "Populate 749-point details: page=" << byStart << ", row=" << row << '\n';
+                QElapsedTimer timer; timer.start();
+                widget.setLayeredGraphPath(paths[byStart ? row : 0]);
+                std::cout << "Detail update: " << timer.elapsed() << " ms\n";
+                require(timer.elapsed() < 5000, "Full trajectory detail update stays responsive");
+            });
+        tabs->setCurrentIndex(1); application.processEvents();
+        require(notifications == 1 && details->rowCount() == 749 && starts->rowCount() == 8,
+            "Switch to per-start K=1 fills all 749 detail rows exactly once");
+        for(int row = 1; row < 8; ++row) {
+            starts->selectRow(row); application.processEvents();
+            require(details->item(748, 2)->text() == QString::number(row + 1) &&
+                details->item(748, 5)->text() == startRows[row][6], "Selected start retains candidate and branch through last point");
+        }
+        for(int width : {380, 540, 440}) {
+            widget.resize(width, 800);
+            tabs->setCurrentIndex(0); application.processEvents();
+            tabs->setCurrentIndex(1); application.processEvents();
+        }
+        require(notifications == 14 && starts->currentRow() == 7 && details->item(748, 2)->text() == "8",
+            "Repeated tab switching retains the selected starting configuration");
+        bool used = false;
+        QObject::connect(&widget, &MotionPlanningEditorWidget::useLayeredGraphResultRequested, &widget,
+            [&](int row, bool byStart) { used = row == 7 && byStart; });
+        widget.findChild<QPushButton*>(QStringLiteral("useLayeredGraphResult"))->click();
+        require(used, "Use-as-initial-result still refers to the selected per-start trajectory");
+        if(!screenshot.isEmpty()) { require(tabs->grab().save(screenshot), "Save per-start results table screenshot"); }
+        widget.close();
+    }
+
     void verifyIkController(QApplication& application, const std::filesystem::path& projectPath,
         const std::filesystem::path& trajectoryPath)
     {
@@ -964,6 +1105,21 @@ namespace
             QPointer<ConfigurationSelectionDialog> comparison = widget.findChild<ConfigurationSelectionDialog*>();
             require(comparison && comparison->isVisible(), "Configuration plot opens from Basic Planning");
             if(!comparison) { return; }
+            auto* branchView = comparison->findChild<QWidget*>(QStringLiteral("configurationGlobalPage"))
+                ->findChild<QCheckBox*>(QStringLiteral("configurationByBranch"));
+            require(branchView && branchView->isEnabled() && branchView->isChecked(),
+                "Production graph comparison defaults to fixed geometric branch categories");
+            require(graphPath->columnCount() == 6 && graphResults->columnCount() == 7 &&
+                startResults->columnCount() == 8 && graphPath->item(0, 5)->text().startsWith(QStringLiteral("B")),
+                "Both result tabs and per-point details show shoulder/elbow/wrist labels");
+            branchView->setChecked(false);
+            require(!comparison->grab().isNull(), "Candidate/turn view remains available");
+            branchView->setChecked(true);
+            const auto branchScreenshot = qEnvironmentVariable("SMROBOT_BRANCH_SCREENSHOT");
+            if(!branchScreenshot.isEmpty()) {
+                require(comparison->grab().save(branchScreenshot), "Save production branch comparison screenshot");
+                require(multiTable->grab().save(branchScreenshot + QStringLiteral(".table.png")), "Save production IK table screenshot");
+            }
             bool plotMatches = comparison->sequences().size() == graphResults->rowCount();
             for(int rank = 0; plotMatches && rank < graphResults->rowCount(); ++rank) {
                 graphResults->selectRow(rank);
@@ -1298,6 +1454,10 @@ int main(int argc, char** argv)
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication application(argc, argv);
     std::cout.setf(std::ios::unitbuf);
+    if(argc >= 2 && std::string(argv[1]) == "--configuration-tabs") {
+        verifyGraphResultTabs(application, argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString{});
+        return failures ? 1 : 0;
+    }
     QSurfaceFormat format;
     format.setVersion(3, 3);
     format.setProfile(QSurfaceFormat::CoreProfile);
