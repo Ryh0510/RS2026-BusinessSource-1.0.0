@@ -14,6 +14,7 @@ namespace robot_qt_viewer
         simulation_project::ProjectDocument document;
         std::filesystem::path basePath;
         bool loaded = false;
+        bool attachmentBindingPreviewActive = false;
     };
 
     class RobotQtViewerMotionPlanningViewportAdapter : public IRobotQtViewerMotionPlanningViewportPort
@@ -24,6 +25,10 @@ namespace robot_qt_viewer
         RobotForwardKinematics robotForwardKinematics(const QString& robotId,
             const std::vector<std::string>& jointNames, bool includeTool) const override;
         void setRobotJointValue(const QString& robotId, const QString& jointName, double value) override;
+        bool setRobotJointValues(const QString& robotId,
+            const std::vector<std::string>& jointNames, const std::vector<double>& values) override;
+        quint64 requestFramePresentation() override;
+        bool isFramePresented(quint64 ticket) const override;
         double robotJointValue(const QString& robotId, const QString& jointName, bool* ok = nullptr) const override;
         void setSprayRangeVisible(const QString& robotId, bool visible) override;
         void setEndEffectorTraceVisible(const QString& robotId, bool visible) override;
@@ -84,7 +89,7 @@ namespace robot_qt_viewer
     public:
         RobotQtViewerAssemblyViewportAdapter(
             RobotViewport& viewport,
-            const RobotQtViewerViewportProjectState& projectState);
+            RobotQtViewerViewportProjectState& projectState);
 
         bool setActivePreviewRobotMount(const QString& robotMountId) override;
         bool previewRobotMountTransform(
@@ -130,7 +135,7 @@ namespace robot_qt_viewer
 
     private:
         RobotViewport& m_viewport;
-        const RobotQtViewerViewportProjectState& m_projectState;
+        RobotQtViewerViewportProjectState& m_projectState;
     };
 
     class RobotQtViewerCollisionViewportAdapter : public IRobotQtViewerCollisionViewportPort

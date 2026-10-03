@@ -239,7 +239,7 @@ namespace robot_qt_viewer
 
     RobotQtViewerAssemblyViewportAdapter::RobotQtViewerAssemblyViewportAdapter(
         RobotViewport& viewport,
-        const RobotQtViewerViewportProjectState& projectState)
+        RobotQtViewerViewportProjectState& projectState)
         : m_viewport(viewport)
         , m_projectState(projectState)
     {
@@ -308,16 +308,20 @@ namespace robot_qt_viewer
         simulation_project::ProjectDocument previewDocument = m_projectState.document;
         simulation_project::ProjectAttachmentCommands commands(previewDocument);
         const simulation_project::BindFramesResult result = commands.bindFrames(request);
-        return result.success &&
-            m_viewport.loadProjectDocument(previewDocument, m_projectState.basePath);
+        if(!result.success) { return false; }
+        // Record the attempted preview so a failed partial load can also be restored.
+        m_projectState.attachmentBindingPreviewActive = true;
+        return m_viewport.loadProjectDocument(previewDocument, m_projectState.basePath);
     }
 
     void RobotQtViewerAssemblyViewportAdapter::clearAttachmentBindingPreview()
     {
-        if(m_projectState.loaded) {
-            m_viewport.loadProjectDocument(
-                m_projectState.document,
-                m_projectState.basePath);
+        // Workbench switches clear all preview types, even when none was created.
+        // A no-op clear must preserve the live runtime, camera and playback trace.
+        if(m_projectState.loaded && m_projectState.attachmentBindingPreviewActive) {
+            if(m_viewport.loadProjectDocument(m_projectState.document, m_projectState.basePath)) {
+                m_projectState.attachmentBindingPreviewActive = false;
+            }
         }
     }
 
@@ -516,6 +520,7 @@ namespace robot_qt_viewer
         const std::filesystem::path& basePath)
     {
         RobotQtViewerViewportLoadResult result;
+        m_projectState.attachmentBindingPreviewActive = false;
         result.success = m_viewport.loadProjectDocument(document, basePath);
         if(!result.success) {
             result.errorMessage = m_viewport.lastError();
@@ -925,6 +930,23 @@ namespace robot_qt_viewer
         double value)
     {
         m_viewport.setRobotJointValue(robotId, jointName, value);
+    }
+
+    bool RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValues(
+        const QString& robotId, const std::vector<std::string>& jointNames,
+        const std::vector<double>& values)
+    {
+        return m_viewport.setRobotJointValues(robotId, jointNames, values);
+    }
+
+    quint64 RobotQtViewerMotionPlanningViewportAdapter::requestFramePresentation()
+    {
+        return m_viewport.requestFramePresentation();
+    }
+
+    bool RobotQtViewerMotionPlanningViewportAdapter::isFramePresented(quint64 ticket) const
+    {
+        return m_viewport.isFramePresented(ticket);
     }
 
     double RobotQtViewerMotionPlanningViewportAdapter::robotJointValue(

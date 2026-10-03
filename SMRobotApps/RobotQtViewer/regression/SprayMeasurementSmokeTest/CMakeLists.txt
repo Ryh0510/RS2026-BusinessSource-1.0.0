@@ -10,7 +10,8 @@ add_executable(${EXAMPLE_TARGET_NAME}
     main.cpp
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerTheme.cpp"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerResources.qrc"
-    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerViewportServicesAdapter.cpp")
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerViewportServicesAdapter.cpp"
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerViewportEventController.cpp")
 target_include_directories(${EXAMPLE_TARGET_NAME} PRIVATE "${ROBOT_QT_VIEWER_SOURCE_DIR}")
 target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE
     SMRobotApps::RobotViewerCore

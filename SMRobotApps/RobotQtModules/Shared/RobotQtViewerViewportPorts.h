@@ -35,6 +35,12 @@ namespace robot_qt_viewer
         virtual RobotForwardKinematics robotForwardKinematics(const QString& robotId,
             const std::vector<std::string>& jointNames, bool includeTool) const = 0;
         virtual void setRobotJointValue(const QString& robotId, const QString& jointName, double value) = 0;
+        virtual bool setRobotJointValues(const QString& robotId,
+            const std::vector<std::string>& jointNames, const std::vector<double>& values) = 0;
+        // A frame ticket acknowledges composition/swap, not merely a queued repaint.
+        // Hidden/suspended viewports leave it pending until presentation resumes.
+        virtual quint64 requestFramePresentation() = 0;
+        virtual bool isFramePresented(quint64 ticket) const = 0;
         virtual double robotJointValue(const QString& robotId, const QString& jointName, bool* ok = nullptr) const = 0;
         virtual void setSprayRangeVisible(const QString& robotId, bool visible) = 0;
         virtual void setEndEffectorTraceVisible(const QString& robotId, bool visible) = 0;

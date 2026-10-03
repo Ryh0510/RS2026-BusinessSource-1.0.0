@@ -343,6 +343,8 @@ public:
         const std::string& robotId,
         const std::string& jointName,
         double value);
+    bool setRobotJointValues(const std::string& robotId,
+        const std::vector<std::string>& jointNames, const std::vector<double>& values);
     bool robotJointValue(
         const std::string& robotId,
         const std::string& jointName,

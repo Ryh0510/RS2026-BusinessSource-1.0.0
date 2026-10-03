@@ -442,3 +442,42 @@
 - 真实11111.txt 749/749点、5986候选、0层截断，最大FK位置误差0.000999176mm、姿态0.0000541424度；全局Top30、8起点各Top3通过独立路径代价/时间/关节值验证，单点应用/播放/CDF传递/导出保持正确。数值多种子不宣称全逆解完备。
 - 未新增第三方依赖；新增应用窄接口，公开SDK接口由1.0.5包提供；项目version3保留。208个变更源码/构建文件UTF-8/CRLF及冲突标记检查通过。
 - 新Release EXE：C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 34C353815433C6E894654E04536D5E6E4818FEDD31526940EF136BCC71294B1A。需连同当前目录DLL/config使用，旧EXE仍在原build，不直接覆盖。
+
+
+## 2026-10-02 修复 CDF/QP 结果播放卡顿及切换工作台重载
+
+- 用户报告升级后播放优化结果导致主视口卡顿、动态播放切换模式后中断。开始时根与规划工作台子仓干净；仅修改相关适配器、ViewerCore、MotionPlanning 控制器及回归，不修改规划算法/数据格式。
+- 重载根因：MainWindow::enterWorkbench 每次调用 clearTaskPreview，其中 clearAttachmentBindingPreview 原本无条件重载整个 ProjectDocument。装配适配器现在记录是否真的创建过绑定预览；没有预览时清理不触碰运行态。创建/取消真实预览仍走既有加载路径，正式文档加载清除标记。相机、运行时关节、轨迹线不会因单纯工作台切换而重置。
+- 播放开销：原 advanceJointPlayback 每点反序列化全部 StoredMotionPlan，六关节逐个应用重复更新所有机器人及工具；startJointPlayback 还会刷新并强制开启实时碰撞查询，而每点已有独立碰撞快照校验。
+- 修复：每次播放建立不可变共享轨迹快照，停止时释放；防止同步事件中途停播导致引用失效。整组关节经 typed port → RobotViewport → ProjectScene → SimulationRuntime 批量应用，普通机器人同步一次；并联机构保留已有耦合更新路径。预检查维度、有限值及关节存在性，失败不静默继续。单关节接口保留。
+- 播放不再强制改变视口碰撞开关或激活检测器；每个原始点仍由独立 ProjectPlanningSceneSnapshot 校验，显式开启的视口碰撞设置保留。没有抽点、关闭播放碰撞校验或改动 ABB 符号。真实文档/几何变化终止旧快照，纯工作台预览清理继续播放。
+- 新增回归：2001点完整播放，20次真实 viewport preview 事件链清理，检查无重载/姿态重置、最终关节、整组 TCP 采样、非法关节组拒绝、文档变更停播；IK测试接入真实 collision port 检查播放不强制开启重复查询。--optimized-playback <project> <txt> 可复用实际优化结果验证，不依赖重新跑 QP。
+- C:/b/rs105-merge 的 Release/Debug 主程序、喷涂回归及碰撞工作流目标构建通过；两配置各9/9相关回归通过（架构、碰撞工作流、工作台生命周期、文档事务、视口呈现、Top-K分页、IK、多IK、喷涂播放），主程序 --smoke-exit-ms 2500 两配置退出码0。UTF-8/CRLF 和 git diff --check 通过。
+- Release 读取外层 build/cdf-top1-after-joints.txt 的4592点实际 ABB4600 轨迹：完整播放46.451秒（测试以1ms定时请求逐点播放，非实时节拍保证），20次预览清理、0场景重载，4592/4592碰撞校验、0碰撞/0无效，最终符号映射关节一致；20ms界面心跳最大间隔67ms。此数据包含喷涂测量、末端轨迹绘制和碰撞采样，未测原版同场景总时长，因此不宣称具体加速倍数。回归触发的是工作台切换使用的同一预览清理事件链，并非人工逐一点击所有工作台。
+- 日志位于外层 build/playback-fix-{configure,build-release,build-debug,build-debug-tests,tests-release,tests-debug,real-cdf-release,app-release,app-debug}.log。Release 可执行文件 C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 54F3734F93A54586E727E47742BCCF4C4B932EF3E6B9F65552AC90633E55BF62。沿用此目录配套DLL，不覆盖旧SDK目录下的EXE。
+
+
+## 2026-10-02 再次修复 CDF 回放动作不连贯
+
+- 用户确认运行新版本，主要症状是机器人动作不流畅。保留前次未提交修改，重新定位后确认前次只检查界面心跳和样本完整性，不能据此确认运动节奏正确。
+- 原播放每次定时回调只推进一行，4592点在1ms请求间隔下实际需要46.451秒；每点耗时直接改变播放速度。该实际文件相邻关节段长约0.024至14.17度，等间隔逐点应用会忽快忽慢；两处重复时间戳也不能直接当作零时长跳变。
+- MotionPlanningCore 新增 JointPlaybackTimeline：普通有效轨迹按原时间比例缩放，CDF预览按关节空间折线弧长分配预览时间；非递增时间回退到弧长。点间线性插值，不wrap角度，不改原q/time/导出。验证有限数、维数、重复点、单点、turn。此为预览节奏，并非重新生成物理执行速度/加速度受约束的轨迹。
+- MotionPlanning 控制器每16ms推进显示，按单调时钟插值；每帧处理全部到期源点并保留逐点碰撞/喷涂/轨迹采样，合并界面通知到20Hz；8ms批次预算避免追赶过期点长期占用GUI，过载放慢显示而不丢采样，长时间事件阻塞恢复时最多推进50ms预览时间。喷涂数据记录原始点，插值帧不混入原始行数。
+- ProjectScene 原逐段 DebugDraw::drawLine，每段内部有1000点Trajectory缓冲，因此数千段每帧反复创建和销毁大量对象。新增私有 EndEffectorTracePass，增量维护完整折线，通过已有 SDK TrajectoryPass 一次绘制；保留颜色、Gizmo过滤、显示/清除语义及全部轨迹点，没有简化或抽点。初次图像回归发现SDK默认Trajectory过滤不包含Gizmo，已显式设置正确过滤后复验图像通过。
+- 新回归覆盖稀疏点间机器人实际运动、弧长速度与采样密度独立、源时间比例、turn、重复时间/点和非法输入；实际CDF回归增加可见规划面板、SceneExplorer运行事件订阅，以及实际绘制帧间隔统计。2001点按1秒预览约1.024秒完成，全部原始样本和20次模式清理事件通过。
+- 4592点实际ABB4600压力回放（请求0.1秒，为验证过载时不丢点）从上一轮46.451秒降到中间版本7.956秒，折线批量绘制后5.245秒；4592/4592校验、0碰撞/0无效、0场景重载，原最终角度一致。此为指定测试场景的回放耗时，不代表QP优化耗时或所有工程固定倍数。
+- 最终默认5秒设置复测：实际7.069秒、309帧、帧间隔P95=34ms；4592/4592原始点采样和碰撞检查、0碰撞/0无效、20次工作台预览清理、0重载、最终关节正确。高负载会延长预览时间，未承诺固定60FPS或物理实时运行。
+- Release/Debug 相关构建及各10/10回归通过，覆盖架构、碰撞工作流、场景系统、工作台生命周期、文档事务、视口呈现、Top-K分页、IK、多IK、喷涂/播放。两配置主程序 --smoke-exit-ms 2500 启动退出码0；UTF-8/CRLF及根/两个子仓git diff --check通过。新增MotionPlanningCore预览接口，无新依赖、无项目格式变化。
+- 日志：外层build/playback-smooth-build-release.log、playback-smooth-build-debug.log、playback-smooth-tests-{release,debug}.log、playback-smooth-real-cdf-{batched,default}-release.log、playback-smooth-app-{release,debug}.log。最新EXE C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 2EF3F23DA09F7F1C7630E527815F4798ECB162BC3B47B46E668483C0744B6DB1；用户原运行进程未终止。
+
+
+## 2026-10-02 播放进度与实际画面呈现同步
+
+- 用户反馈上一轮播放加快后画面跟不上。复查发现控制器16ms定时器推进与RobotViewport重绘定时器独立，Qt可以合并多个update请求；旧的robotStateUpdated在render之前发出，也不能证明某个姿态已显示。仅测总耗时、界面心跳或paint次数不足以验证这个问题。
+- RobotViewport新增requestFramePresentation/isFramePresented呈现票据：paintGL捕获本帧请求编号，完成场景绘制后记为rendered，QOpenGLWidget::frameSwapped后才记为presented。通过现有MotionPlanning typed port与adapter转发，不向MainWindow或领域算法添加Qt呈现语义。
+- MotionPlanning控制器最多保留一个待呈现姿态；下一次定时回调先等上一票据确认，期间丢弃墙钟时间，每次最多推进1/60秒预览。首帧严格从t=0开始；末帧确认后才宣布完成、解锁结果和自动喷涂导出。单点轨迹也保持定时器直到呈现确认；手动停止/真实文档变更清除等待状态。隐藏视口或暂停绘制时不继续堆积播放进度，恢复时不追赶。
+- 保留上一轮全部原始点的碰撞验证、TCP线/喷涂测量、ABB符号、多圈角度、时间轴插值和8ms批次预算。预览总时长是目标；渲染或采样过载会延长。更新播放时长提示，不更改原轨迹、导出、项目格式或依赖。
+- 回归新增实际禁止viewport重绘400ms后进度/首帧保持、恢复100ms无追赶、末帧确认阻塞完成、单点轨迹完成，以及每个提交显示姿态在覆盖前确已呈现。测试末帧人工阻塞只阻塞完成确认，统计覆盖次数直接读取真实视口确认，避免把测试注入当作绘制丢帧。
+- Release真实ABB4600已有4592点CDF结果，5秒目标下实测8972ms（并行构建Debug时），444次提交姿态全部呈现、覆盖未呈现姿态次数0，呈现帧间隔P95=24ms。全部4592点碰撞校验，0碰撞/0无效，20次工作台预览清理、0重载、最终关节正确。此处检验Qt呈现确认，不承诺固定显示器FPS或硬实时运行。
+- Release/Debug主程序与相关回归目标构建通过，两配置各10/10相关回归通过；两配置主程序--smoke-exit-ms 2500启动退出码0。UTF-8/CRLF及根和两个子仓git diff --check通过。新增应用层typed port及RobotViewport呈现接口；不修改预编译SDK。保留全部既有未提交修改。
+- 日志位于外层build/playback-present-*.log。Release产物C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 5B852FEB1BBB10ABA19CFA6E20892D014D22390B02ED7DADE31B32555977B833。

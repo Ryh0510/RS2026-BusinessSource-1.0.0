@@ -95,6 +95,58 @@ using namespace collision;
 
 namespace
 {
+    // Keep the full TCP polyline in one draw instead of allocating a debug
+    // trajectory (and a 1000-point backing vector) for every segment every frame.
+    class EndEffectorTracePass final : public scenecore::TrajectoryPass
+    {
+    public:
+        EndEffectorTracePass()
+        {
+            clear();
+            m_trace.color = glm::vec4(1.0f, 0.25f, 0.65f, 1.0f);
+            m_trace.enableFade = false;
+            scenecore::RenderFilter traceFilter;
+            traceFilter.layerMask = scenecore::renderBit(scenecore::RenderLayer::Gizmo);
+            traceFilter.categoryMask = scenecore::renderBit(scenecore::RenderCategory::Debug);
+            traceFilter.featureMask = scenecore::renderBit(scenecore::RenderFeature::Gizmo);
+            setFilter(traceFilter);
+        }
+
+        void clear()
+        {
+            m_trace.points.clear();
+            m_trace.head = m_trace.size = m_trace.capacity = 0;
+        }
+
+        void append(const glm::vec3& point)
+        {
+            m_trace.points.push_back({ point, 0.0f });
+            // A complete, chronological buffer; head is the next ring write slot.
+            m_trace.head = 0;
+            m_trace.size = m_trace.capacity = m_trace.points.size();
+        }
+
+        void render(scenecore::RenderQueue& queue) override
+        {
+            if(m_trace.size < 2) { return; }
+            const scenecore::TrajectoryDraw draw{ -4600, &m_trace,
+                { scenecore::RenderLayer::Gizmo, scenecore::RenderCategory::Debug,
+                  scenecore::RenderFeature::Gizmo } };
+            // Respect the renderer/camera's global filter before using the SDK pass.
+            queue.trajectories.push_back(draw);
+            const auto visible = queue.filteredTrajectories(filter());
+            const bool allowed = std::find(visible.begin(), visible.end(), &queue.trajectories.back()) != visible.end();
+            queue.trajectories.pop_back();
+            if(!allowed) { return; }
+            scenecore::RenderQueue traceQueue;
+            traceQueue.trajectories.push_back(draw);
+            scenecore::TrajectoryPass::render(traceQueue);
+        }
+
+    private:
+        scenecore::Trajectory m_trace;
+    };
+
     using ProjectCollisionDetectorRuntime = ProjectCollisionDetectorViewRuntime;
     using VisibleCollisionVariantFilter =
         ProjectSceneCollisionPresentationSystem::VisibleVariantFilter;
@@ -2755,6 +2807,7 @@ struct ProjectScene::Impl
     std::string endEffectorTraceRobotId;
     bool endEffectorTraceVisible = false;
     std::vector<collision::Vec3> endEffectorTracePoints;
+    std::shared_ptr<EndEffectorTracePass> endEffectorTracePass;
     struct SpraySurfaceMesh
     {
         std::string linkName;
@@ -3006,6 +3059,9 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     renderer.addPass(std::make_shared<scenecore::AxisPass>());
     renderer.addPass(collisionPrimitivePass);
     renderer.addPass(collisionLinePass);
+    endEffectorTracePass = std::make_shared<EndEffectorTracePass>();
+    for(const auto& point : endEffectorTracePoints) { endEffectorTracePass->append(toGlmVec3(point)); }
+    renderer.addPass(endEffectorTracePass);
     return true;
 }
 
@@ -4473,18 +4529,8 @@ bool ProjectScene::Impl::sprayNozzleWorldTransform(
 
 void ProjectScene::Impl::drawEndEffectorTrace()
 {
-    if(!endEffectorTraceVisible || endEffectorTracePoints.size() < 2) {
-        return;
-    }
-    const scenecore::RenderTag tag{
-        scenecore::RenderLayer::Gizmo,
-        scenecore::RenderCategory::Debug,
-        scenecore::RenderFeature::Gizmo };
-    const glm::vec4 color(1.0f, 0.25f, 0.65f, 1.0f);
-    auto& debug = renderer.debug();
-    for(std::size_t index = 1; index < endEffectorTracePoints.size(); ++index) {
-        debug.drawLine(toGlmVec3(endEffectorTracePoints[index - 1]),
-            toGlmVec3(endEffectorTracePoints[index]), color, tag);
+    if(endEffectorTracePass) {
+        endEffectorTracePass->setEnabled(endEffectorTraceVisible && endEffectorTracePoints.size() >= 2);
     }
 }
 
@@ -7017,6 +7063,40 @@ bool ProjectScene::setRobotJointValue(
     return true;
 }
 
+bool ProjectScene::setRobotJointValues(const std::string& robotId,
+    const std::vector<std::string>& jointNames, const std::vector<double>& values)
+{
+    const auto* robot = m_impl->parallelRuntime.robot(robotId);
+    if(robot == nullptr || jointNames.empty() || jointNames.size() != values.size() ||
+        !m_impl->simulationRuntime) {
+        return false;
+    }
+    // Validate the complete group before changing any joint.
+    for(std::size_t i = 0; i < jointNames.size(); ++i) {
+        double previous = 0.0;
+        if(!std::isfinite(values[i]) ||
+            !m_impl->parallelRuntime.jointValue(robotId, jointNames[i], previous)) {
+            return false;
+        }
+    }
+    if(robot->parallelControlEnabled || robot->parallelFollowerEnabled) {
+        // Keep the parallel mechanism's coupling rules on the legacy path.
+        for(std::size_t i = 0; i < jointNames.size(); ++i) {
+            if(!m_impl->parallelRuntime.setJointValue(robotId, jointNames[i], values[i])) {
+                return false;
+            }
+        }
+    } else if(!m_impl->simulationRuntime->setRobotJointValues(robotId, jointNames, values).success) {
+        return false;
+    }
+    for(RuntimeRobot& runtime : m_impl->robots) {
+        ProjectRuntimeBuilder::updateRobotPose(runtime);
+    }
+    m_impl->stewartPresentationSystem.applyAllVisualOverrides(m_impl->robots);
+    m_impl->syncProjectToolAttachments();
+    return true;
+}
+
 bool ProjectScene::robotJointValue(
     const std::string& robotId,
     const std::string& jointName,
@@ -7411,6 +7491,7 @@ void ProjectScene::setEndEffectorTraceVisible(const std::string& robotId, bool v
 void ProjectScene::clearEndEffectorTrace()
 {
     m_impl->endEffectorTracePoints.clear();
+    if(m_impl->endEffectorTracePass) { m_impl->endEffectorTracePass->clear(); }
 }
 
 void ProjectScene::appendEndEffectorTraceSample()
@@ -7429,6 +7510,7 @@ void ProjectScene::appendEndEffectorTraceSample()
     // Suppress stationary samples within one micrometre without copying the trace.
     if(points.empty() || (points.back() - position).squaredNorm() > 1.0e-12) {
         points.push_back(position);
+        if(m_impl->endEffectorTracePass) { m_impl->endEffectorTracePass->append(toGlmVec3(position)); }
     }
 }
 

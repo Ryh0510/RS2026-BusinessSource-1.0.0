@@ -101,6 +101,11 @@ public:
         const QString& robotId,
         const QString& jointName,
         double value);
+    bool setRobotJointValues(const QString& robotId,
+        const std::vector<std::string>& jointNames, const std::vector<double>& values);
+    // GUI presentation fence; does not change robot/runtime state.
+    quint64 requestFramePresentation();
+    bool isFramePresented(quint64 ticket) const;
     double robotJointValue(
         const QString& robotId,
         const QString& jointName,
@@ -330,6 +335,9 @@ private:
     simulation_project::ProjectDocument m_pendingProjectDocument;
     std::filesystem::path m_pendingProjectBasePath;
     QTimer* m_updateTimer = nullptr;
+    quint64 m_requestedFrameTicket = 0;
+    quint64 m_renderedFrameTicket = 0;
+    quint64 m_presentedFrameTicket = 0;
     QToolButton* m_cameraStreamsButton = nullptr;
     QMenu* m_cameraStreamsMenu = nullptr;
     std::vector<std::unique_ptr<RobotViewportCameraStreamState>> m_cameraStreams;

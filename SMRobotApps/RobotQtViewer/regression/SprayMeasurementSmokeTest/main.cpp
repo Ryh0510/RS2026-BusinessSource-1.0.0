@@ -13,6 +13,9 @@
 #include <RobotQtViewerViewportPreviewState.h>
 #include <RobotViewport.h>
 #include "RobotQtViewerViewportServicesAdapter.h"
+#include "RobotQtViewerViewportEventController.h"
+#include <SceneExplorerModuleController.h>
+#include <SceneExplorerWidget.h>
 #include <MotionPlanningCore/MotionPlanning.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/CdfJointAngleImport.h>
@@ -238,18 +241,43 @@ namespace
         }
     };
 
-    class TraceObservingServices : public robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter
+    class PresentationObservingServices : public robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter
     {
     public:
         using RobotQtViewerMotionPlanningViewportAdapter::RobotQtViewerMotionPlanningViewportAdapter;
+        quint64 lastTicket = 0;
+        int frameRequests = 0;
+        int unpresentedOverwrites = 0;
+        quint64 requestFramePresentation() override
+        {
+            if(lastTicket && !RobotQtViewerMotionPlanningViewportAdapter::isFramePresented(lastTicket)) { ++unpresentedOverwrites; }
+            lastTicket = RobotQtViewerMotionPlanningViewportAdapter::requestFramePresentation();
+            ++frameRequests;
+            return lastTicket;
+        }
+    };
+
+    class TraceObservingServices : public PresentationObservingServices
+    {
+    public:
+        using PresentationObservingServices::PresentationObservingServices;
+        int holdAtSamples = 0;
+        bool isFramePresented(quint64 ticket) const override
+        {
+            return !(holdAtSamples > 0 && samples >= holdAtSamples) &&
+                RobotQtViewerMotionPlanningViewportAdapter::isFramePresented(ticket);
+        }
         int jointUpdates = 0;
         int samples = 0;
         int resets = 0;
         bool enabled = false;
-        void setRobotJointValue(const QString& robotId, const QString& jointName, double value) override
+        bool completeGroups = true;
+        bool setRobotJointValues(const QString& robotId, const std::vector<std::string>& names,
+            const std::vector<double>& values) override
         {
-            RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValue(robotId, jointName, value);
-            ++jointUpdates;
+            const bool applied = RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValues(robotId, names, values);
+            if(applied) { jointUpdates += static_cast<int>(names.size()); }
+            return applied;
         }
         void setEndEffectorTraceVisible(const QString& robotId, bool visible) override
         {
@@ -263,17 +291,17 @@ namespace
         }
         void appendEndEffectorTraceSample() override
         {
-            require(jointUpdates == 2, "TCP is sampled once after the entire two-joint group");
+            completeGroups = completeGroups && jointUpdates >= 2 && jointUpdates % 2 == 0;
             jointUpdates = 0;
             ++samples;
             RobotQtViewerMotionPlanningViewportAdapter::appendEndEffectorTraceSample();
         }
     };
 
-    class OverlayObservingServices : public robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter
+    class OverlayObservingServices : public PresentationObservingServices
     {
     public:
-        using RobotQtViewerMotionPlanningViewportAdapter::RobotQtViewerMotionPlanningViewportAdapter;
+        using PresentationObservingServices::PresentationObservingServices;
         int samples = 0;
         void appendEndEffectorTraceSample() override
         {
@@ -295,6 +323,32 @@ namespace
             RobotQtViewerMotionPlanningViewportAdapter::clearTrajectoryControlPointOverlay(id);
         }
     };
+
+    void verifyPlaybackTimeline()
+    {
+        using motion_planning::JointPlaybackTimeline;
+        robottrajectory::JointTrajectory path;
+        path.points = { {0.0, {0.0}, {}, {}}, {5.0, {0.01}, {}, {}}, {10.0, {1.0}, {}, {}} };
+        JointPlaybackTimeline timeline;
+        require(timeline.reset(path, 2.0, true) && std::abs(timeline.pointTime(1) - 0.02) < 1e-12 &&
+            std::abs(timeline.sample(path, 1.0)[0] - 0.5) < 1e-12,
+            "CDF preview speed is independent of uneven waypoint density");
+        require(timeline.reset(path, 2.0, false) && std::abs(timeline.pointTime(1) - 1.0) < 1e-12 &&
+            std::abs(timeline.sample(path, 0.5)[0] - 0.005) < 1e-12,
+            "Ordinary trajectories retain relative source timing and interpolate between knots");
+        path.points = { {0.0, {3.0}, {}, {}}, {1.0, {-3.0}, {}, {}} };
+        require(timeline.reset(path, 2.0, true) && std::abs(timeline.sample(path, 1.0)[0]) < 1e-12,
+            "Playback preserves full turn displacement without wrapping angles");
+        path.points = { {0.0, {0.0}, {}, {}}, {0.0, {0.2}, {}, {}},
+            {0.0, {0.2}, {}, {}}, {1.0, {1.0}, {}, {}} };
+        require(timeline.reset(path, 2.0, false) && std::abs(timeline.sample(path, 0.4)[0] - 0.2) < 1e-12 &&
+            timeline.sample(path, 5.0)[0] == 1.0, "Duplicate timestamps/poses remain finite and reach the exact endpoint");
+        path.points.resize(1);
+        require(timeline.reset(path, 2.0, true) && timeline.sample(path, 1.0) == path.points.front().q,
+            "One-point preview remains stationary");
+        path.points.front().q[0] = std::numeric_limits<double>::quiet_NaN();
+        require(!timeline.reset(path, 2.0, true), "Invalid playback data is rejected before applying joints");
+    }
 
     void verifyModelIk()
     {
@@ -829,6 +883,138 @@ namespace
         }
     }
 
+    void verifyOptimizedPlayback(QApplication& application, const std::filesystem::path& projectPath,
+        const std::filesystem::path& trajectoryPath, double previewDuration)
+    {
+        using namespace robot_qt_viewer;
+        using namespace motion_planning;
+        simulation_project::ProjectDocument document;
+        std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "Playback project loads");
+        const auto imported = ProjectCdfJointAngleImporter::importFile(trajectoryPath);
+        require(imported.success && !imported.points.empty(), "Optimized joint trajectory imports");
+        if(!imported.success || imported.points.empty()) { return; }
+        StoredMotionPlan plan;
+        plan.id = "playback_cdf_qp_regression";
+        plan.name = plan.id;
+        plan.robotId = "ABB4600_urdf";
+        plan.jointNames = ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        for(const auto& point : imported.points) {
+            auto q = point.jointAnglesDegrees;
+            for(auto& value : q) { value *= 3.141592653589793 / 180.0; }
+            plan.trajectory.points.push_back({ point.timeSeconds, std::move(q), {}, {} });
+        }
+        RobotViewport viewport;
+        viewport.resize(800, 600);
+        RobotQtViewerViewportProjectState projectState;
+        RobotQtViewerDocumentViewportAdapter documentViewport(viewport, projectState);
+        require(documentViewport.loadProjectDocument(document, projectPath.parent_path()).success,
+            "Real robot viewport loads before committing optimized trajectory");
+        viewport.show(); application.processEvents();
+        require(MotionPlanningProjectStore::upsertPlan(document, plan, &error), "Optimized playback plan stores");
+        simulation_project::ProjectSession session;
+        session.setDocument(document, projectPath, false, false);
+        RobotQtViewerEventHub hub;
+        RobotQtViewerDocumentController documentController(session, hub);
+        RobotQtViewerSelectionModel selection(hub);
+        RobotQtViewerViewportPreviewState preview(hub);
+        RobotQtViewerOperationStatusStore status(hub);
+        RobotQtViewerDocumentContext context(session, documentController, selection, preview, hub, status);
+        RobotQtViewerAssemblyViewportAdapter assemblyViewport(viewport, projectState);
+        RobotQtViewerSelectionViewportAdapter selectionViewport(viewport);
+        RobotQtViewerCollisionViewportAdapter collisionViewport(viewport, projectState);
+        RobotQtViewerViewportEventController viewportEvents(selectionViewport, assemblyViewport, collisionViewport, preview, {});
+        hub.subscribe(RobotQtViewerEventKind::ViewportPreviewChanged, &viewportEvents,
+            [&](const auto& event) { viewportEvents.handleEvent(event); });
+        OverlayObservingServices services(viewport);
+        context.setMotionPlanningViewport(&services);
+        context.setCollisionViewport(&collisionViewport);
+        selection.selectRobotLink("ABB4600_urdf", "Link6");
+        SceneExplorerWidget explorer;
+        SceneExplorerModuleController explorerController(explorer, context);
+        hub.subscribe(RobotQtViewerEventKind::RobotRuntimeChanged, &explorerController,
+            [&](const auto& event) { explorerController.handleEvent(event); });
+        explorerController.refreshViewModel();
+        explorer.resize(350, 700); explorer.show();
+        MotionPlanningEditorWidget widget;
+        MotionPlanningModuleController controller(widget, context);
+        widget.trajectorySelectionChanged(QString::fromStdString(plan.id));
+        widget.resize(480, 700); widget.show();
+        hub.subscribe(RobotQtViewerEventKind::ViewportPreviewChanged, &controller,
+            [&](const auto& event) { controller.handleEvent(event); });
+        widget.findChild<QCheckBox*>(QStringLiteral("endEffectorTraceVisible"))->setChecked(true);
+        const bool queriesBefore = collisionViewport.collisionQueriesEnabled();
+        int reloads = 0, clears = 0;
+        QObject::connect(&viewport, &RobotViewport::robotLinksAvailable, &widget,
+            [&](const auto&, const auto&, const auto&, const auto&, const auto&, const auto&) { ++reloads; });
+        QElapsedTimer elapsed;
+        elapsed.start();
+        qint64 lastBeat = 0, maxBeatGap = 0, lastFrame = -1;
+        std::vector<qint64> frameGaps;
+        int presentedPoses = 0;
+        quint64 lastPresentedTicket = 0;
+        QObject::connect(&viewport, &QOpenGLWidget::frameSwapped, &widget, [&]() {
+            if(services.lastTicket != lastPresentedTicket && services.isFramePresented(services.lastTicket)) {
+                lastPresentedTicket = services.lastTicket;
+                ++presentedPoses;
+            }
+            const auto now = elapsed.elapsed();
+            if(services.samples > 0 && services.samples < static_cast<int>(plan.trajectory.points.size())) {
+                if(lastFrame >= 0) { frameGaps.push_back(now - lastFrame); }
+                lastFrame = now;
+            }
+        });
+        QEventLoop loop;
+        QTimer heartbeat;
+        heartbeat.setInterval(20);
+        QObject::connect(&heartbeat, &QTimer::timeout, &widget, [&]() {
+            const auto now = elapsed.elapsed();
+            maxBeatGap = std::max(maxBeatGap, now - lastBeat);
+            lastBeat = now;
+            if(clears < 20 && services.samples > 0) {
+                preview.clearTaskPreview(QStringLiteral("optimizedPlaybackSwitch"));
+                ++clears;
+            }
+            if((services.samples >= static_cast<int>(plan.trajectory.points.size()) &&
+                services.isFramePresented(services.lastTicket) &&
+                widget.findChild<QPushButton*>(QStringLiteral("plotSprayMeasurements"))->isEnabled()) || now > 600000) { loop.quit(); }
+        });
+        // Exclude independent collision scene construction from the playback heartbeat metric.
+        widget.playbackRequested(previewDuration);
+        elapsed.restart();
+        heartbeat.start();
+        loop.exec();
+        heartbeat.stop();
+        QString summary;
+        for(auto* label : widget.findChildren<QLabel*>()) {
+            if(label->text().contains("Collision states:")) { summary = label->text(); }
+        }
+        std::sort(frameGaps.begin(), frameGaps.end());
+        const auto p95FrameMs = frameGaps.empty() ? 0 : frameGaps[(frameGaps.size() - 1) * 95 / 100];
+        std::cout << "Presented frames=" << frameGaps.size() + 1 << " p95FrameMs=" << p95FrameMs
+            << " submittedPoses=" << services.frameRequests << " presentedPoses=" << presentedPoses
+            << " overwrittenBeforePresentation=" << services.unpresentedOverwrites << '\n';
+        require(services.unpresentedOverwrites == 0 && presentedPoses == services.frameRequests,
+            "Every submitted display pose including the endpoint is presented without being overwritten");
+        require(frameGaps.size() > 20 && p95FrameMs < 100, "Actual viewport continues rendering during optimized playback");
+        std::cout << "Optimized playback: points=" << services.samples << " elapsedMs=" << elapsed.elapsed()
+            << " maxHeartbeatGapMs=" << maxBeatGap << " reloads=" << reloads << " clears=" << clears
+            << " summary=" << summary.toStdString() << '\n';
+        require(services.samples == static_cast<int>(plan.trajectory.points.size()), "Every optimized trajectory point is played");
+        require(summary.contains(QStringLiteral(" / %1 ").arg(services.samples)), "Every optimized point retains independent collision validation");
+        require(reloads == 0 && clears == 20, "Real optimized playback survives twenty mode preview clears");
+        require(collisionViewport.collisionQueriesEnabled() == queriesBefore, "Playback preserves user viewport query settings");
+        const auto expected = ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(plan.trajectory.points.back().q);
+        bool finalPoseMatches = true;
+        for(std::size_t i = 0; i < expected.size(); ++i) {
+            finalPoseMatches = finalPoseMatches && std::abs(viewport.robotJointValue("ABB4600_urdf",
+                QString::fromStdString(plan.jointNames[i])) - expected[i]) < 1e-9;
+        }
+        require(finalPoseMatches, "Optimized playback reaches the final pose with existing ABB sign mapping");
+        widget.playbackStopRequested();
+        viewport.close();
+    }
+
     void verifyConfigurationPlot(QApplication& application, const QString& screenshot = {})
     {
         QVector<QVector<int>> sequences(3, QVector<int>(749, 4));
@@ -973,6 +1159,10 @@ namespace
         require(static_cast<bool>(actualFk), "UI exposes independent actual-model FK");
         if(!actualFk) { return; }
         OverlayObservingServices services(viewport);
+        robot_qt_viewer::RobotQtViewerViewportProjectState projectState;
+        robot_qt_viewer::RobotQtViewerCollisionViewportAdapter collisionViewport(viewport, projectState);
+        context.setCollisionViewport(&collisionViewport);
+        collisionViewport.setCollisionQueriesEnabled(false);
         context.setMotionPlanningViewport(&services);
         selection.selectRobotLink(QStringLiteral("ABB4600_urdf"), QStringLiteral("Link6"));
         MotionPlanningEditorWidget widget;
@@ -1322,6 +1512,8 @@ namespace
                 "Export header and tab delimiters match the supplied TXT example");
 
         }
+        require(!collisionViewport.collisionQueriesEnabled(),
+            "IK/CDF playback does not force duplicate continuous viewport collision queries");
         viewport.close();
     }
 
@@ -1364,7 +1556,16 @@ namespace
             session, documentController, selection, preview, hub, status);
         RobotViewport viewport;
         viewport.resize(760, 600);
-        viewport.loadProjectDocument(session.document(), folder);
+        robot_qt_viewer::RobotQtViewerViewportProjectState projectState;
+        robot_qt_viewer::RobotQtViewerDocumentViewportAdapter documentViewport(viewport, projectState);
+        documentViewport.loadProjectDocument(session.document(), folder);
+        robot_qt_viewer::RobotQtViewerAssemblyViewportAdapter assemblyViewport(viewport, projectState);
+        robot_qt_viewer::RobotQtViewerSelectionViewportAdapter selectionViewport(viewport);
+        robot_qt_viewer::RobotQtViewerCollisionViewportAdapter collisionViewport(viewport, projectState);
+        robot_qt_viewer::RobotQtViewerViewportEventController viewportEvents(
+            selectionViewport, assemblyViewport, collisionViewport, preview, {});
+        hub.subscribe(robot_qt_viewer::RobotQtViewerEventKind::ViewportPreviewChanged, &viewportEvents,
+            [&](const auto& event) { viewportEvents.handleEvent(event); });
         viewport.show();
         application.processEvents();
         viewport.setCameraView(ProjectSceneCameraView::Isometric);
@@ -1440,6 +1641,140 @@ namespace
         widget.playbackRequested(10.0);
         widget.playbackStopRequested();
         require(services.samples == 1 && services.enabled, "Early stop retains partial visible trace");
+        services.samples = 0;
+        widget.playbackRequested(1.0);
+        QTimer::singleShot(150, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        const double interpolatedTilt = viewport.robotJointValue("gun", "tilt");
+        require(services.samples == 1 && interpolatedTilt > 0.02 && interpolatedTilt < pi / 6.0,
+            "Robot moves between sparse source points instead of waiting then jumping at each timer tick");
+        widget.playbackStopRequested();
+        // A real suspended viewport must stop progression even while timers run.
+        services.samples = 0;
+        services.lastTicket = 0;
+        services.unpresentedOverwrites = 0;
+        viewport.setUpdatesEnabled(false);
+        widget.playbackRequested(1.0);
+        const auto pausedTicket = services.lastTicket;
+        QTimer::singleShot(400, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        require(services.samples == 1 && services.lastTicket == pausedTicket &&
+            !viewport.isFramePresented(pausedTicket) && std::abs(viewport.robotJointValue("gun", "tilt")) < 1e-12,
+            "Suppressed presentation keeps first pose/trace/progress fixed despite active timers");
+        viewport.setUpdatesEnabled(true);
+        QTimer::singleShot(100, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        const auto resumedTilt = viewport.robotJointValue("gun", "tilt");
+        require(viewport.isFramePresented(pausedTicket) && resumedTilt > 0.0 && resumedTilt < 0.13,
+            "Resuming presentation advances smoothly without catching up the 400ms pause");
+        widget.playbackStopRequested();
+
+        // Hold only the endpoint acknowledgment to check completion/export order.
+        if(measurement) { measurement->setChecked(true); }
+        services.samples = 0;
+        services.lastTicket = 0;
+        services.holdAtSamples = 3;
+        widget.playbackRequested(0.03);
+        QTimer::singleShot(250, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        const auto finalTicket = services.lastTicket;
+        require(services.samples == 3 && plot && !plot->isEnabled(),
+            "Processing final source point does not complete playback before final frame acknowledgment");
+        services.holdAtSamples = 0;
+        QTimer::singleShot(80, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        require(plot && plot->isEnabled() && services.lastTicket == finalTicket &&
+            viewport.isFramePresented(finalTicket) && services.unpresentedOverwrites == 0,
+            "Endpoint presentation completes playback without duplicate source samples or overwritten frames");
+        if(measurement) { measurement->setChecked(false); }
+        // Long playback exercises the exact preview-clear event path used by MainWindow
+        // when changing workbenches. Runtime joints and the existing trace must survive.
+        auto longPlan = plan;
+        longPlan.trajectory.points.clear();
+        constexpr int longCount = 2001;
+        for(int i = 0; i < longCount; ++i) {
+            longPlan.trajectory.points.push_back({ i * 0.001, { 0.1 + i * 0.0001, i * 0.001 }, {}, {} });
+        }
+        auto longDocument = session.document();
+        require(motion_planning::MotionPlanningProjectStore::upsertPlan(longDocument, longPlan, &error),
+            "Long playback fixture stores");
+        session.setDocument(longDocument, folder / "spray.sys.json", false, false);
+        robot_qt_viewer::RobotQtViewerEvent changed;
+        changed.kind = robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged;
+        controller.handleEvent(changed);
+        int reloads = 0;
+        QObject::connect(&viewport, &RobotViewport::robotLinksAvailable, &widget,
+            [&](const auto&, const auto&, const auto&, const auto&, const auto&, const auto&) { ++reloads; });
+        services.samples = 0;
+        int clears = 0;
+        bool posesPreserved = true;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        qint64 lastBeat = 0, maxBeatGap = 0;
+        QTimer heartbeat;
+        heartbeat.setInterval(10);
+        QObject::connect(&heartbeat, &QTimer::timeout, &widget, [&]() {
+            const qint64 now = elapsed.elapsed();
+            maxBeatGap = std::max(maxBeatGap, now - lastBeat);
+            lastBeat = now;
+            if(clears < 20) {
+                bool ok = false;
+                const double before = viewport.robotJointValue("gun", "tilt", &ok);
+                preview.clearTaskPreview(QStringLiteral("workbenchSwitchRegression"));
+                const double after = viewport.robotJointValue("gun", "tilt");
+                posesPreserved = posesPreserved && ok && std::abs(before - after) < 1e-12;
+                ++clears;
+            }
+            if((services.samples >= longCount && services.isFramePresented(services.lastTicket)) ||
+                elapsed.elapsed() > 60000) { playbackLoop.quit(); }
+        });
+        heartbeat.start();
+        widget.playbackRequested(1.0);
+        playbackLoop.exec();
+        heartbeat.stop();
+        widget.playbackStopRequested();
+        std::cout << "Long playback: points=" << services.samples << " elapsedMs=" << elapsed.elapsed()
+                  << " maxHeartbeatGapMs=" << maxBeatGap << " reloads=" << reloads << '\n';
+        require(services.samples == longCount && services.completeGroups,
+            "All 2001 joint groups reach runtime and TCP sampling without dropping points");
+        require(clears == 20 && posesPreserved && reloads == 0,
+            "Twenty workbench preview clears preserve runtime poses without reloading the scene");
+        require(maxBeatGap < 1000, "GUI heartbeat remains responsive during long playback");
+        require(std::abs(viewport.robotJointValue("gun", "slide") - 2.0) < 1e-12,
+            "Long playback reaches the final joint pose");
+        const double beforeInvalid = viewport.robotJointValue("gun", "slide");
+        require(!viewport.setRobotJointValues("gun", { "slide", "missing" }, { 4.0, 0.0 }) &&
+            std::abs(viewport.robotJointValue("gun", "slide") - beforeInvalid) < 1e-12,
+            "Invalid joint groups fail without partially updating the runtime");
+        // An actual document edit must invalidate the snapshot, unlike a mode switch.
+        services.samples = 0;
+        widget.playbackRequested(20.0);
+        controller.handleEvent(changed);
+        QTimer::singleShot(100, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        require(services.samples == 1, "Document changes stop playback of the old snapshot");
+        // Single-point paths have no next source sample, but still need a timer
+        // to complete after their only display frame is presented.
+        auto singlePlan = plan;
+        singlePlan.trajectory.points.resize(1);
+        auto singleDocument = session.document();
+        require(motion_planning::MotionPlanningProjectStore::upsertPlan(singleDocument, singlePlan, &error),
+            "Single-point playback fixture stores");
+        session.setDocument(singleDocument, folder / "spray.sys.json", false, false);
+        controller.handleEvent(changed);
+        if(measurement) { measurement->setChecked(true); }
+        services.samples = 0;
+        viewport.setUpdatesEnabled(false);
+        widget.playbackRequested(1.0);
+        QTimer::singleShot(100, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        require(services.samples == 1 && plot && !plot->isEnabled(),
+            "Single-point playback also waits for presentation");
+        viewport.setUpdatesEnabled(true);
+        QTimer::singleShot(150, &playbackLoop, &QEventLoop::quit);
+        playbackLoop.exec();
+        require(services.samples == 1 && plot && plot->isEnabled() && viewport.isFramePresented(services.lastTicket),
+            "Single-point playback completes after presentation without duplicate samples");
         const int resetsBeforeSelection = services.resets;
         widget.trajectorySelectionChanged(QStringLiteral("missing"));
         require(services.resets > resetsBeforeSelection, "Trajectory selection clears previous trace");
@@ -1478,6 +1813,12 @@ int main(int argc, char** argv)
         verifyCdfProgress(application, std::filesystem::u8path(argv[2]), folder);
         return failures ? 1 : 0;
     }
+    if(argc >= 4 && std::string(argv[1]) == "--optimized-playback") {
+        verifyOptimizedPlayback(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]),
+            argc >= 5 ? std::stod(argv[4]) : 5.0);
+        return failures ? 1 : 0;
+    }
+    verifyPlaybackTimeline();
     verifyModelIk();
     verifyMultiIkDomain();
     if(argc >= 2 && std::string(argv[1]) == "--configuration-plot") {

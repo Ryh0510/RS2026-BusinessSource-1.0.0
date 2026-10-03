@@ -130,6 +130,9 @@ RobotViewport::RobotViewport(QWidget* parent)
     m_cameraStreamsButton->setMinimumSize(112, 36);
     m_cameraStreamsButton->hide();
 
+    connect(this, &QOpenGLWidget::frameSwapped, this, [this]() {
+        m_presentedFrameTicket = m_renderedFrameTicket;
+    });
     m_updateTimer = new QTimer(this);
     m_updateTimer->setInterval(16);
     connect(m_updateTimer, &QTimer::timeout, this, [this]() {
@@ -597,6 +600,16 @@ void RobotViewport::setRobotJointValue(
         m_scene->setRobotJointValue(robotId.toStdString(), jointName.toStdString(), value);
         update();
     }
+}
+
+bool RobotViewport::setRobotJointValues(const QString& robotId,
+    const std::vector<std::string>& jointNames, const std::vector<double>& values)
+{
+    if(m_scene == nullptr || !m_scene->setRobotJointValues(robotId.toStdString(), jointNames, values)) {
+        return false;
+    }
+    update();
+    return true;
 }
 
 double RobotViewport::robotJointValue(
@@ -1496,12 +1509,27 @@ void RobotViewport::resizeGL(int width, int height)
     updateCameraOverlayGeometry();
 }
 
+quint64 RobotViewport::requestFramePresentation()
+{
+    const quint64 ticket = ++m_requestedFrameTicket;
+    update();
+    return ticket;
+}
+
+bool RobotViewport::isFramePresented(quint64 ticket) const
+{
+    return ticket <= m_presentedFrameTicket;
+}
+
 void RobotViewport::paintGL()
 {
     if(m_scene == nullptr || !m_scene->isInitialized()) {
         return;
     }
 
+    // Capture before any callbacks: a repaint requested during this paint must
+    // not be acknowledged by the frame that was already being rendered.
+    const quint64 frameTicket = m_requestedFrameTicket;
     const auto frameStart = Clock::now();
     const auto now = Clock::now();
     const std::chrono::duration<double> elapsed = now - m_startTime;
@@ -1511,6 +1539,7 @@ void RobotViewport::paintGL()
     const double updateMs = elapsedMilliseconds(updateStart);
     const auto renderStart = Clock::now();
     m_scene->render();
+    m_renderedFrameTicket = frameTicket;
     const double renderMs = elapsedMilliseconds(renderStart);
     const double cameraRenderMs = renderDueCameraStreams();
     const double totalMs = elapsedMilliseconds(frameStart);
