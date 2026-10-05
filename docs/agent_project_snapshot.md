@@ -327,3 +327,17 @@
 - 回归入口 RobotQtViewerConfigurationTabsSmoke / --configuration-tabs；使用主程序主题、8 起点 K=1，并保留现有真实 IK、播放、分层图与 CDF 传递测试。源码已有构型分类等未提交修改均保留。
 
 - 验收完成：Release/Debug 主程序与 smoke 目标构建通过，两配置各 5/5 回归通过；新版 Release 启动检查退出 0，截图视觉核对及 UTF-8/CRLF、git diff --check 通过。运行中的原 EXE 未覆盖、未终止；交付同级 build/Release/bin/RobotQtViewer_TopKFixrx64.exe，SHA256 4B84F3C0013B718EA8C4B0902AC093E00D253C086A44ECCF429A310B728EFAB0。测试日志 topk-fix-tests-release.log / topk-fix-tests-debug.log。无新增公共 API、第三方依赖或持久化字段。
+
+
+## 2026-10-05 TCP 扫描线交叉与分图对照
+
+- 分支 main，基线 6489cc4，根仓与规划子仓初始干净；上轮安全结果 results/11111_Top1_Smooth_100mm 只读保留。
+- 根因核查：关节 chord 多尺度平滑仅受逐站 100 mm 球形走廊约束，缺乏 TCP 参考形状目标；允许相邻扫描线越线。所有几何改进归 ProjectMotionPlanning，回归程序仅注入真实场景与记录证据。
+- 计划先量化参考/旧结果的投影交叉，再试验实际 FK 的形状恢复与碰撞约束精化，修复后接入正式 APF/CDF；默认一轮 QP、端点完整位姿、合法 turn 和 100 mm 不变。最终原始关节线性插值 0.00025 rad 独立复验，不把节点无碰撞等同连续认证。
+- 交付独立原始/旧结果/新结果图，统一坐标与指标；Release/Debug 构建、相关回归、真实 Top-1 验收。不得复用已知密采样失败的 run1 候选。
+
+- 实施中：新增 restoreApfTcpShape/refineApfTcpShape，先有序 TCP 圆角参考与碰撞限制位移恢复，再固定该 TCP 曲线投影关节平滑；已接入 APF 快照前和最终 QP 输出前。无 GUI 或公共 API 变更。
+- 检查点试验 shape-restored-run2 独立 0.00025 rad 共149563样本、0碰撞/0限位，偏移77.5512mm；TCP >45度折角65→18、最大145.61→94.33度、RMS偏移66.24→16.80mm。只是检查点证据，完整正式流程待最终验收。
+- Release/Debug 各10/10初轮回归通过；最终健壮性小修后 Debug3/3通过且主程序启动退出0。完整真实运行写入外层build/apf-shape-top1-delivery及同名log，报告脚本build/report_tcp_shape_delivery.py，拟交付results/11111_Top1_Shape_100mm；结束后补最终结果、Release重编译和audit。
+
+- 本轮最终完成：完整Top-1结果已交付results/11111_Top1_Shape_100mm，4528点/最终138362次0.00025rad独立采样0碰撞，最大偏移87.664mm。新增投影交叉55→7、>45度TCP折角65→11；原始/旧/新已分图。仍未达到10mm余量、保留局部离散折角，完整计算2025.22秒；详见本日audit与交付README。Release/Debug构建/回归/启动均通过，当前EXE为C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe。

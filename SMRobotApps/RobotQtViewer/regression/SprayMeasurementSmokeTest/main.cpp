@@ -1250,7 +1250,7 @@ namespace
         document.collision.detectors.erase(std::remove_if(document.collision.detectors.begin(),document.collision.detectors.end(),
             [&](const auto& d){return d.id!=detector;}),document.collision.detectors.end());
         ProjectPlanningRequest request;request.robotId="ABB4600_urdf";request.jointNames=names;request.start=path.front();request.goal=path.back();
-        request.collisionDetectorIds={detector};request.validation.maxJointStep=0.001;
+        request.collisionDetectorIds={detector};request.validation.maxJointStep=0.00025;
         auto scene=ProjectPlanningSceneBuilder::build(document,projectPath.parent_path(),request,&error);
         require(bool(scene),"Refinement fresh scene builds");if(!scene)return;
         CdfQueryBatch queries(*scene,document,projectPath.parent_path(),request,0);ProjectCdfQpRepairStatistics stats;
@@ -1264,7 +1264,17 @@ namespace
             for(const auto& d:samples)if(!d.valid || d.phi<floor-1e-9)return false;
             return queries.pathValid(candidate,request.validation);};
         oracle.progress=[&](int pass,int total){std::cout<<"Refinement "<<pass<<'/'<<total<<" length="<<jointPathLength(path)<<" bending="<<jointPathBending(path,parameters)<<std::endl;};
-        smoothValidatedPath(&path,parameters,oracle,6,1.0,0.06,true);
+        ApfState lower,upper;
+        for(const auto& b:scene->jointBounds()) {
+            lower.push_back(b.continuous?-std::numeric_limits<double>::infinity():b.lower);
+            upper.push_back(b.continuous?std::numeric_limits<double>::infinity():b.upper);
+        }
+        oracle.distances=[&](const auto& states){const auto observations=queries.distances(states,0.0,0.1,stats);
+            std::vector<double> values;for(const auto& v:observations)values.push_back(v.valid?v.phi:-1.0);return values;};
+        oracle.motionsValid=[&](const auto& states){const auto observations=queries.motions(states,request.validation);
+            std::vector<bool> values;for(const auto& v:observations)values.push_back(v.valid);return values;};
+        require(refineApfTcpShape(&path,parameters,lower,upper,oracle,guide,3,1.0),
+            "Restored TCP reference shape and projected joint fairing within collision constraints");
         for(std::size_t i=0;i<path.size();++i)trajectory.points[i].q=path[i];
         require(retimeJointTrajectory(trajectory,scene->jointBounds(),options.fallbackMaxVelocity,options.fallbackMaxAcceleration),"Refinement retimes output");
         require(followsApfPath(path,guide) && queries.pathValid(path,request.validation),"Refinement complete path collision and ordered corridor check");
