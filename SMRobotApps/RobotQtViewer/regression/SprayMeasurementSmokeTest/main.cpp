@@ -1,6 +1,11 @@
 #include <ProjectScene.h>
+#include <ProjectMotionPlanning/ProjectMotionPlanning.h>
+#include "../../../../SMRobotMotionPlanning/ProjectMotionPlanning/src/ApfLocalPlanner.h"
+#include "../../../../SMRobotMotionPlanning/ProjectMotionPlanning/src/PathRefinement.h"
+#include "../../../../SMRobotMotionPlanning/ProjectMotionPlanning/src/CdfQueryBatch.h"
 #include <MotionPlanningEditorWidget.h>
 #include <ConfigurationSelectionDialog.h>
+#include <CdfTrajectoryAnalysisDialog.h>
 #include "RobotQtViewerTheme.h"
 #include <QListWidget>
 #include <QPointer>
@@ -323,6 +328,34 @@ namespace
             RobotQtViewerMotionPlanningViewportAdapter::clearTrajectoryControlPointOverlay(id);
         }
     };
+
+    void verifyCdfAnalysisControls()
+    {
+        QVector<CdfStageViewData> stages(2);
+        stages[0].name = QStringLiteral("Input");
+        stages[1].name = QStringLiteral("Final"); stages[1].timingValid = true;
+        CdfTrajectoryAnalysisDialog analysis(stages, {QStringLiteral("J1")}, {}, nullptr);
+        auto* tabs = analysis.findChild<QTabWidget*>(QStringLiteral("cdfAnalysisTabs"));
+        for(int index : {2, 3, 6}) {
+            const auto checks = tabs->widget(index)->findChildren<QCheckBox*>();
+            require(checks.size() == 2 && !checks[0]->isEnabled() && !checks[0]->isChecked() &&
+                checks[1]->isEnabled() && checks[1]->isChecked(),
+                "Invalid timestamps cannot contribute misleading velocity/acceleration curves");
+        }
+        MotionPlanningEditorWidget widget;
+        auto* equivalent=widget.findChild<QCheckBox*>(QStringLiteral("cdfEquivalentConfigurations"));
+        require(equivalent && widget.cdfQpRepairSettings().allowEquivalentConfigurations,"Equivalent endpoint pose option is visible");
+        if(equivalent)equivalent->setChecked(false);
+        require(!widget.cdfQpRepairSettings().allowEquivalentConfigurations,"Fixed joint configuration option remains selectable");
+        widget.setCdfAnalysisStages({QStringLiteral("Input"), QStringLiteral("Final")});
+        auto* play = widget.findChild<QPushButton*>(QStringLiteral("cdfStagePlay"));
+        const auto idle = play->text();
+        widget.setPlaybackActive(true);
+        require(play->text() != idle && !widget.findChild<QComboBox*>(QStringLiteral("cdfStageSelection"))->isEnabled(),
+            "Stage playback updates stop-button state and locks stage switching");
+        widget.setPlaybackActive(false);
+        require(play->text() == idle, "Stage playback restores its idle button state");
+    }
 
     void verifyPlaybackTimeline()
     {
@@ -807,6 +840,9 @@ namespace
         simulation_project::ProjectDocument document;
         std::string error;
         require(simulation_project::loadProjectDocument(projectPath, document, &error), "CDF GUI project loads");
+        RobotViewport viewport; viewport.resize(640, 480);
+        require(viewport.loadProjectDocument(document, projectPath.parent_path()), "CDF progress viewport loads actual TCP");
+        viewport.show(); application.processEvents();
         simulation_project::ProjectSession session;
         session.setDocument(document, projectPath, false, false);
         RobotQtViewerEventHub hub;
@@ -815,6 +851,7 @@ namespace
         RobotQtViewerViewportPreviewState preview(hub);
         RobotQtViewerOperationStatusStore status(hub);
         RobotQtViewerDocumentContext context(session, documentController, selection, preview, hub, status);
+        OverlayObservingServices services(viewport); context.setMotionPlanningViewport(&services);
         selection.selectRobotLink(QStringLiteral("ABB4600_urdf"), QStringLiteral("Link6"));
         MotionPlanningEditorWidget widget;
         MotionPlanningModuleController controller(widget, context);
@@ -871,7 +908,7 @@ namespace
             QFile log(logPath);
             const bool opened = log.open(QIODevice::ReadOnly);
             const auto logText = opened ? log.readAll() : QByteArray{};
-            require(opened && logText.contains("CDF performance v2") && logText.contains("CDF query workers:") &&
+            require(opened && logText.contains("CDF performance v3") && logText.contains("CDF query workers:") &&
                 logText.contains("Finished:"), "CDF log contains executable, worker count, stages and final status");
             const auto plansAfter = motion_planning::MotionPlanningProjectStore::plans(context.document());
             if(invalidate) {
@@ -879,8 +916,555 @@ namespace
                     "Changed project rejects stale CDF result");
             } else {
                 require(plansAfter.size() > plansBefore.size(), "Completed CDF snapshot commits through the document service");
+                auto* stages = widget.findChild<QComboBox*>(QStringLiteral("cdfStageSelection"));
+                auto* stageTable = widget.findChild<QTableWidget*>(QStringLiteral("cdfStageJointAngles"));
+                require(stages && stages->count() == 3 && stageTable && stageTable->rowCount() == 3 && initial->rowCount() == 2,
+                    "CDF stores input/APF/final reports while retaining the original two input rows");
+                widget.cdfAnalysisRequested(); application.processEvents();
+                auto* analysis = widget.findChild<QDialog*>(QStringLiteral("cdfTrajectoryAnalysis"));
+                auto* quality = analysis ? analysis->findChild<QTableWidget*>(QStringLiteral("cdfQualityComparison")) : nullptr;
+                require(quality && quality->rowCount() == 19 && quality->columnCount() == 4,
+                    "CDF quality report exposes three stages and timing/collision/smoothness/limit metrics");
+                if(analysis) analysis->close();
             }
         }
+    }
+
+    void verifyApfWindow(const std::filesystem::path& projectPath,
+        const std::filesystem::path& inputPath, const std::filesystem::path& folder,
+        std::size_t first, std::size_t last, std::size_t padding, const std::filesystem::path& partialPath)
+    {
+        using namespace motion_planning;
+        using namespace motion_planning::detail;
+        std::filesystem::create_directories(folder);
+        simulation_project::ProjectDocument document; std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "APF window project loads");
+        ProjectScene actual; actual.setProjectDocument(document,projectPath.parent_path()); actual.initialize();
+        const auto names=ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto fk=actual.robotForwardKinematics("ABB4600_urdf",names,true);
+        const auto imported=ProjectCdfJointAngleImporter::importFile(inputPath);
+        require(fk && imported.success && imported.points.size()>1,"APF window actual FK and original seed available");
+        if(!fk || !imported.success || imported.points.size()<2) return;
+        const auto runtime=[](const auto& point) {
+            auto q=point.jointAnglesDegrees; for(auto& v:q) v*=3.14159265358979323846/180.0;
+            return ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q);
+        };
+        ApfPath dense{runtime(imported.points.front())};
+        ApfGuidance guide; guide.maxDeviation=0.10;
+        guide.position=[fk](const auto& q) -> ApfState { const auto p=fk(q).translation().eval(); return {p.x(),p.y(),p.z()}; };
+        guide.positions.push_back(guide.position(dense.front()));
+        for(std::size_t i=1;i<imported.points.size();++i) {
+            const auto a=runtime(imported.points[i-1]), b=runtime(imported.points[i]);
+            const auto pa=guide.position(a),pb=guide.position(b);
+            double delta=0; for(int j=0;j<6;++j) delta=std::max(delta,std::abs(b[j]-a[j]));
+            const int steps=std::max(2,static_cast<int>(std::ceil(delta/0.04)));
+            for(int k=1;k<=steps;++k) {
+                const double t=static_cast<double>(k)/steps; auto q=a,p=pa;
+                for(int j=0;j<6;++j) q[j]+=t*(b[j]-a[j]); for(int j=0;j<3;++j) p[j]+=t*(pb[j]-pa[j]);
+                dense.push_back(q);guide.positions.push_back(p);
+            }
+        }
+        if(!partialPath.empty()) {
+            const auto partial=ProjectCdfJointAngleImporter::importFile(partialPath);
+            require(partial.success && partial.points.size()==dense.size(),"Partial APF checkpoint retains original station count");
+            if(!partial.success || partial.points.size()!=dense.size()) return;
+            for(std::size_t i=0;i<dense.size();++i) dense[i]=runtime(partial.points[i]);
+        }
+        ProjectCdfQpRepairOptions options;
+        std::string detector;
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,"ABB4600_urdf",options,&detector),"Window collision setup matches production");
+        ProjectPlanningRequest request; request.robotId="ABB4600_urdf";request.jointNames=names;
+        request.start=dense.front();request.goal=dense.back();request.collisionDetectorIds={detector};request.validation.maxJointStep=0.001;
+        // Production CDF uses only its selected full robot/obstacle detector.
+        document.collision.detectors.erase(std::remove_if(document.collision.detectors.begin(),document.collision.detectors.end(),
+            [&](const auto& d){return d.id!=detector;}),document.collision.detectors.end());
+        auto scene=ProjectPlanningSceneBuilder::build(document,projectPath.parent_path(),request,&error);
+        require(bool(scene),"APF window private collision scene builds"); if(!scene) return;
+        CdfQueryBatch queries(*scene,document,projectPath.parent_path(),request,4);
+        ProjectCdfQpRepairStatistics stats;
+        const auto safe=[&](std::size_t i){return scene->validateState(dense[i]).valid &&
+            followsApfGuide(dense[i],dense[i],guide.positions[i],guide.positions[i],guide);};
+        std::size_t left=first-1,right=last-1;
+        while(left>0 && !safe(left)) --left;while(right+1<dense.size() && !safe(right)) ++right;
+        require(safe(left)&&safe(right),"Window has safe exact boundary anchors");if(!safe(left)||!safe(right))return;
+        std::size_t begin=left>padding?left-padding:0,end=std::min(dense.size()-1,right+padding);
+        while(begin<left&&!safe(begin))++begin;while(end>right&&!safe(end))--end;
+        ApfPath reference(dense.begin()+begin,dense.begin()+end+1);
+        ApfGuidance local=guide;local.positions.assign(guide.positions.begin()+begin,guide.positions.begin()+end+1);
+        ApfState lower=reference.front(),upper=lower;
+        for(int j=0;j<6;++j) {
+            for(const auto& q:reference){lower[j]=std::min(lower[j],q[j]);upper[j]=std::max(upper[j],q[j]);}
+            lower[j]-=0.75;upper[j]+=0.75;
+            if(!scene->jointBounds()[j].continuous){lower[j]=padding>=120?scene->jointBounds()[j].lower:std::max(lower[j],scene->jointBounds()[j].lower);upper[j]=padding>=120?scene->jointBounds()[j].upper:std::min(upper[j],scene->jointBounds()[j].upper);}
+        }
+        std::cout<<"APF window anchors "<<begin+1<<" -> "<<end+1<<", nodes="<<reference.size()<<'\n';
+        const auto started=std::chrono::steady_clock::now();
+        ApfOracle oracle;
+        oracle.distance=[&](const auto& q){const auto d=queries.distances({q},0,5,stats).front();return d.valid?d.rawDistance:std::numeric_limits<double>::quiet_NaN();};
+        oracle.distances=[&](const auto& states){const auto ds=queries.distances(states,0,5,stats);std::vector<double> values;for(const auto& d:ds) values.push_back(d.valid?d.rawDistance:std::numeric_limits<double>::quiet_NaN());return values;};
+        oracle.motionValid=[&](const auto& a,const auto& b){return queries.pathValid({a,b},request.validation);};
+        oracle.progress=[&](int f,int i){std::cout<<"field="<<f<<" iteration="<<i<<" seconds="<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()<<'\n';};
+        oracle.failedStation=[&](int f,std::size_t i,const auto& q){
+            const auto p=local.position(q),&target=local.positions[i];double err=0;for(int j=0;j<3;++j)err+=std::pow(p[j]-target[j],2);
+            std::cout<<"FAILED field="<<f<<" node="<<begin+i+1<<" TCP(mm)="<<std::sqrt(err)*1000<<" distance="<<oracle.distance(q)<<" q=";
+            for(double v:q)std::cout<<v<<' ';std::cout<<" targetQ=";for(double v:reference[i])std::cout<<v<<' ';std::cout<<'\n';
+        };
+        ApfPath output;const bool solved=planApfPath(reference,lower,upper,oracle,0.01,&output,&local);
+        std::cout<<queries.summary()<<'\n';require(solved,"Actual failing APF interval now solves under 100 mm");if(!solved)return;
+        require(output.size()==reference.size()&&followsApfPath(output,local),"Solved window passes independent TCP correspondence check");
+        const auto fresh=queries.motions(output,request.validation,false);
+        require(std::all_of(fresh.begin(),fresh.end(),[](const auto& v){return v.valid;}),"Solved window passes fresh dense collision validation");
+        std::ofstream file(folder/"window.txt");file<<"time_s J1_deg J2_deg J3_deg J4_deg J5_deg J6_deg\n"<<std::setprecision(15);
+        std::ofstream csv(folder/"window.csv");csv<<"node,targetX,targetY,targetZ,tcpX,tcpY,tcpZ\n"<<std::setprecision(15);
+        for(std::size_t i=0;i<output.size();++i){file<<i*0.1;for(double v:ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(output[i]))file<<' '<<v*180.0/3.14159265358979323846;file<<'\n';
+            csv<<begin+i+1;for(double v:local.positions[i])csv<<','<<v;for(double v:local.position(output[i]))csv<<','<<v;csv<<'\n';}
+    }
+
+    void inspectApfCandidates(const std::filesystem::path& projectPath,
+        const std::filesystem::path& cartesianPath, const std::filesystem::path& folder)
+    {
+        using namespace motion_planning;
+        using namespace motion_planning::detail;
+        std::filesystem::create_directories(folder);
+        simulation_project::ProjectDocument document; std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "Candidate project loads");
+        ProjectScene actual; actual.setProjectDocument(document,projectPath.parent_path());
+        require(actual.initialize(),"Candidate actual scene initializes");
+        const auto names=ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto fk=actual.robotForwardKinematics("ABB4600_urdf",names,true);
+        TrajectoryImportOptions importOptions;importOptions.robotId="ABB4600_urdf";
+        const auto targets=ProjectTrajectoryImporter::importFile(cartesianPath,importOptions);
+        require(fk && targets.success,"Candidate original Cartesian targets and actual FK available");
+        if(!fk || !targets.success)return;
+        CartesianMultiIkOptions ikOptions;ikOptions.model.robotId=importOptions.robotId;ikOptions.model.jointNames=names;
+        require(ProjectTrajectoryInverseKinematics::readRevoluteJointLimits(document,projectPath.parent_path(),
+            importOptions.robotId,names,ikOptions.lower,ikOptions.upper,error),"Candidate actual bounds available");
+        ikOptions.lower=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(ikOptions.lower);
+        ikOptions.upper=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(ikOptions.upper);
+        for(int j=0;j<6;++j) {
+            if(ikOptions.lower[j]>ikOptions.upper[j])std::swap(ikOptions.lower[j],ikOptions.upper[j]);
+            if(!std::isfinite(ikOptions.lower[j]))ikOptions.lower[j]=-3.14159265358979323846;
+            if(!std::isfinite(ikOptions.upper[j]))ikOptions.upper[j]=3.14159265358979323846;
+        }
+        ikOptions.model.worldForwardKinematics=[fk](const auto& q){return fk(ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q));};
+        ikOptions.classifyConfiguration=ProjectTrajectoryInverseKinematics::createIrb4600ConfigurationClassifier(
+            document,projectPath.parent_path(),importOptions.robotId,names,true,error);
+        auto endpoints=targets.plan;
+        endpoints.cartesianControlPoints.points={targets.plan.cartesianControlPoints.points.front(),targets.plan.cartesianControlPoints.points.back()};
+        const auto ik=ProjectTrajectoryInverseKinematics::solveAllCartesianControlPoints(endpoints,ikOptions);
+        std::cout<<ik.message<<'\n';
+        require(ik.success,"Exact original endpoint full-pose IK enumerates under actual limits");if(!ik.success)return;
+        ProjectCdfQpRepairOptions options; std::string detector;
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,importOptions.robotId,options,&detector),"Candidate production collision setup");
+        document.collision.detectors.erase(std::remove_if(document.collision.detectors.begin(),document.collision.detectors.end(),
+            [&](const auto& d){return d.id!=detector;}),document.collision.detectors.end());
+        ProjectPlanningRequest request;request.robotId=importOptions.robotId;request.jointNames=names;
+        request.start=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(ik.layers.front().candidates.front().joints);
+        request.goal=request.start;request.collisionDetectorIds={detector};request.validation.maxJointStep=0.02;
+        auto scene=ProjectPlanningSceneBuilder::build(document,projectPath.parent_path(),request,&error);
+        require(bool(scene),"Candidate production collision scene builds");if(!scene)return;
+        CdfQueryBatch queries(*scene,document,projectPath.parent_path(),request,4);
+        ApfGuidance guide;guide.maxDeviation=0.10;
+        guide.position=[fk](const auto& q)->ApfState{const auto p=fk(q).translation().eval();return {p.x(),p.y(),p.z()};};
+        const auto& controls=targets.plan.cartesianControlPoints.points;
+        guide.positions.push_back({controls.front().tcpPose.translation().x(),controls.front().tcpPose.translation().y(),controls.front().tcpPose.translation().z()});
+        std::ofstream report(folder/"candidates.csv");report<<"startBranch,endBranch,nodes,invalidSegments,minDistance,maxJumpRad,orderedCorridorValid,seed\n"<<std::setprecision(15);
+        auto transported=targets.plan;
+        std::vector<Eigen::Matrix3d> transportRotations;
+        for(const auto& point:controls){const Eigen::JacobiSVD<Eigen::Matrix3d> svd(point.tcpPose.linear(),Eigen::ComputeFullU|Eigen::ComputeFullV);
+            const Eigen::Matrix3d targetRotation=svd.matrixU()*svd.matrixV().transpose();
+            const Eigen::Matrix3d next=transportRotations.empty()?targetRotation:
+                Eigen::Quaterniond::FromTwoVectors(transportRotations.back().col(2),targetRotation.col(2)).toRotationMatrix()*transportRotations.back();
+            transportRotations.push_back(next);}
+        const Eigen::JacobiSVD<Eigen::Matrix3d> endSvd(controls.back().tcpPose.linear(),Eigen::ComputeFullU|Eigen::ComputeFullV);
+        const Eigen::Matrix3d endRotation=endSvd.matrixU()*endSvd.matrixV().transpose();
+        const Eigen::Matrix3d twist=transportRotations.back().transpose()*endRotation;
+        const double twistAngle=std::atan2(twist(1,0),twist(0,0));
+        for(std::size_t i=0;i<controls.size();++i)transported.cartesianControlPoints.points[i].tcpPose.linear()=
+            transportRotations[i]*Eigen::AngleAxisd(twistAngle*static_cast<double>(i)/(controls.size()-1),Eigen::Vector3d::UnitZ()).toRotationMatrix();
+        for(int variant=0;variant<2;++variant)for(const auto& a:ik.layers.front().candidates) {
+            auto single=ikOptions.model;single.seedJoints=a.joints;single.stepSize=1.0;single.damping=0.001;single.maxIterations=300;
+            const auto continuous=ProjectTrajectoryInverseKinematics::solveCartesianControlPoints(document,variant?transported:targets.plan,single);
+            if(!continuous.success){std::cout<<"fullpose continuation failed B"<<a.configuration.stableId()<<'\n';continue;}
+            ApfPath nodes;
+            for(const auto& point:continuous.plan.trajectory.points){auto q=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(point.q);
+                if(!nodes.empty())for(std::size_t j=0;j<q.size();++j)if(scene->jointBounds()[j].continuous)q[j]=nodes.back()[j]+std::remainder(q[j]-nodes.back()[j],2*3.14159265358979323846);
+                nodes.push_back(q);}
+            ApfPath path{nodes.front()};ApfGuidance poseGuide=guide;poseGuide.positions={guide.positions.front()};
+            double maxJump=0;
+            for(std::size_t i=1;i<nodes.size();++i){double delta=0;for(int j=0;j<6;++j)delta=std::max(delta,std::abs(nodes[i][j]-nodes[i-1][j]));maxJump=std::max(maxJump,delta);
+                const int intervals=std::max(2,static_cast<int>(std::ceil(delta/0.04)));
+                for(int k=1;k<=intervals;++k){const double t=static_cast<double>(k)/intervals;auto q=nodes[i-1];for(int j=0;j<6;++j)q[j]+=t*(nodes[i][j]-q[j]);
+                    const Eigen::Vector3d pos=controls[i-1].tcpPose.translation()+t*(controls[i].tcpPose.translation()-controls[i-1].tcpPose.translation());
+                    path.push_back(q);poseGuide.positions.push_back({pos.x(),pos.y(),pos.z()});}}
+            const auto motions=queries.motions(path,request.validation);int invalid=0;for(const auto& m:motions)if(!m.valid)++invalid;
+            ProjectCdfQpRepairStatistics stats;const auto distances=queries.distances(path,0,5,stats);double minimum=5;
+            for(const auto& d:distances)minimum=std::min(minimum,d.valid?d.rawDistance:-100.0);
+            const bool shape=followsApfPath(path,poseGuide);
+            const std::string filename=(variant?"transport-B":"fullpose-B")+std::to_string(a.configuration.stableId())+".txt";
+            std::ofstream file(folder/filename);file<<"time_s J1_deg J2_deg J3_deg J4_deg J5_deg J6_deg\n"<<std::setprecision(15);
+            for(std::size_t i=0;i<nodes.size();++i){file<<controls[i].time;for(double q:ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(nodes[i]))file<<' '<<q*180.0/3.14159265358979323846;file<<'\n';}
+            const int endBranch=ikOptions.classifyConfiguration(ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(nodes.back())).stableId();
+            report<<a.configuration.stableId()<<','<<endBranch<<','<<path.size()<<','<<invalid<<','<<minimum<<','<<maxJump<<','<<shape<<','<<filename<<'\n';report.flush();
+            std::cout<<filename<<" invalid="<<invalid<<" min="<<minimum<<" maxControlJump="<<maxJump<<" shape="<<shape<<'\n';
+        }
+        std::cout<<queries.summary()<<'\n';
+    }
+
+    void verifyCdfResult(const std::filesystem::path& projectPath,
+        const std::filesystem::path& targetPath, const std::filesystem::path& seedPath,
+        const std::filesystem::path& resultPath, const std::filesystem::path& reportPath, bool validateDynamics = true)
+    {
+        using namespace motion_planning;
+        simulation_project::ProjectDocument document;std::string error;
+        require(simulation_project::loadProjectDocument(projectPath,document,&error),"Independent validation project loads");
+        ProjectScene actual;actual.setProjectDocument(document,projectPath.parent_path());require(actual.initialize(),"Independent actual TCP scene initializes");
+        const auto names=ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto fk=actual.robotForwardKinematics("ABB4600_urdf",names,true);
+        TrajectoryImportOptions importOptions;importOptions.robotId="ABB4600_urdf";
+        const auto targets=ProjectTrajectoryImporter::importFile(targetPath,importOptions);
+        const auto seed=ProjectCdfJointAngleImporter::importFile(seedPath),output=ProjectCdfJointAngleImporter::importFile(resultPath);
+        require(fk && targets.success && seed.success && output.success && seed.points.size()==targets.plan.cartesianControlPoints.points.size(),
+            "Independent original Cartesian targets and exported trajectories import");
+        if(!fk || !targets.success || !seed.success || !output.success || seed.points.size()!=targets.plan.cartesianControlPoints.points.size())return;
+        const auto runtime=[](const auto& point){auto q=point.jointAnglesDegrees;for(auto& v:q)v*=3.14159265358979323846/180.0;
+            return ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q);};
+        ProjectCdfQpRepairOptions options;std::string detector;
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,importOptions.robotId,options,&detector),"Independent production collision setup");
+        document.collision.detectors.erase(std::remove_if(document.collision.detectors.begin(),document.collision.detectors.end(),
+            [&](const auto& d){return d.id!=detector;}),document.collision.detectors.end());
+        ProjectPlanningRequest request;request.robotId=importOptions.robotId;request.jointNames=names;request.start=runtime(output.points.front());
+        request.goal=runtime(output.points.back());request.collisionDetectorIds={detector};request.validation.maxJointStep=0.00025;
+        auto scene=ProjectPlanningSceneBuilder::build(document,projectPath.parent_path(),request,&error);
+        require(bool(scene),"Independent fresh full collision scene builds");if(!scene)return;
+        std::vector<Eigen::Vector3d> guide{targets.plan.cartesianControlPoints.points.front().tcpPose.translation()};
+        const auto& controls=targets.plan.cartesianControlPoints.points;
+        for(std::size_t i=1;i<seed.points.size();++i){const auto a=runtime(seed.points[i-1]),b=runtime(seed.points[i]);double delta=0;
+            for(int j=0;j<6;++j){const double d=scene->jointBounds()[j].continuous?std::remainder(b[j]-a[j],2*3.14159265358979323846):b[j]-a[j];delta=std::max(delta,std::abs(d));}
+            const int steps=std::max(2,static_cast<int>(std::ceil(std::max(0.0,delta/0.04)-1.0))+1);
+            for(int k=1;k<=steps;++k){const double t=static_cast<double>(k)/steps;guide.push_back(controls[i-1].tcpPose.translation()+t*(controls[i].tcpPose.translation()-controls[i-1].tcpPose.translation()));}}
+        require(guide.size()==output.points.size(),"Independent ordered Cartesian correspondence matches every exported knot");if(guide.size()!=output.points.size())return;
+        robottrajectory::JointTrajectory trajectory;trajectory.interpolation=robottrajectory::TrajectoryInterpolation::Linear;
+        for(const auto& p:output.points)trajectory.points.push_back({p.timeSeconds,runtime(p),{}, {}});
+        const auto quality=evaluateTrajectoryQuality(trajectory,scene->jointBounds(),options.fallbackMaxVelocity,options.fallbackMaxAcceleration,{},fk);
+        auto tcpReportPath=reportPath;tcpReportPath.replace_extension(".tcp.csv");
+        std::ofstream tcpReport(tcpReportPath);tcpReport<<std::setprecision(15)<<"node,time,referenceX,referenceY,referenceZ,tcpX,tcpY,tcpZ\n";
+        for(std::size_t i=0;i<trajectory.points.size();++i){tcpReport<<i+1<<','<<trajectory.points[i].time;
+            for(double v:guide[i])tcpReport<<','<<v;for(double v:fk(trajectory.points[i].q).translation().eval())tcpReport<<','<<v;tcpReport<<'\n';}
+        std::size_t samples=0,collisions=0,limits=0;double maximum=0.0;
+        for(std::size_t i=1;i<trajectory.points.size();++i){const auto& a=trajectory.points[i-1].q;const auto& b=trajectory.points[i].q;double delta=0;
+            for(int j=0;j<6;++j)delta=std::max(delta,std::abs(b[j]-a[j]));
+            const int count=std::max(1,static_cast<int>(std::ceil(delta/0.00025)));
+            for(int k=0;k<=count;++k){const double t=static_cast<double>(k)/count;auto q=a;for(int j=0;j<6;++j){q[j]+=t*(b[j]-a[j]);const auto& bound=scene->jointBounds()[j];
+                    if(!bound.continuous && (q[j]<bound.lower-1e-9 || q[j]>bound.upper+1e-9))++limits;}
+                if(!scene->validateState(q).valid){++collisions;if(collisions==1)std::cout<<"First colliding raw-linear segment (1-based)="<<i<<" sample="<<k<<"/"<<count<<std::endl;}
+                const Eigen::Vector3d target=guide[i-1]+t*(guide[i]-guide[i-1]);
+                maximum=std::max(maximum,(fk(q).translation()-target).norm());++samples;}
+            if(i%500==0)std::cout<<"Independent raw-linear validation "<<i<<'/'<<trajectory.points.size()-1<<" collisions="<<collisions<<" maxMm="<<maximum*1000<<'\n';}
+        double endpointPosition=0,endpointRotation=0;
+        for(std::size_t i:{std::size_t(0),trajectory.points.size()-1}){const auto actualPose=fk(trajectory.points[i].q);const auto& target=controls[i==0?0:controls.size()-1].tcpPose;
+            const Eigen::JacobiSVD<Eigen::Matrix3d> svd(target.linear(),Eigen::ComputeFullU|Eigen::ComputeFullV);const Eigen::Matrix3d rotation=svd.matrixU()*svd.matrixV().transpose();
+            endpointPosition=std::max(endpointPosition,(actualPose.translation()-target.translation()).norm());endpointRotation=std::max(endpointRotation,Eigen::AngleAxisd(actualPose.linear().transpose()*rotation).angle());}
+        std::ofstream report(reportPath);report<<std::setprecision(15)<<"{\n  \"nodes\": "<<trajectory.points.size()<<",\n  \"rawLinearSamples\": "<<samples
+            <<",\n  \"jointStepRad\": 0.00025,\n  \"collidingSamples\": "<<collisions<<",\n  \"jointLimitViolations\": "<<limits
+            <<",\n  \"maxOrderedTcpDeviationMm\": "<<maximum*1000<<",\n  \"maxEndpointPositionErrorMm\": "<<endpointPosition*1000
+            <<",\n  \"maxEndpointOrientationErrorDeg\": "<<endpointRotation*180.0/3.14159265358979323846
+            <<",\n  \"timingValid\": "<<(quality.timingValid?"true":"false")<<",\n  \"velocityViolations\": "<<quality.velocityLimitViolations
+            <<",\n  \"accelerationViolations\": "<<quality.accelerationLimitViolations<<",\n  \"durationSeconds\": "<<quality.duration
+            <<",\n  \"peakJointVelocityDegPerSec\": "<<(std::isfinite(quality.peakVelocity)?std::to_string(quality.peakVelocity*180/3.14159265358979323846):"null")
+            <<",\n  \"peakSampledJointAccelerationDegPerSec2\": "<<(std::isfinite(quality.peakAcceleration)?std::to_string(quality.peakAcceleration*180/3.14159265358979323846):"null")<<"\n}\n";
+        std::cout<<"Independent final raw-linear samples="<<samples<<" collisions="<<collisions<<" maxMm="<<maximum*1000
+            <<" endpointMm="<<endpointPosition*1000<<" endpointDeg="<<endpointRotation*180/3.14159265358979323846<<'\n';
+        require(collisions==0 && limits==0 && maximum<=0.10+1e-9,"Exported raw-linear path is collision-free and obeys actual bounds and 100 mm ordered corridor");
+        require(endpointPosition<1e-5 && endpointRotation<1e-5,"Exported start and end preserve original full TCP poses");
+        if(validateDynamics)require(quality.timingValid && quality.velocityLimitViolations==0 && quality.accelerationLimitViolations==0,"Exported timing passes sampled velocity and acceleration limits");
+    }
+
+    void runTop1Repair(const std::filesystem::path& projectPath, const std::filesystem::path& targetsPath,
+        const std::filesystem::path& seedPath, const std::filesystem::path& folder)
+    {
+        using namespace motion_planning;
+        std::filesystem::create_directories(folder);
+        simulation_project::ProjectDocument document;std::string error;
+        require(simulation_project::loadProjectDocument(projectPath,document,&error),"Top-1 repair project loads");
+        ProjectScene actual;actual.setProjectDocument(document,projectPath.parent_path());require(actual.initialize(),"Top-1 actual FK scene");
+        const auto names=ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto fk=actual.robotForwardKinematics("ABB4600_urdf",names,true);
+        TrajectoryImportOptions importOptions;importOptions.robotId="ABB4600_urdf";
+        const auto targets=ProjectTrajectoryImporter::importFile(targetsPath,importOptions);
+        const auto input=ProjectCdfJointAngleImporter::importFile(seedPath);
+        require(fk && targets.success && input.success,"Top-1 original Cartesian and joint input load");if(!fk || !targets.success || !input.success)return;
+        robottrajectory::JointTrajectory seed;
+        for(const auto& p:input.points){auto q=p.jointAnglesDegrees;for(auto& v:q)v*=3.14159265358979323846/180;
+            seed.points.push_back({p.timeSeconds,ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q),{}, {}});}
+        ProjectCdfQpRepairOptions options;options.worldForwardKinematics=fk;options.allowEquivalentEndpointConfigurations=true;
+        options.trustRegion=0.02;options.seedCorridor=0.10;options.seedTrackingWeight=0.40;
+        for(const auto& p:targets.plan.cartesianControlPoints.points)options.cartesianTargets.push_back(p.tcpPose);
+        options.progress=[](const std::string& message){std::cout<<message<<std::endl;};
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,importOptions.robotId,options),"Top-1 production collision setup");
+        ProjectCdfQpTrajectoryRepairService service;
+        const auto started=std::chrono::steady_clock::now();
+        auto result=service.repair(document,projectPath.parent_path(),importOptions.robotId,names,seed,options);
+        const auto save=[&](const robottrajectory::JointTrajectory& trajectory,const std::filesystem::path& path){
+            std::ofstream out(path);out<<std::setprecision(15)<<"time_s J1_deg J2_deg J3_deg J4_deg J5_deg J6_deg\n";
+            for(const auto& p:trajectory.points){out<<p.time;for(double v:ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(p.q))out<<' '<<v*180/3.14159265358979323846;out<<'\n';}};
+        save(result.referenceSeedTrajectory,folder/"chosen_seed.txt");
+        for(std::size_t i=0;i<result.stages.size();++i)save(result.stages[i].plan.trajectory,folder/("stage-"+std::to_string(i)+".txt"));
+        std::ofstream quality(folder/"quality.csv");quality<<"stage,jointLength,bending,maxCornerDeg,tcpLength,maxTcpDeviationMm,minPhiMm,invalidSegments,elapsedSeconds\n"<<std::setprecision(15);
+        for(const auto& stage:result.stages)quality<<'"'<<stage.name<<'"'<<','<<stage.quality.jointLength<<','<<stage.quality.bendingCost<<','<<stage.quality.maximumCornerRadians*180/3.14159265358979323846
+            <<','<<stage.quality.tcpLength<<','<<stage.quality.maximumTcpDeviation*1000<<','<<stage.minimumPhi*1000<<','<<stage.invalidSegments<<','<<stage.elapsedSeconds<<'\n';
+        for(const auto& d:result.diagnostics)std::cout<<d.code<<": "<<d.message<<'\n';
+        std::cout<<"Top-1 complete: seconds="<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()
+            <<" successIncludingMargin="<<result.success<<" QP rounds="<<result.statistics.iterations<<" invalid="<<result.statistics.invalidSegmentCount<<std::endl;
+        require(result.stages.size()==3 && !result.plan.trajectory.empty() && result.statistics.invalidSegmentCount==0,"Top-1 produces a complete collision-validated final trajectory");
+        require(result.statistics.iterations==1,"Top-1 runs exactly one main QP round");
+        if(result.stages.size()!=3 || result.plan.trajectory.empty())return;
+        verifyCdfResult(projectPath,targetsPath,folder/"chosen_seed.txt",folder/"stage-1.txt",folder/"apf-validation.json",false);
+        verifyCdfResult(projectPath,targetsPath,folder/"chosen_seed.txt",folder/"stage-2.txt",folder/"final-validation.json",true);
+    }
+
+    void refineCdfCheckpoint(const std::filesystem::path& projectPath, const std::filesystem::path& inputPath,
+        const std::filesystem::path& tcpCsv, const std::filesystem::path& outputPath)
+    {
+        using namespace motion_planning;
+        using namespace motion_planning::detail;
+        simulation_project::ProjectDocument document; std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "Refinement project loads");
+        ProjectScene actual; actual.setProjectDocument(document, projectPath.parent_path()); actual.initialize();
+        const auto names=ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto fk=actual.robotForwardKinematics("ABB4600_urdf",names,true);
+        const auto imported=ProjectCdfJointAngleImporter::importFile(inputPath);
+        require(fk && imported.success,"Refinement FK and checkpoint import"); if(!fk || !imported.success)return;
+        ApfPath path; robottrajectory::JointTrajectory trajectory;
+        for(const auto& p:imported.points){auto q=p.jointAnglesDegrees;for(auto& v:q)v*=3.14159265358979323846/180;
+            q=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q);path.push_back(q);trajectory.points.push_back({p.timeSeconds,q,{}, {}});}
+        ApfGuidance guide;guide.maxDeviation=0.10;
+        guide.position=[fk](const auto& q)->ApfState{const auto p=fk(q).translation().eval();return {p.x(),p.y(),p.z()};};
+        std::ifstream csv(tcpCsv);std::string line;std::getline(csv,line);
+        while(std::getline(csv,line)){std::replace(line.begin(),line.end(),',',' ');std::istringstream row(line);double node,time,x,y,z;
+            if(row>>node>>time>>x>>y>>z)guide.positions.push_back({x,y,z});}
+        require(path.size()>2 && guide.positions.size()==path.size(),"Checkpoint retains explicit ordered Cartesian correspondence");
+        if(path.size()<3 || guide.positions.size()!=path.size())return;
+        ProjectCdfQpRepairOptions options;std::string detector;
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,"ABB4600_urdf",options,&detector),"Refinement production collision setup");
+        document.collision.detectors.erase(std::remove_if(document.collision.detectors.begin(),document.collision.detectors.end(),
+            [&](const auto& d){return d.id!=detector;}),document.collision.detectors.end());
+        ProjectPlanningRequest request;request.robotId="ABB4600_urdf";request.jointNames=names;request.start=path.front();request.goal=path.back();
+        request.collisionDetectorIds={detector};request.validation.maxJointStep=0.001;
+        auto scene=ProjectPlanningSceneBuilder::build(document,projectPath.parent_path(),request,&error);
+        require(bool(scene),"Refinement fresh scene builds");if(!scene)return;
+        CdfQueryBatch queries(*scene,document,projectPath.parent_path(),request,0);ProjectCdfQpRepairStatistics stats;
+        const auto observations=queries.distances(path,0.0,0.1,stats);double floor=0.01;
+        for(const auto& d:observations){if(!d.valid){require(false,"Refinement distance available");return;}floor=std::min(floor,d.phi);}
+        const auto parameters=jointPathParameters(guide.positions,0.01);
+        ApfOracle oracle;oracle.motionValid=[&](const auto& a,const auto& b){return scene->validateMotion(a,b,request.validation).valid;};
+        oracle.pathValid=[&](const auto& candidate,std::size_t begin){
+            if(!followsApfPath(candidate,guide,begin))return false;
+            const auto samples=queries.distances(candidate,0.0,0.1,stats);
+            for(const auto& d:samples)if(!d.valid || d.phi<floor-1e-9)return false;
+            return queries.pathValid(candidate,request.validation);};
+        oracle.progress=[&](int pass,int total){std::cout<<"Refinement "<<pass<<'/'<<total<<" length="<<jointPathLength(path)<<" bending="<<jointPathBending(path,parameters)<<std::endl;};
+        smoothValidatedPath(&path,parameters,oracle,6,1.0,0.06,true);
+        for(std::size_t i=0;i<path.size();++i)trajectory.points[i].q=path[i];
+        require(retimeJointTrajectory(trajectory,scene->jointBounds(),options.fallbackMaxVelocity,options.fallbackMaxAcceleration),"Refinement retimes output");
+        require(followsApfPath(path,guide) && queries.pathValid(path,request.validation),"Refinement complete path collision and ordered corridor check");
+        std::ofstream out(outputPath);out<<std::setprecision(15)<<"time_s J1_deg J2_deg J3_deg J4_deg J5_deg J6_deg\n";
+        for(const auto& p:trajectory.points){out<<p.time;const auto q=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(p.q);for(double v:q)out<<' '<<v*180/3.14159265358979323846;out<<'\n';}
+        std::cout<<"Refinement final length="<<jointPathLength(path)<<" bending="<<jointPathBending(path,parameters)<<" floor="<<floor<<'\n'<<queries.summary()<<std::endl;
+    }
+
+    void verifyCdfPipeline(QApplication& application, const std::filesystem::path& projectPath,
+        const std::filesystem::path& jointPath, const std::filesystem::path& folder,
+        const std::filesystem::path& targetPath = {}, bool referenceOnly = false, bool shapeCheck = false, bool endpointOrientationOnly = false)
+    {
+        using namespace robot_qt_viewer;
+        std::filesystem::create_directories(folder);
+        simulation_project::ProjectDocument document; std::string error;
+        require(simulation_project::loadProjectDocument(projectPath, document, &error), "CDF pipeline project loads");
+        RobotViewport viewport; viewport.resize(820, 640);
+        require(viewport.loadProjectDocument(document, projectPath.parent_path()), "CDF analysis actual viewport loads");
+        viewport.show(); application.processEvents();
+        simulation_project::ProjectSession session; session.setDocument(document, projectPath, false, false);
+        RobotQtViewerEventHub hub; RobotQtViewerDocumentController documents(session, hub);
+        RobotQtViewerSelectionModel selection(hub); RobotQtViewerViewportPreviewState preview(hub);
+        RobotQtViewerOperationStatusStore status(hub);
+        RobotQtViewerDocumentContext context(session, documents, selection, preview, hub, status);
+        OverlayObservingServices services(viewport); context.setMotionPlanningViewport(&services);
+        selection.selectRobotLink("ABB4600_urdf", "Link6");
+        MotionPlanningEditorWidget widget; MotionPlanningModuleController controller(widget, context);
+        hub.subscribe(RobotQtViewerEventKind::ProjectDocumentChanged, &controller, [&](const auto& event) { controller.handleEvent(event); });
+        widget.resize(490, 760); widget.showCdfPage(); widget.show();
+        qputenv("SMROBOT_FILE_DIALOG_BACKEND", "qt");
+        QTimer chooseFile;
+        QObject::connect(&chooseFile, &QTimer::timeout, &widget, [&]() {
+            for(auto* window : application.topLevelWidgets()) if(auto* dialog = qobject_cast<QFileDialog*>(window)) {
+                dialog->selectFile(QString::fromStdWString(jointPath.wstring())); QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+            }
+        });
+        chooseFile.start(10); widget.importCdfJointAnglesRequested(); chooseFile.stop();
+        const int inputRows = widget.findChild<QTableWidget*>(QStringLiteral("cdfInitialJointAngles"))->rowCount();
+        require(inputRows > 1, "Real Top-1 input imports into CDF");
+        const auto shapeInput = motion_planning::ProjectCdfJointAngleImporter::importFile(jointPath);
+        const auto shapeNames = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+        const auto actualFk = viewport.robotForwardKinematics("ABB4600_urdf", shapeNames, true);
+        std::vector<Eigen::Vector3d> orderedTcpReference;
+        std::vector<std::vector<double>> denseOriginalJoints;
+        if(actualFk && shapeInput.success) {
+            const auto runtimeAngles = [](const auto& point) {
+                auto q = point.jointAnglesDegrees;
+                for(auto& angle:q) angle *= 3.14159265358979323846/180.0;
+                return motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(q);
+            };
+            denseOriginalJoints.push_back(runtimeAngles(shapeInput.points.front()));
+            orderedTcpReference.push_back(actualFk(denseOriginalJoints.front()).translation());
+            for(std::size_t i=1;i<shapeInput.points.size();++i) {
+                const auto a=runtimeAngles(shapeInput.points[i-1]), b=runtimeAngles(shapeInput.points[i]);
+                const Eigen::Vector3d pa=actualFk(a).translation(), pb=actualFk(b).translation();
+                double maxDelta=0.0; for(int j=0;j<6;++j) maxDelta=std::max(maxDelta,std::abs(b[j]-a[j]));
+                const int intervals=std::max(2,static_cast<int>(std::ceil(maxDelta/0.04)));
+                for(int k=1;k<=intervals;++k) {
+                    const double t=static_cast<double>(k)/intervals;
+                    auto q=a; for(int j=0;j<6;++j) q[j]+=t*(b[j]-a[j]);
+                    denseOriginalJoints.push_back(q); orderedTcpReference.push_back(pa+t*(pb-pa));
+                }
+            }
+            double originalMaximum=0.0;
+            for(std::size_t i=0;i<denseOriginalJoints.size();++i)
+                originalMaximum=std::max(originalMaximum,(actualFk(denseOriginalJoints[i]).translation()-orderedTcpReference[i]).norm());
+            std::cout << "Original joint interpolation vs control-point TCP polyline: knots=" << denseOriginalJoints.size()
+                << " maximumMm=" << originalMaximum*1000.0 << '\n';
+        }
+        if(!targetPath.empty()) {
+            motion_planning::TrajectoryImportOptions importOptions;
+            importOptions.robotId = "ABB4600_urdf";
+            const auto targets = motion_planning::ProjectTrajectoryImporter::importFile(targetPath, importOptions);
+            const auto input = motion_planning::ProjectCdfJointAngleImporter::importFile(jointPath);
+            const auto names = motion_planning::ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
+            const auto fk = viewport.robotForwardKinematics("ABB4600_urdf", names, true);
+            require(targets.success && input.success && fk && targets.plan.cartesianControlPoints.points.size() == input.points.size(),
+                "Reused Top-1 seed corresponds to the imported Cartesian point count");
+            if(!targets.success || !input.success || !fk || targets.plan.cartesianControlPoints.points.size() != input.points.size()) return;
+            double maximumPosition = 0.0, maximumOrientation = 0.0;
+            for(std::size_t i = 0; fk && i < input.points.size() && i < targets.plan.cartesianControlPoints.points.size(); ++i) {
+                auto radians = input.points[i].jointAnglesDegrees;
+                for(auto& angle : radians) angle *= 3.141592653589793 / 180.0;
+                const auto pose = fk(motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(radians));
+                const auto& target = targets.plan.cartesianControlPoints.points[i].tcpPose;
+                maximumPosition = std::max(maximumPosition, (pose.translation() - target.translation()).norm());
+                const Eigen::JacobiSVD<Eigen::Matrix3d> svd(target.linear(), Eigen::ComputeFullU | Eigen::ComputeFullV);
+                const Eigen::Matrix3d rotation = svd.matrixU() * svd.matrixV().transpose();
+                if(!endpointOrientationOnly || i==0 || i+1==input.points.size())
+                    maximumOrientation = std::max(maximumOrientation, std::acos(std::clamp(0.5 * (rotation.transpose() * pose.linear()).trace() - 0.5, -1.0, 1.0)));
+            }
+            std::cout << "Input Cartesian round trip: maxPositionMm=" << maximumPosition * 1000.0 << " maxOrientationDeg=" << maximumOrientation * 180.0 / 3.141592653589793 << '\n';
+            require(maximumPosition < 0.00001 && maximumOrientation < 0.00001, "Top-1 input matches 11111 Cartesian poses in the actual TCP model");
+            if(maximumPosition >= 0.00001 || maximumOrientation >= 0.00001) return;
+        }
+        if(referenceOnly) return;
+        const double shapeLimit = widget.findChild<QDoubleSpinBox*>(QStringLiteral("cdfApfTcpDeviation"))->value()/1000.0;
+        const auto plansBeforeShape = motion_planning::MotionPlanningProjectStore::plans(context.document());
+        require(widget.findChild<QDoubleSpinBox*>(QStringLiteral("cdfApfTcpDeviation"))->value() == 100.0,
+            "Production APF TCP maximum deviation defaults to 100 mm");
+        QElapsedTimer timer; timer.start(); widget.repairImportedCdfTrajectoryRequested();
+        std::cout << "GUI CDF complete after " << timer.elapsed() << " ms\n";
+        auto* stages = widget.findChild<QComboBox*>(QStringLiteral("cdfStageSelection"));
+        if(shapeCheck && stages && stages->count() != 3) {
+            const auto plansAfter = motion_planning::MotionPlanningProjectStore::plans(context.document());
+            require(plansAfter.size() == plansBeforeShape.size(), "Failed corridor-constrained APF run publishes no optimization plan");
+            QString resultText;
+            for(auto* label:widget.findChildren<QLabel*>()) if(label->text().contains(" | Log: ")) resultText=label->text();
+            std::cout << "Shape-constrained result: " << resultText.toStdString() << '\n';
+            require(resultText.contains(QStringLiteral("%1 mm").arg(shapeLimit*1000.0,0,'f',6)) && resultText.contains("QP/CDF was not started"),
+                "Configured corridor failure is explicit; no unconstrained QP fallback");
+            widget.cdfAnalysisRequested(); application.processEvents();
+            auto* analysis=widget.findChild<QDialog*>(QStringLiteral("cdfTrajectoryAnalysis"));
+            auto* table=analysis ? analysis->findChild<QTableWidget*>(QStringLiteral("cdfQualityComparison")) : nullptr;
+            require(table && stages->count()==2, "Rejected APF still exposes input and failed APF diagnostics");
+            if(table) for(int row=0;row<table->rowCount();++row)
+                std::cout << "quality[" << row << "]=" << table->item(row,1)->text().toStdString() << " | " << table->item(row,2)->text().toStdString() << '\n';
+            SaveDialogAcceptor acceptor; application.installEventFilter(&acceptor);
+            acceptor.path=QString::fromStdWString((folder/"quality.csv").wstring()); widget.exportCdfQualityRequested();
+            for(int i=0;i<stages->count();++i) {
+                acceptor.path=QString::fromStdWString((folder/("rejected-stage-"+std::to_string(i)+".txt")).wstring()); widget.exportCdfStageRequested(i);
+            }
+            application.removeEventFilter(&acceptor);
+            if(analysis) {
+                analysis->resize(1150,950); application.processEvents();
+                analysis->grab().save(QString::fromStdWString((folder/"rejected-quality.png").wstring()));
+                auto* tabs=analysis->findChild<QTabWidget*>(QStringLiteral("cdfAnalysisTabs")); tabs->setCurrentIndex(4); application.processEvents();
+                analysis->grab().save(QString::fromStdWString((folder/"rejected-tcp-projection.png").wstring())); analysis->close();
+            }
+            return;
+        }
+        require(stages && stages->count() == 3, "Production CDF exposes all three real stages");
+        if(shapeCheck) {
+            const auto plans=motion_planning::MotionPlanningProjectStore::plans(context.document());
+            const motion_planning::StoredMotionPlan* final=nullptr;
+            for(const auto& plan:plans) if(plan.id.find("_cdf_qp_") != std::string::npos) final=&plan;
+            require(final && final->trajectory.points.size()==orderedTcpReference.size(), "Shape-constrained output retains reference station correspondence");
+            if(final && final->trajectory.points.size()==orderedTcpReference.size()) {
+                double maximum=0.0;
+                for(std::size_t i=1;i<final->trajectory.points.size();++i) {
+                    const auto a=motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(final->trajectory.points[i-1].q);
+                    const auto b=motion_planning::ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(final->trajectory.points[i].q);
+                    double maxDelta=0.0; for(int j=0;j<6;++j) maxDelta=std::max(maxDelta,std::abs(b[j]-a[j]));
+                    const int count=std::max(1,static_cast<int>(std::ceil(maxDelta/0.001)));
+                    for(int k=0;k<=count;++k) {
+                        const double t=static_cast<double>(k)/count; auto q=a;
+                        for(int j=0;j<6;++j) q[j]+=t*(b[j]-a[j]);
+                        const Eigen::Vector3d target=orderedTcpReference[i-1]+t*(orderedTcpReference[i]-orderedTcpReference[i-1]);
+                        maximum=std::max(maximum,(actualFk(q).translation()-target).norm());
+                    }
+                }
+                std::cout << "Independent full path shape validation: maximumMm=" << maximum*1000.0 << " jointStep=0.001 rad\n";
+                require(maximum<=shapeLimit+1e-9, "Independent dense FK validation respects the configured hard TCP corridor");
+            }
+        }
+        require(widget.findChild<QTableWidget*>(QStringLiteral("cdfInitialJointAngles"))->rowCount() == inputRows,
+            "Real input table remains unchanged after optimization");
+        if(!stages || stages->count() != 3) return;
+        widget.cdfAnalysisRequested(); application.processEvents();
+        auto* analysis = widget.findChild<QDialog*>(QStringLiteral("cdfTrajectoryAnalysis"));
+        auto* quality = analysis ? analysis->findChild<QTableWidget*>(QStringLiteral("cdfQualityComparison")) : nullptr;
+        require(quality && quality->columnCount() == 4, "Real CDF comparison opens without blocking");
+        if(!quality) return;
+        for(int row = 0; row < quality->rowCount(); ++row)
+            std::cout << "quality[" << row << "]=" << quality->item(row, 1)->text().toStdString() << " | "
+                << quality->item(row, 2)->text().toStdString() << " | " << quality->item(row, 3)->text().toStdString() << '\n';
+        require(quality->item(8, 3)->text() == "0" && quality->item(9, 3)->text() == "0" && quality->item(10, 3)->text() == "0" && quality->item(11, 3)->text() == "0",
+            "Final real trajectory has zero position/velocity/discrete-acceleration/motion violations");
+        require(quality->item(13, 3)->text().toDouble() > 0.0 && quality->item(14, 3)->text().toDouble() >= 0.0,
+            "Quality uses actual calibrated world TCP instead of nominal DH");
+        analysis->resize(1150, 950); application.processEvents(); analysis->grab().save(QString::fromStdWString((folder / "quality.png").wstring()));
+        auto* tabs = analysis->findChild<QTabWidget*>(QStringLiteral("cdfAnalysisTabs"));
+        for(int i = 0; i < tabs->count(); ++i) { tabs->setCurrentIndex(i); application.processEvents(); }
+        tabs->setCurrentIndex(4); application.processEvents(); analysis->grab().save(QString::fromStdWString((folder / "tcp-projection.png").wstring()));
+        tabs->setCurrentIndex(2); application.processEvents(); analysis->grab().save(QString::fromStdWString((folder / "joint-velocity.png").wstring()));
+        SaveDialogAcceptor acceptor; application.installEventFilter(&acceptor);
+        acceptor.path = QString::fromStdWString((folder / "quality.csv").wstring()); widget.exportCdfQualityRequested();
+        for(int i = 0; i < 3; ++i) {
+            stages->setCurrentIndex(i); application.processEvents();
+            auto* table = widget.findChild<QTableWidget*>(QStringLiteral("cdfStageJointAngles"));
+            require(table && table->columnCount() == 8, "Each stage shows six original-sign joint columns");
+            widget.applyCdfStagePointRequested(i, 0); application.processEvents();
+            require(stages->count() == 3, "Applying a stage point preserves all stage reports");
+            acceptor.path = QString::fromStdWString((folder / ("stage-" + std::to_string(i) + ".txt")).wstring());
+            widget.exportCdfStageRequested(i);
+        }
+        application.removeEventFilter(&acceptor);
+        const int apfPointCount = quality->item(0, 2)->text().toInt();
+        analysis->close();
+        // Replay raw APF through the production button (automatically draws TCP).
+        stages->setCurrentIndex(1); services.samples = 0;
+        auto* play = widget.findChild<QPushButton*>(QStringLiteral("cdfStagePlay")); play->click();
+        QElapsedTimer playback; playback.start();
+        while(play->text() != QStringLiteral("\u52a8\u6001\u64ad\u653e\u9636\u6bb5\u8f68\u8ff9") && playback.elapsed() < 60000) application.processEvents();
+        std::cout << "APF stage replay samples=" << services.samples << " elapsedMs=" << playback.elapsed() << '\n';
+        require(services.samples == apfPointCount, "APF stage replay retains every source sample");
+        stages->setCurrentIndex(2); widget.playCdfStageRequested(2, 0.1, false);
+        QEventLoop loop; QTimer::singleShot(100, &loop, &QEventLoop::quit); loop.exec(); widget.playbackStopRequested();
+        require(stages->count() == 3, "Stage playback can stop and restart without losing the report");
+        widget.close(); viewport.close();
     }
 
     void verifyOptimizedPlayback(QApplication& application, const std::filesystem::path& projectPath,
@@ -1785,7 +2369,7 @@ namespace
 int main(int argc, char** argv)
 {
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-    if(argc >= 2 && std::string(argv[1]) == "--cdf-progress")
+    if(argc >= 2 && (std::string(argv[1]) == "--cdf-progress" || std::string(argv[1]) == "--cdf-analysis" || std::string(argv[1]) == "--cdf-reference" || std::string(argv[1]) == "--cdf-shape" || std::string(argv[1]) == "--cdf-alternative"))
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication application(argc, argv);
     std::cout.setf(std::ios::unitbuf);
@@ -1809,8 +2393,46 @@ int main(int argc, char** argv)
     if(failures) { return 1; }
     const std::filesystem::path folder(temporary.path().toStdWString());
     writeFixture(folder);
+    if(argc >= 6 && std::string(argv[1]) == "--cdf-top1-refined") {
+        runTop1Repair(std::filesystem::u8path(argv[2]),std::filesystem::u8path(argv[3]),std::filesystem::u8path(argv[4]),std::filesystem::u8path(argv[5]));
+        return failures?1:0;
+    }
+    if(argc >= 6 && std::string(argv[1]) == "--refine-cdf-checkpoint") {
+        refineCdfCheckpoint(std::filesystem::u8path(argv[2]),std::filesystem::u8path(argv[3]),std::filesystem::u8path(argv[4]),std::filesystem::u8path(argv[5]));
+        return failures?1:0;
+    }
+    if(argc >= 7 && std::string(argv[1]) == "--validate-cdf-result") {
+        verifyCdfResult(std::filesystem::u8path(argv[2]),std::filesystem::u8path(argv[3]),std::filesystem::u8path(argv[4]),
+            std::filesystem::u8path(argv[5]),std::filesystem::u8path(argv[6]),!(argc>=8 && std::string(argv[7])=="--geometry-only"));
+        return failures?1:0;
+    }
+    if(argc >= 5 && std::string(argv[1]) == "--apf-candidates") {
+        inspectApfCandidates(std::filesystem::u8path(argv[2]),std::filesystem::u8path(argv[3]),std::filesystem::u8path(argv[4]));
+        return failures?1:0;
+    }
+    if(argc >= 8 && std::string(argv[1]) == "--apf-window") {
+        verifyApfWindow(std::filesystem::u8path(argv[2]),std::filesystem::u8path(argv[3]),std::filesystem::u8path(argv[4]),
+            std::stoull(argv[5]),std::stoull(argv[6]),std::stoull(argv[7]),argc>=9?std::filesystem::u8path(argv[8]):std::filesystem::path{});
+        return failures?1:0;
+    }
     if(argc >= 3 && std::string(argv[1]) == "--cdf-progress") {
         verifyCdfProgress(application, std::filesystem::u8path(argv[2]), folder);
+        return failures ? 1 : 0;
+    }
+    if(argc >= 6 && std::string(argv[1]) == "--cdf-reference") {
+        verifyCdfPipeline(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]), std::filesystem::u8path(argv[4]), std::filesystem::u8path(argv[5]), true);
+        return failures ? 1 : 0;
+    }
+    if(argc >= 6 && std::string(argv[1]) == "--cdf-alternative") {
+        verifyCdfPipeline(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]), std::filesystem::u8path(argv[4]), std::filesystem::u8path(argv[5]), false, true, true);
+        return failures ? 1 : 0;
+    }
+    if(argc >= 5 && std::string(argv[1]) == "--cdf-shape") {
+        verifyCdfPipeline(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]), std::filesystem::u8path(argv[4]), argc >= 6 ? std::filesystem::u8path(argv[5]) : std::filesystem::path{}, false, true);
+        return failures ? 1 : 0;
+    }
+    if(argc >= 5 && std::string(argv[1]) == "--cdf-analysis") {
+        verifyCdfPipeline(application, std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]), std::filesystem::u8path(argv[4]), argc >= 6 ? std::filesystem::u8path(argv[5]) : std::filesystem::path{});
         return failures ? 1 : 0;
     }
     if(argc >= 4 && std::string(argv[1]) == "--optimized-playback") {
@@ -1818,6 +2440,7 @@ int main(int argc, char** argv)
             argc >= 5 ? std::stod(argv[4]) : 5.0);
         return failures ? 1 : 0;
     }
+    verifyCdfAnalysisControls();
     verifyPlaybackTimeline();
     verifyModelIk();
     verifyMultiIkDomain();

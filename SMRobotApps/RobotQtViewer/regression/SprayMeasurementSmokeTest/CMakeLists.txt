@@ -19,6 +19,10 @@ target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE
     SMRobotMotionPlanning::ProjectMotionPlanning
     ${RobotQtViewer_REQUIRED_TARGETS})
 target_compile_features(${EXAMPLE_TARGET_NAME} PRIVATE cxx_std_17)
+if(MSVC)
+    # Real-model IK/FK regression instantiates large Eigen debug object files.
+    target_compile_options(${EXAMPLE_TARGET_NAME} PRIVATE /bigobj)
+endif()
 if(WIN32)
     target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE dwmapi)
 endif()
