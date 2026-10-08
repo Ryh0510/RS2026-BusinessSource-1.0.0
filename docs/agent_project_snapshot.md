@@ -355,3 +355,32 @@
 - 新增仅显式参数启用的原窗口诊断入口 --profile-playback / --profile-playback-report，走原MainWindow、导入按钮和播放按钮；输出帧呈现、UI心跳、源点总数、完整结果和截图。正常启动无新增界面。Release/Debug主程序和Localization目标已构建，两个配置相关5/5回归通过；最终源码UTF-8/CRLF和diff检查通过。交付入口C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe。
 
 - 最后补充验证：两配置主程序正常启动 --smoke-exit-ms 1500 均退出0（playback-main-smoke-{release,debug}.log）。Debug原主窗口全轨迹在120142ms触发诊断超时，615帧、P95=233ms、finished=false，未取得完整源点验收；见playback-main-delivery-debug.{log,json}。Debug性能仍较慢，不能把编译/常规回归通过表述为Debug完整播放通过，本轮完整播放与提速结论仅适用于Release。测试进程均已自行退出。
+
+## 2026-10-08 CDF RAPID MOD 导出
+
+- 基线main/1ad4f8a，根仓及Workbench子仓干净。用户要求CDF页新增附件MainModule.mod格式导出；已确认使用当前喷枪TCP并附工具定义。
+- 附件格式为MODULE/CONST robtarget/PROC main/MoveL v50 z10 tool0，robconf全零、外轴9E+09。改为当前喷枪工具；位置采用当前实际世界TCP（m转mm），四元数wxyz。未知ABB confdata和负载不猜测，文件与UI标明模板占位和MoveL圆滑路径未复验。
+- 所有者为ProjectMotionPlanning导出模块（模型快照/验证/序列化），Workbench只提供CDF最终计划、实际TCP FK快照、按钮和原子保存；保留既有TXT导出。验证全部点而非表格采样、符号/turn、工具相对法兰刚性、四元数精度和格式往返，Release/Debug构建与原主窗口按钮检查。
+
+- 完成：CDF页新按钮、完整TCP MOD与工具定义已接入；Release/Debug构建和各2/2回归通过，两配置原主窗口全部4528点导出/FK核对通过。文件results/CDF_RAPID_Export/MainModule.mod，交付EXE仍为C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe；ABB confdata和负载占位以及插补限制见docs/cdf_rapid_export.md。用户旧EXE未终止。
+
+
+## 2026-10-08 tool0 导出、12 列末端轨迹导入与等价提速
+
+- 基线 main/1ad4f8a，保留上一轮 RAPID 导出及原主窗口诊断未提交修改。用户要求按桌面 MainModule.mod 固定 tool0，保留已有目标坐标语义；12 列导入使用 mm→m、wxyz、显式秒时间和 mm/s→m/s。
+- 根因：通用矩阵解析接受任意 >=4 列，每四行拼矩阵，抢先吞掉12列点表；零时间错误回退行号。修复归 ProjectMotionPlanning，Workbench仅默认值和提示，预编译SDK不修改。
+- 安全余量领域/UI统一0.0005m。提速不改QP轮数、搜索顺序、随机数、采样与验收条件；优先复用查询工作线程，保留独立场景与同步批次屏障。
+- 验证：附件全部行和格式兼容/无效输入、tool0格式及实际FK往返、查询及相同0.5mm参数优化对照；Release/Debug构建和原主窗口导入/导出检查。改余量前后不宣称轨迹不变，等价性只针对同参数提速。
+
+- 本轮实现已完成并构建Release/Debug：tool0模板、234点12列导入、0.5mm默认（含APF隐藏下限移除）、查询线程复用及失败窗口距离提前拒绝。原窗口两配置导入/导出通过；600点同参数对照1199点输出逐字节一致，但64.37→63.71秒改善很小，未证明完整Top-1大幅提速。Release/Debug最终均9/9通过，所有测试已结束；详情见本日audit与cdf_import_tool0_performance.md。GPU追加核对发现底层后端可注入，上层运行时未开放，未更换GPU近似算法。
+
+## 2026-10-08 失败复核、恢复10mm与统一密采样验收
+
+- 最新用户要求恢复安全距离10mm。main/1ad4f8a，保留已有MOD、导入及查询优化未提交变更。
+- 失败日志cdf_20261008_175327_123_30612为234点trajectory的Top-1，0.5mm、28个APF区间；0.001rad候选验收后，最终0.00025rad检出7段碰撞并拒绝输出。旧10mm同输入返回2050点但未达到所请求余量，不能声称原结果满足10mm。
+- 领域ProjectMotionPlanning统一APF/QP/平滑候选与最终碰撞验收上限0.00025rad；保留最终不走缓存的验证。领域/UI默认恢复0.01m，有限差分步长等无关0.0005值不改。Workbench仅同步默认与日志。
+- 原MainWindow诊断增加导入-全逆解-Top1-优化及阶段导出，使用真实234点和同项目配置验证；不使用简化测试窗口替代。Release/Debug构建与相关回归、原窗口完整运行核对输出/碰撞/余量状态。
+
+- 用户纠正本轮复现输入为桌面11111.txt，终止本轮自行启动的234点诊断PID3088，改用11111原完整流程；失败日志仍是234点，但不以其结果冒充用户指定749点复现。
+
+- 完成：11111原主窗口749点Top-1以10mm/一轮QP运行1998.876秒，输出4528点；最终/APF独立0.00025rad分别137279/148061样本，0碰撞/0限位，最终速度/离散加速度通过。最小最终节点间距0.723814mm，10mm未达，partial保留。Release8/8、Debug6/6；两配置构建/启动通过。外层build/Release/bin EXE已备份同步，SHA256 AF3BCDDE3A56E7229B0938AC9024DBA7DE11350AB606659CE918161B6CEF67D3；成果results/11111_Top1_10mm_20261008，详见audit。

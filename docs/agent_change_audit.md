@@ -571,3 +571,50 @@
 - Release交付为C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 AA8A704D4E4A57586E0F6EF4D66EACB3EF55A2BA6051F824085DA7FA5F035806。外层build/Release/bin中的另一份旧程序未覆盖，运行时必须使用本次交付路径。未终止用户进程，只清理本轮自行创建的诊断进程。
 
 - 最后补充验证：两配置主程序正常启动 --smoke-exit-ms 1500 均退出0（playback-main-smoke-{release,debug}.log）。Debug原主窗口全轨迹在120142ms触发诊断超时，615帧、P95=233ms、finished=false，未取得完整源点验收；见playback-main-delivery-debug.{log,json}。Debug性能仍较慢，不能把编译/常规回归通过表述为Debug完整播放通过，本轮完整播放与提速结论仅适用于Release。测试进程均已自行退出。
+
+
+## 2026-10-08 CDF RAPID MOD 按钮与工具定义导出
+
+- 用户提供MainModule.mod，要求CDF页新增该格式导出；明确选择当前喷枪TCP并附工具定义。基线main/1ad4f8a，相关仓库初始干净。
+- 新增ProjectMotionPlanning/RapidTrajectoryExport领域API，读取独立实际模型快照和当前TCP FK，按既有stored-IK→runtime符号映射处理全部六轴源点；验证串联顺序、有限数据、SE(3)、固定法兰→TCP。世界坐标m→mm、单位四元数wxyz及同半球连续处理；不抽点、不移动实时机器人，不改变APF/QP或关节数据。
+- 输出MODULE/CONST robtarget/PROC main/MoveL v50 z10，新增PERS tooldata tCdfSpray和显式WObj:=wobj0。robconf沿用附件全零占位；工具负载未知，tload零负载占位。UI/文件/使用说明明确未标定字段、场景世界坐标映射和MoveL/z10不等价于原关节插值；没有使用B1～B8伪造ABB confdata，也没有宣称控制器路径已无碰撞。
+- Workbench增加“导出 CDF RAPID 程序（.mod）...”按钮，最终CDF计划可用且未播放时启用；通过typed signal/controller调用领域导出并QSaveFile原子保存；原TXT导出保留。程序内容在保存对话框前冻结，避免modal事件修改来源造成导出混合状态。
+- 新增回归覆盖实际ABB模型、平移/旋转基座、已知非零工具、mm与wxyz往返、符号/多圈、全部点、末行NaN、非刚性TCP、缺失实际FK拒绝。Release/Debug主程序及导出测试构建成功，各2/2（导出与架构边界）通过。
+- 原主窗口导出：复用现成4528点最终轨迹，通过正式导入与CDF新按钮保存，Release/Debug均退出0；全部4528点从MOD读取后逐点对比实际viewport FK，最大位置8.296467083015937e-10 m，最大姿态1.7968547110936603e-9 rad。未重跑APF/QP；截图cdf-rapid-main-release.json.png核对新按钮可见。
+- 原窗口诊断沿用--profile-playback，新增仅显式启用的--profile-rapid-export保存检查分支。首轮该诊断直接包含领域头导致主程序编译缺少include依赖，已改为独立读取MOD并调用既有viewport FK，未扩大生产主程序依赖；最终构建通过。
+- 文件位置：外层results/CDF_RAPID_Export/MainModule.mod和README.md；983370字节。使用说明docs/cdf_rapid_export.md。日志外层build/cdf-rapid-{configure,build-release,build-debug,tests-release,tests-debug,main-release,main-debug}.log，两个原窗口数值报告同名.json。
+- 交付EXE C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 82FD8A3DD49BB47C3B118136D4458124E330F00D45B6AA2AAB1B3685263E939B。用户正在运行外层build/Release/bin的旧EXE（PID12644），未终止或覆盖该进程。源文件UTF-8/CRLF和三个仓库diff检查通过；无项目格式、SDK或第三方依赖变化。未做ABB RobotStudio编译/实机验证。
+
+
+## 2026-10-08 tool0、12列轨迹导入、0.5mm间距与等价查询优化
+
+- 保留上轮未提交的RAPID导出改动；领域为ProjectMotionPlanning，Workbench仅默认值/提示/控件标识，主程序诊断仍走原MainWindow。无SDK、依赖或项目schema变化。
+- MOD按桌面MainModule.mod：tool0\WObj:=wobj0，无tCdfSpray/tooldata；目标仍为原TCP FK坐标，不暗中换算法兰补偿值。文件头/布局/MoveL参数与参考匹配，UI和说明已同步。
+- 12列xyz/wxyz/speed/acceleration/time/type/standoff的TXT不再落入每4行拼矩阵的宽松解析；m与m/s换算、显式零/重复时间、四元数归一化，异常行整份拒绝。加速度/点类型/喷距为已识别但未接入执行的工艺列，导入提示明确；不改预编译TimedCartesianPoint。
+- 安全距离领域/UI改为0.0005m，步长0.0001m；移除APF连接的隐藏5mm下限覆盖。保留排斥影响范围与原局部修复额外余量，未将“无碰撞”冒充“满足安全余量”。
+- 查询提速：独立场景持久工作线程、同步批次屏障/异常回收；平滑间距验收一旦必败，停止未开始的距离任务。全值查询/最终高密度复验不变；未改QP轮数、轨迹点、浮点公式、随机搜索、关节符号/turn或碰撞过滤。
+- Release/Debug原主窗口：附件234点全部导入，位置最大显示误差2.22e-16m、时间误差0，已核对球点显示。tool0导出4528点，实际TCP FK往返最大8.30e-10m、1.80e-9rad；所有MoveL工具、模板头尾匹配。两配置最终主程序启动退出0。
+- 同0.5mm的600点已无碰撞输入片段、一轮QP对照：64.3719→63.7109秒，1199点TXT逐字节相同，SHA256=54ac6ab57b3bbc4b6db5ec60fd1b572011de870cfc285db7b54e6793bdacdb9a；独立0.001rad复验均0碰撞，最小节点Phi=0.127484mm。约1%的耗时差不能支持大幅提速结论，也不代表含TCP形状约束的完整Top-1运行。
+- 仅线程复用的103点片段12.2408→12.4177秒、205点输出相同，无可确认加速。旧headless缺少GUI校准TCP形状/连续IK入口，直接Top-1及100点种子的试跑APF失败，没有把这些失败运行当作结果交付或性能证据。
+- 初轮Release构建遇本轮基准进程占用lib_coacd.dll的部署冲突；基准退出后重建通过，未终止用户旧主程序。Debug第一版重复线程测试包含重复大圈运动检查，主动停止并缩短其同步压力测试路径；原逐轴turn/运动测试仍保留，随后重建并重新运行正式回归。
+- 用户追加GPU询问：重新读取升级后SDK，底层CollisionWorld已有ICollisionBackend注入，但正式CollisionScene/ProjectCollisionRuntime没有公开注入点，只有Default/Fcl/Coal；没有现成GPU实现或发现nvcc。GPU距离场近似会改变梯度/轨迹，CPU复验只能保留安全验收，不能保证同结果；本轮未安装CUDA或伪装GPU开关。
+- Release/Debug最终均9/9回归通过（23.67秒/604.32秒）；Debug查询等价测试347.98秒，已完整结束。详情docs/cdf_import_tool0_performance.md；日志外层build/tool0-import-*、process-pose-main-*、tool0-main-*与margin05-*。
+- 交付EXE：C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256=9BF925C91FDB5A07287AC3750342B745FD154601ECA5AD17061EF0FC07BEDA9C。源文件UTF-8/CRLF与根仓/两个子仓diff检查通过。
+
+- 用户明确GPU不可行就不强用；本轮最终保持CPU方案。所有本轮测试/基准进程均已结束，未中止用户旧程序。
+
+## 2026-10-08 恢复10mm与CDF候选碰撞精度修复
+
+- 最新用户明确安全距离恢复10mm，并指定桌面11111.txt为复现输入。此前查到的175327日志实际为234点trajectory.txt，不能代表749点11111；停止本轮自己启动的234点原窗口诊断PID3088，改跑11111。
+- 已知失败原因：APF/QP/平滑候选以0.001rad验收，最后0.00025rad在7段发现碰撞；最终拒绝是正确行为。修复归ProjectMotionPlanning，将所有候选接受统一到最终步长上限0.00025rad，保留最终绕缓存的复验；形状恢复失败时保留的前序路径现在也通过同精度验收。未放宽检测阈值/过滤规则、未修改SDK或机器人符号/turn。
+- 领域选项、Widget设置结构和CDF控件默认恢复0.01m，UI步长恢复0.001m。APF与QP读取同一设置；有限差分5e-4rad未误改。主QP仍一轮，TCP走廊仍100mm。导入12列/原矩阵格式和tool0 MOD功能保留。
+- 原MainWindow诊断新增--profile-cdf-top1，依次调用真实导入/全逆解/全局Top1/CDF按钮和阶段导出；不在MainWindow新增领域算法。不使用简化窗口替代原窗口测试。全逆解默认设置对话框由诊断显式接受。
+- Release相关8/8、Debug相关6/6回归通过（25.45秒/548.91秒），Debug正常主程序启动退出0。Debug最后一次仅诊断适配器重建曾因本轮测试进程占用lib_coacd-D.dll导致部署失败；等测试结束后重建成功，没有关闭用户进程。
+- 本次完整原窗口日志cdf_20261008_194129_429_42720：11111/749点/全局Top1 cost=148.219446482，safety=0.01、QP rounds=1、统一0.00025rad，生成4528点连续IK参考；APF扫描96个碰撞/形状区间。完整运行已结束，输出4528点，最终0碰撞段；未达到10mm余量，partial状态保留，详见后续记录。
+- 部署核对：短构建目录和用户实际外层build/Release/bin中的42个DLL逐文件SHA256一致，项目ABB4600-burnner.sys.json也一致。计划在完整验证后备份并同步EXE，避免用户继续启动0.5mm程序。
+
+- 完整原MainWindow运行结束：1998.876秒，最终4528点，两个tcp_shape_restored均完成，主QP一轮，final gate绕缓存0.00025rad通过；界面保留输入并启用最终导出，诊断退出0。最小最终节点Phi=-9.2761862mm，即距离约0.7238138mm；successIncludingMargin=0，不宣称达到10mm。
+- 独立导出复验：最终137279、APF148061个原始线性插值状态，均0碰撞/0关节限位；最终最大有序TCP偏移83.84917057mm，APF73.80788734mm，起终位置0.000691112mm/姿态0.0000303233度。最终速度/离散加速度越限0，执行时间2039.828465秒。使用原MainWindow产物；独立验证工具仅读取文件与创建实际模型场景，未以简化测试窗口生成替代轨迹。
+- 对应参考核对：此前与本次4528点加密连续IK参考差异至多5.01e-7度/5.01e-7秒，符合当前UI导出精度；仅用已核对的连续种子重建独立验算的有序参考，不使用旧最终轨迹。第一次独立工具缺少SMROBOT_DATA_ROOT导致找不到URDF，指定源码data目录后两次复验都完整退出0。
+- 新结果在外层results/11111_Top1_10mm_20261008，含阶段TXT、独立验收JSON/TCP CSV、原窗口截图/报告、日志、metadata、README和SHA256。没有覆盖旧结果。
+- 交付EXE SHA256 AF3BCDDE3A56E7229B0938AC9024DBA7DE11350AB606659CE918161B6CEF67D3。已备份外层build/Release/bin旧EXE到build/backups/cdf-before-10mm-20261008，并同步本次已验证EXE；部署路径启动退出0。C:/b/rs105-merge/Release/bin保留同一版本。用户进程未终止；本轮验证进程均已结束。
