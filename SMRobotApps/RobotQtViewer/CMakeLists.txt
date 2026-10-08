@@ -88,6 +88,8 @@ configure_file(
 
 set(${APP_TARGET_NAME}_SHELL_SOURCES
     main.cpp
+    regression/PlaybackWindowProfile.cpp
+    regression/PlaybackWindowProfile.h
     MainWindow.cpp
     MainWindow.h
     RobotQtViewerBuiltWorkbenchCatalog.h

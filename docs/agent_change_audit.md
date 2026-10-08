@@ -556,3 +556,18 @@
 - 验证：Release/Debug主程序和相关目标构建成功，初轮各10/10；最终健壮性小修后Debug3/3、Release10/10通过，两配置主程序启动退出0。完整运行后仅修复诊断文字、距离失败出口及诊断检查点采样设置，不改变有效输入的几何步骤。最终UTF8/CRLF、根仓与规划子仓git diff --check通过。
 - 日志：外层build/shape-{final-build,tests,final-tests,app}-{release,debug}.log及apf-shape-top1-delivery.log；原始JSON/CSV、README、交付metadata和checksums在结果目录。运行中的用户进程未终止。
 - 最终TXT SHA256：51DCBD5666750CEAA8730CDFD07C1D8BE9BD7B85430931605415A1117302A047。Release EXE C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256：672D141A2CF4996232E346341D4FA06CC5D8536A8EDEC1553CC4EA71935041B3。
+
+
+## 2026-10-08 原主窗口动态播放卡顿：语言重翻译与呈现同步
+
+- 用户明确主视口连续碰撞未开启，要求在原主程序窗口验证。本轮仅使用现成4528点 results/11111_Top1_Shape_100mm/final_joint_trajectory.txt，不重跑APF/QP。根仓基线main/bf1c0ea；修改Shared语言服务和MotionPlanning Workbench控制器，原界面布局不变。
+- 根因证据：QApplication通知诊断显示QEvent::LayoutRequest(76)在多层滚动容器/分页中每次耗时85～99ms。全局RobotQtViewerLocalizationService递归扫描重复子树，对QTableWidget每个数值/关节向量重新匹配所有翻译模板；播放中的喷涂读数更新会持续触发此路径。场景paintGL通常不足1ms，不能据此认为完整窗口无卡顿。临时notify诊断代码已撤回，原日志playback-main-notify2.log保留。
+- 语言服务：缓存翻译命中和未命中结果，QCache按UTF-16文本与固定开销近似计费，容量8MiB。表格仅在model的数据/表头/行列插入/reset变化后重新扫描；析构清指针，切语言或重载词库清文本与表格缓存。LayoutRequest仍处理动态标签及其他UI，保留原中英文翻译能力；不改数值、关节符号、turn或轨迹内容。
+- 播放控制器：继续复用既有呈现票据，上一姿态frameSwapped确认后才发布运行态通知和喷涂读数；原始逐点碰撞/测量/轨迹记录、8ms批次预算、末帧确认和已有插值保持。修复没有放松碰撞检测或通过丢点伪造加速。
+- 新增regression/PlaybackWindowProfile.{h,cpp}及主程序可选参数，直接操作原MainWindow内的Motion Planning导入/播放控件；保持真实模型、原面板和渲染。测试输入为同一最终TXT转成既有generic JSON（角度转rad，Joint1～Joint6），未导入额外Cartesian覆盖层；保留末端线与喷涂读数，主视口连续碰撞关闭但播放独立逐源点校验保持。无新SDK/public module API、项目格式或第三方依赖。
+- 原窗口Release证据：playback-main-baseline.json在120013ms超时，帧间隔P95=706ms、最大1599ms；首次修复完整18181ms、P95=45ms。最终playback-main-delivery-release.json：19637ms完成、473帧、P95=46ms、最大49ms，UI心跳P95=44ms、最大54ms；allPointsChecked=true，4528/4528、0碰撞、0无效，截图同名.json.png。耗时从播放按钮返回后计起，不包含导入或创建独立碰撞场景；5秒预览目标在负载下延长，不承诺60FPS或硬实时，不把120秒未完成当成完整基线耗时。
+- Release/Debug主程序与Localization回归目标构建成功；相关Localization/Architecture/WorkbenchLifecycle/DocumentTransaction/ViewportPresentation回归各5/5通过。新增1000行表格测试覆盖数值不改、重复翻译、动态文本/tooltip、插入行、语言切换、同一语言下词库重载使未命中缓存和表格缓存失效；最后加强的reload测试Release额外1/1通过。性能结论仅来自上述原主窗口，未以简化窗口结果代替。
+- 日志位于外层build/playback-main-{final-build-release,final-app-build-release,final-build-debug,tests-release,tests-debug,localization-release,delivery-release}.log；最终源文件UTF-8/CRLF、根仓/Workbench子仓git diff --check通过。最终轨迹TXT SHA256仍为51DCBD5666750CEAA8730CDFD07C1D8BE9BD7B85430931605415A1117302A047。
+- Release交付为C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe，SHA256 AA8A704D4E4A57586E0F6EF4D66EACB3EF55A2BA6051F824085DA7FA5F035806。外层build/Release/bin中的另一份旧程序未覆盖，运行时必须使用本次交付路径。未终止用户进程，只清理本轮自行创建的诊断进程。
+
+- 最后补充验证：两配置主程序正常启动 --smoke-exit-ms 1500 均退出0（playback-main-smoke-{release,debug}.log）。Debug原主窗口全轨迹在120142ms触发诊断超时，615帧、P95=233ms、finished=false，未取得完整源点验收；见playback-main-delivery-debug.{log,json}。Debug性能仍较慢，不能把编译/常规回归通过表述为Debug完整播放通过，本轮完整播放与提速结论仅适用于Release。测试进程均已自行退出。

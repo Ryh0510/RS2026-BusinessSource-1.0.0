@@ -341,3 +341,17 @@
 - Release/Debug 各10/10初轮回归通过；最终健壮性小修后 Debug3/3通过且主程序启动退出0。完整真实运行写入外层build/apf-shape-top1-delivery及同名log，报告脚本build/report_tcp_shape_delivery.py，拟交付results/11111_Top1_Shape_100mm；结束后补最终结果、Release重编译和audit。
 
 - 本轮最终完成：完整Top-1结果已交付results/11111_Top1_Shape_100mm，4528点/最终138362次0.00025rad独立采样0碰撞，最大偏移87.664mm。新增投影交叉55→7、>45度TCP折角65→11；原始/旧/新已分图。仍未达到10mm余量、保留局部离散折角，完整计算2025.22秒；详见本日audit与交付README。Release/Debug构建/回归/启动均通过，当前EXE为C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe。
+
+
+## 2026-10-08 动态轨迹播放卡顿复查
+
+- 基线 main/bf1c0ea；根仓、MotionPlanning 与 Workbench 子仓初始干净。目标：定位 Motion Planning 动态播放的主视图卡顿与进度超前，保留完整轨迹与校验语义。
+- 检查 RobotViewport 呈现票据、controller 采样/测量/通知，以及主程序真实渲染路径；所有者为既有领域服务、viewport 与 typed adapter/controller，遵守两份 GUI 架构契约。
+- 使用现成 4528 点结果 results/11111_Top1_Shape_100mm/final_joint_trajectory.txt 复现，不重跑 APF/QP。验证真实呈现、UI 响应、完整采样、跨模式和末帧行为，构建 Release/Debug 并运行相关回归。当前未定位根因，尚未改源码。
+
+- 后续原主窗口定位：LayoutRequest 触发全局语言服务递归重翻译，反复遍历数千行轨迹数据并执行模板正则；单个布局事件约85～99ms，多个事件累积使主视图几百毫秒才更新。原简化测试没有覆盖完整应用语言过滤器，不能代表用户窗口性能。
+- 已在 Shared 语言服务加入8MiB近似字节计费的文本命中/未命中缓存、按model数据变化失效的表格翻译缓存；语言/词库变化清缓存。Workbench将播放通知与喷涂读数刷新移到上一姿态frameSwapped确认之后。原布局、轨迹数据、逐点校验与APF/QP保持。
+- 原主窗口Release验收：同一4528点最终轨迹，主视口连续碰撞关闭，喷涂测量和末端线显示开启。基线120013ms超时、帧间隔P95=706ms；修复版18181ms/P95=45ms，最终交付版19637ms/P95=46ms、最大49ms；全部4528点完成、0碰撞/0无效。5秒是预览目标，实际随负载延长；不以超时基线计算完整耗时倍数，不宣称固定60FPS。
+- 新增仅显式参数启用的原窗口诊断入口 --profile-playback / --profile-playback-report，走原MainWindow、导入按钮和播放按钮；输出帧呈现、UI心跳、源点总数、完整结果和截图。正常启动无新增界面。Release/Debug主程序和Localization目标已构建，两个配置相关5/5回归通过；最终源码UTF-8/CRLF和diff检查通过。交付入口C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe。
+
+- 最后补充验证：两配置主程序正常启动 --smoke-exit-ms 1500 均退出0（playback-main-smoke-{release,debug}.log）。Debug原主窗口全轨迹在120142ms触发诊断超时，615帧、P95=233ms、finished=false，未取得完整源点验收；见playback-main-delivery-debug.{log,json}。Debug性能仍较慢，不能把编译/常规回归通过表述为Debug完整播放通过，本轮完整播放与提速结论仅适用于Release。测试进程均已自行退出。

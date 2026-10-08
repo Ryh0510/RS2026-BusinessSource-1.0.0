@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "regression/PlaybackWindowProfile.h"
 #include "RobotQtViewerBuiltWorkbenchCatalog.h"
 #include "RobotQtViewerTheme.h"
 #include "RobotQtViewerWorkbenchPlugin.h"
@@ -289,6 +290,9 @@ int main(int argc, char* argv[])
         qputenv("SMROBOT_DATA_ROOT", QByteArray(DATA_PATH));
     }
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    if(hasArgument(argc, argv, "--profile-playback")) {
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    }
 
     QSurfaceFormat format;
     format.setVersion(4, 3);
@@ -391,6 +395,11 @@ int main(int argc, char* argv[])
             });
         }
 
+        const auto playbackFile = argumentValue(argc, argv, "--profile-playback");
+        if(!playbackFile.empty()) {
+            startPlaybackWindowProfile(window, QString::fromStdString(playbackFile),
+                QString::fromStdString(argumentValue(argc, argv, "--profile-playback-report")));
+        }
         return app.exec();
     } catch(const std::exception& error) {
         reportStartupFailure(error, !hasArgument(argc, argv, "--smoke-exit-ms"));

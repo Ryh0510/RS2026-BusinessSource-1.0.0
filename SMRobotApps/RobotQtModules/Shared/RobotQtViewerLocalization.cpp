@@ -5,6 +5,7 @@
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
+#include <QCache>
 #include <QComboBox>
 #include <QDir>
 #include <QDockWidget>
@@ -162,7 +163,8 @@ namespace
 
     void translateObject(
         QObject* object,
-        const RobotQtViewerLocalizationService& localization)
+        const RobotQtViewerLocalizationService& localization,
+        bool translateTableItems = true)
     {
         if(object == nullptr) {
             return;
@@ -263,7 +265,7 @@ namespace
                 translateTreeItem(tree->topLevelItem(index), tree->columnCount(), localization);
             }
         }
-        if(auto* table = qobject_cast<QTableWidget*>(object)) {
+        if(auto* table = translateTableItems ? qobject_cast<QTableWidget*>(object) : nullptr) {
             for(int column = 0; column < table->columnCount(); ++column) {
                 QTableWidgetItem* item = table->horizontalHeaderItem(column);
                 if(item != nullptr) {
@@ -405,6 +407,8 @@ public:
 
     void rebuildLegacyIndex()
     {
+        legacyTextCache.clear();
+        cleanTables.clear();
         directAliases.clear();
         directAliasesCaseFolded.clear();
         templatePatterns.clear();
@@ -433,6 +437,12 @@ public:
             });
     }
 
+    // Cache misses too: trajectory cells are data, but otherwise every layout
+    // event tests each unchanged number/joint vector against all text templates.
+    // Bound by approximate UTF-16 bytes, not an unbounded number of live samples.
+    QCache<QString, QString> legacyTextCache{8 * 1024 * 1024};
+    QSet<QTableWidget*> observedTables;
+    QSet<QTableWidget*> cleanTables;
     QString catalogDirectory;
     QHash<QString, Catalog> catalogs;
     QHash<QString, QString> directAliases;
@@ -690,6 +700,8 @@ bool RobotQtViewerLocalizationService::setLanguage(
         }
         return false;
     }
+    m_impl->legacyTextCache.clear();
+    m_impl->cleanTables.clear();
     m_impl->currentLanguageId = canonical;
     if(persist) {
         QSettings settings;
@@ -713,12 +725,18 @@ QString RobotQtViewerLocalizationService::translateLegacyText(const QString& tex
     if(text.isEmpty()) {
         return text;
     }
+    if(const auto* cached = m_impl->legacyTextCache.object(text)) {
+        return *cached;
+    }
     QString sourceTemplate;
     QHash<int, QString> arguments;
-    if(!m_impl->canonicalLegacyText(text, &sourceTemplate, &arguments)) {
-        return text;
+    const QString translated = m_impl->canonicalLegacyText(text, &sourceTemplate, &arguments)
+        ? renderTemplate(m_impl->targetLegacyText(sourceTemplate), arguments) : text;
+    const qint64 cost = (qint64(text.size()) + translated.size()) * sizeof(QChar) + 128;
+    if(cost <= m_impl->legacyTextCache.maxCost()) {
+        m_impl->legacyTextCache.insert(text, new QString(translated), static_cast<int>(cost));
     }
-    return renderTemplate(m_impl->targetLegacyText(sourceTemplate), arguments);
+    return translated;
 }
 
 void RobotQtViewerLocalizationService::retranslateObjectTree(QObject* root) const
@@ -727,10 +745,33 @@ void RobotQtViewerLocalizationService::retranslateObjectTree(QObject* root) cons
         return;
     }
     m_impl->retranslating = true;
-    translateObject(root, *this);
+    const auto translate = [this](QObject* object) {
+        auto* table = qobject_cast<QTableWidget*>(object);
+        if(table && !m_impl->observedTables.contains(table)) {
+            m_impl->observedTables.insert(table);
+            // Text and tooltip edits, insertions and language/catalog changes all
+            // invalidate the item translation. Geometry-only layout events do not.
+            const auto invalidate = [this, table]() { m_impl->cleanTables.remove(table); };
+            auto* model = table->model();
+            connect(model, &QAbstractItemModel::dataChanged, this, invalidate);
+            connect(model, &QAbstractItemModel::headerDataChanged, this, invalidate);
+            connect(model, &QAbstractItemModel::rowsInserted, this, invalidate);
+            connect(model, &QAbstractItemModel::columnsInserted, this, invalidate);
+            connect(model, &QAbstractItemModel::modelReset, this, invalidate);
+            connect(table, &QObject::destroyed, this, [this, table]() {
+                m_impl->observedTables.remove(table);
+                m_impl->cleanTables.remove(table);
+            });
+        }
+        translateObject(object, *this, !table || !m_impl->cleanTables.contains(table));
+        if(table) {
+            m_impl->cleanTables.insert(table);
+        }
+    };
+    translate(root);
     const auto children = root->findChildren<QObject*>();
     for(QObject* child : children) {
-        translateObject(child, *this);
+        translate(child);
     }
     m_impl->retranslating = false;
 }

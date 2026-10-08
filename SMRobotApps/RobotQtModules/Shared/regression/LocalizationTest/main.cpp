@@ -8,6 +8,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTreeWidget>
+#include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -164,6 +165,45 @@ namespace
             error.toUtf8().constData());
         require(label->text() == QStringLiteral("Selected robot: r2"),
             "dynamic text language round trip failed");
+        QTableWidget table(1000, 2);
+        for(int row = 0; row < table.rowCount(); ++row) {
+            table.setItem(row, 0, new QTableWidgetItem(QString::number(row * 0.001, 'f', 6)));
+            table.setItem(row, 1, new QTableWidgetItem(QStringLiteral("Apply")));
+        }
+        require(localization.setLanguage(QStringLiteral("zh-CN"), false, &error), "set Chinese");
+        localization.retranslateObjectTree(&table);
+        localization.retranslateObjectTree(&table);
+        require(table.item(999, 1)->text() == QString::fromWCharArray(L"\u5e94\u7528") &&
+            table.item(999, 0)->text() == QStringLiteral("0.999000"),
+            "cached table keeps numeric data and translations");
+        table.item(999, 1)->setText(QStringLiteral("Scene Explorer"));
+        table.item(999, 1)->setToolTip(QStringLiteral("Apply"));
+        table.insertRow(1000);
+        table.setItem(1000, 1, new QTableWidgetItem(QStringLiteral("Apply")));
+        localization.retranslateObjectTree(&table);
+        require(table.item(999, 1)->text() == QString::fromWCharArray(L"\u573a\u666f\u6d4f\u89c8\u5668") &&
+            table.item(999, 1)->toolTip() == QString::fromWCharArray(L"\u5e94\u7528") &&
+            table.item(1000, 1)->text() == QString::fromWCharArray(L"\u5e94\u7528"),
+            "table edits and insertions invalidate cached translations");
+        require(localization.setLanguage(QStringLiteral("en-US"), false, &error), "set English");
+        localization.retranslateObjectTree(&table);
+        require(table.item(999, 1)->text() == QStringLiteral("Scene Explorer") &&
+            table.item(1000, 1)->text() == QStringLiteral("Apply"),
+            "language switch invalidates table and text caches");
+        require(localization.setLanguage(QStringLiteral("zh-CN"), false, &error), "set Chinese before reload");
+        require(localization.translateLegacyText(QStringLiteral("New label")) == QStringLiteral("New label"),
+            "cache a missing translation");
+        table.item(999, 1)->setText(QStringLiteral("New label"));
+        localization.retranslateObjectTree(&table);
+        auto updated = chineseCatalog();
+        updated.replace("\"Apply\":", "\"New label\": \"New translated label\", \"Apply\":");
+        writeCatalog(directory.filePath(QStringLiteral("base.zh-CN.i18n.json")), updated);
+        require(localization.reloadCatalogs(&error), "reload updated catalog");
+        require(localization.translateLegacyText(QStringLiteral("New label")) == QStringLiteral("New translated label"),
+            "catalog reload invalidates previously missing translations");
+        localization.retranslateObjectTree(&table);
+        require(table.item(999, 1)->text() == QStringLiteral("New translated label"),
+            "catalog reload invalidates clean tables without a language switch");
         QSettings().remove(QStringLiteral("ui/language"));
     }
 }
