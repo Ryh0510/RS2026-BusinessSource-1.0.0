@@ -5427,13 +5427,20 @@ void ProjectScene::update(double timeSeconds)
             const bool isActive = &detector == activeDetector;
             const bool wasMissingResult = !detector.hasResult;
 
+            // SDK Continuous performs the collision check but defers nearest points
+            // to ManualNearest. Request both in ONE query for a visible distance
+            // overlay, using the pose that this frame actually renders. Playback
+            // source-sample validation stays independent; hidden overlays stay cheap.
+            const bool showNearest = detector.visible &&
+                detector.visualization.showNearestPoints &&
+                detector.options.enableNearestPoints && detector.options.enableDistance;
+            const auto queryMode = showNearest
+                ? simulation_runtime::ProjectCollisionQueryMode::ManualNearest
+                : simulation_runtime::ProjectCollisionQueryMode::Continuous;
             simulation_runtime::ProjectCollisionQueryMetrics metrics;
             const simulation_runtime::Result queryResult =
                 simulation_runtime::ProjectCollisionQueryService::queryDetector(
-                    m_impl->collisionScene,
-                    detector,
-                    simulation_runtime::ProjectCollisionQueryMode::Continuous,
-                    &metrics);
+                    m_impl->collisionScene, detector, queryMode, &metrics);
             detector.effectiveIncludePairCount = metrics.effectiveIncludePairCount;
             detector.lastCheckMs = metrics.checkMs;
             detector.lastDistanceMs = metrics.distanceMs;

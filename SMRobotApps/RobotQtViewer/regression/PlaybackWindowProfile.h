@@ -5,3 +5,4 @@ class QString;
 // Opt-in diagnostic driver: exercises the application's real workbench/widgets.
 void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
     const QString& reportFile);
+void startMoveBaseWindowProfile(QWidget& window, const QString& reportFile);

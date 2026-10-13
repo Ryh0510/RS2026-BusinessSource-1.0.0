@@ -618,3 +618,64 @@
 - 对应参考核对：此前与本次4528点加密连续IK参考差异至多5.01e-7度/5.01e-7秒，符合当前UI导出精度；仅用已核对的连续种子重建独立验算的有序参考，不使用旧最终轨迹。第一次独立工具缺少SMROBOT_DATA_ROOT导致找不到URDF，指定源码data目录后两次复验都完整退出0。
 - 新结果在外层results/11111_Top1_10mm_20261008，含阶段TXT、独立验收JSON/TCP CSV、原窗口截图/报告、日志、metadata、README和SHA256。没有覆盖旧结果。
 - 交付EXE SHA256 AF3BCDDE3A56E7229B0938AC9024DBA7DE11350AB606659CE918161B6CEF67D3。已备份外层build/Release/bin旧EXE到build/backups/cdf-before-10mm-20261008，并同步本次已验证EXE；部署路径启动退出0。C:/b/rs105-merge/Release/bin保留同一版本。用户进程未终止；本轮验证进程均已结束。
+
+## 2026-10-11 主视图碰撞距离显示与用户新轨迹复验
+
+- 基线 main/33fac4a，初始根仓干净；用户确认主视图距离线/数字丢失。ProjectScene 每帧调用 SDK Continuous，CDF 返回 PendingManualRefresh；独立播放快照仍只做逐源点布尔碰撞验收，不产生主视图最近点。
+- 最小修复在 RobotViewerCore/ProjectScene：主检测开关开启、检测器有效且启用、显示可见且请求距离/最近点时，每个实际渲染姿态以 ManualNearest 做一次完整查询。隐藏距离仍走 Continuous，关闭主检测不执行查询。未改变 SDK、持久化、公开 API、碰撞过滤、APF/CDF、关节符号/turn、播放轨迹或逐源点检查。
+- 原 MainWindow 诊断增加 --profile-collision-distance，调用原 Collision Detection QAction，记录CDF最近点状态、距离变化及提交的距离线。4528点基线：475帧、nearestFrames=0、PendingManualRefresh、19.293秒；修复：476帧均有最近点/overlay，0丢失、24.469秒、P95=58ms（基线49ms）、4528点全检查0碰撞/0无效。显式距离查询有额外成本，未宣称无开销/60FPS。详见外层 build/distance-main-{baseline,fixed}-visible.json。
+- 原窗口附加测试用户2050点时出现呈现等待，120秒只收到180帧但所收帧全部有CDF距离；后续另一次只收到2帧，主动通过原Stop按钮结束。本轮没有完成该文件的完整GUI播放验收，不用这些运行宣称通过。诊断进程全部结束，未停止用户进程。完整距离回归依据上述4528点原窗口对照；用户新文件的全程碰撞结论依据下面独立密采样。
+- 用户追加检查新轨迹：第一次给出的桌面 trajectory.txt 为4×4末端位姿矩阵，未据此重求逆解冒充结果；更正文件 ABB4600_urdf_apf_cdf_qp_trajectory.txt 为2050点、888.298362秒，SHA256=8f885a6daae4b754d9aff7f8588493636c0a85e6e94500e2c83527bd2196697c。
+- 现有Headless --cdf-inspect --linear-input 按原多圈角直线插值、原ABB符号、实际ABB4600/burnner模型检查：0.00025rad的117889个采样位置通过；0.0001rad检查全部2049段，检出1段state_in_collision。诊断工具现会打印首个无效采样、原段号及时间，不改变采样或检测算法。
+- 问题是原点1178→1179（516.229036→516.737332秒），51/189处，即516.366195238秒。导出的中间姿态重新建立独立场景、恢复与用户EXE一致的DLL后仍state_in_collision，起终相同见证姿态都无效。属于CDF机器人—工件检测器碰撞，非限位；并非完全无碰撞。另default_collision SceneAll报告相邻Link5/Link6接触，未隐藏/修改其过滤。
+- 报告与最小复现：外层 results/trajectory_check_20261011，含validation.json、README、segment_1178_1179.txt、collision_witness.txt和日志。仅核验原文件，未重新优化或覆盖原始轨迹；有限采样通过不等价于连续无碰撞证明。
+- Release/Debug主程序构建通过；两配置场景系统、语言缓存、主题和架构回归各4/4通过。Headless诊断两配置构建通过，负例返回1为预期；Debug有预编译OMPL PDB缺失的LNK4099告警。一次Release Headless部署被本轮原窗口占用lib_coacd/tbb阻止，结束本轮进程后重建成功；其部署会覆盖这两个DLL，已恢复用户原程序同版DLL并复验碰撞见证。未交付这两项依赖变动。
+- 用户EXE先备份到外层build/backups/distance-before-fix-20261011，再同步到build/Release/bin；短构建目录C:/b/rs105-merge/Release/bin同版SHA256=B81B637944F7B5044D30D92DAFB0785EAEF51D72ED45E16DF72C72DA2DD21C44。用户部署入口 --smoke-exit-ms 1500 退出0。源文件UTF-8/CRLF、根仓和SMRobotMotionPlanning子仓diff检查通过；原用户轨迹SHA未变。
+
+
+## 2026-10-12 Trajectory Transform 与逐点最近距离图
+
+- 领域新增 ProjectTrajectoryControlPointEditor::transformCartesianTrajectory / serializeCartesianMatrices、MotionPlanningProjectStore::removePlan 和 ProjectPlanningSceneSnapshot::nearestDistance。Qt负责输入、选中、后台任务和原子保存；文档修改统一mutateProject，SDK及APF/CDF算法、碰撞过滤未变，无新依赖。
+- Motion Planning第三页Trajectory Transform，与Basic共享选中的Cartesian计划，支持两种格式导入后自动显示点、删除、整体变换和矩阵TXT导出。变换T'=A*T，R=Rz*Ry*Rx，绕世界原点依次固定X/Y/Z旋转、最后沿世界轴平移；输入mm/deg，内部m/rad。保留点顺序、时间和已有速度字段，清除旧关节解/多IK/图及关联CDF初始解。导出为四行4x4（平移mm）+秒时间+空行；不包含12列工艺字段。窄侧栏允许横向滚动，避免按钮/文字右侧永久裁切。
+- 验证发现原parseGenericMatrixText把矩阵后的时间戳归给下一点，首点/第二点重复0且末点时间丢失。现在按首个数据行识别前置或后置时间，保留无时间矩阵格式；增加两种时间布局、单位、非交换旋转、位置/姿态一致变换、元数据、旧IK失效、失败不部分提交、矩阵往返和精准删除测试。未重新计算或覆盖历史用户轨迹。
+- Basic新增“绘制最近距离变化图”。动态播放保存每个实际处理的原始点runtime角度及本次独立碰撞快照；停止后按钮在后台逐点查距（可取消），不将精确距离查询加入播放关键路径。检测范围沿用播放检测器，图/文件明确检测器id、轨迹名、快照时间、完整/部分点数。碰撞=0mm非负几何间距而非穿透深度；无效=NaN/折线断开，任何检测器失败不冒充有效最小值。弹窗可导出TXT，含1起点序号、原时间、mm距离、有效/碰撞状态、检测器和runtime关节角。保留turn与既有ABB符号映射。查询并非渲染帧抽样，也不是段间连续无碰撞认证。
+- Release/Debug主程序及ProcessPoseImportTests、Headless构建通过；两配置相关4/4回归通过（导入、导入/变换、架构边界、语言服务）。实际附件234点和11111矩阵749点的所有点变换/导出再导入均通过。Debug存在原预编译OMPL的LNK4099 PDB告警。
+- 原MainWindow诊断新增显式--profile-trajectory-transform和--profile-nearest-distance-plot，未用简化窗口替代。Release两格式导入/变换/导出/删除通过，位置最大误差2.32e-15m、旋转矩阵1.19e-15、时间误差0；Debug附件234点同样通过。实际CDF前20点播放两配置均完成、20/20距离有效、TXT行数一致、图窗截图通过。Release9.742秒/P95=35ms，Debug31.711秒/P95=130ms（5秒预览目标）；不据此宣称长轨迹加速或Debug流畅性。已知碰撞见证在新最近距离API下正确为0/碰撞=1，非有限和错误维度拒绝/NaN。
+- 证据：外层build/trajectory-tools-20261012，含原窗口JSON、截图、导出矩阵/距离TXT、碰撞见证日志；构建/ctest日志在C:/b/rs105-merge/trajectory-tools-*.log。UTF-8/CRLF及各仓diff检查通过。
+- 用户旧EXE备份在外层build/backups/trajectory-tools-before-20261012，新Release同步外层build/Release/bin及C:/b/rs105-merge/Release/bin。SHA256=034CABF644137E43A86CA01107924AE471FBA77199CFA78333ACA194980773D9。Release全部SDK DLL与用户入口核对一致，未交付依赖替换；未终止用户进程。
+
+
+## 2026-10-12 最近距离图零刻度线
+
+- 仅调整MotionPlanningEditorWidget.cpp的绘图：最近距离图纵轴始终包含0，加粗高对比度虚线及“0 mm”标签，避让临近普通刻度；深浅主题使用不同对比色。喷涂曲线与距离查询/数据导出不变。
+- Release/Debug构建通过；原MainWindow 20点完整播放、距离查询与TXT导出通过，截图nearest-zero-release.json.distances.png确认零线清晰可见。证据在外层build/trajectory-tools-20261012；UTF-8/CRLF、diff检查通过。
+- 用户旧程序PID49956仍在运行，未终止或覆盖；新版同时位于C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe及外层build/Release/bin/RobotQtViewer_ZeroLinerx64.exe，SHA256=E2B8304D3FDB90FA83B1B56E851FA7934F35A59B914C127502079E3FF9517763。
+
+## 2026-10-12 CDF FANUC LS 导出
+
+- 完成：CDF 新增“导出发那科机器人程序（.LS）...”按钮，全部最终关节点经独立实际 TCP FK 转为 XYZ/WPR；模板 UF2/UT1、400mm/sec、CNT100、N U T/零圈数，ASCII/CRLF/原子保存。新增领域 API，未增加依赖或修改原优化/导出语义。
+- Release/Debug 主程序和新回归目标构建通过，两配置各 3/3 导出/导入回归通过。正常启动原 MainWindow 的 CDF 可见按钮导出两配置均通过：4528/4528 点，位置最大误差 8.35237e-7 m、姿态 1.81050e-5 rad（三位小数序列化）；截图与 JSON 为外层 build/fanuc-main-visible-{release,debug}.*。
+- 原诊断脚本可能点击隐藏页面；本轮诊断增加真实工作台 action 和按钮可见性核验。显式 --profile-project 路径下工作台动作禁用，最终改用正常启动加载已有 ABB 项目的原窗口验证，没有改变产品工作台切换逻辑。
+- 发布至 C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe 与外层 build/Release/bin/RobotQtViewerrx64.exe，旧 EXE 保存在 build/backups/fanuc-export-20261012；两入口 SHA256=8C783D19E6630D737689F74AA1285E34D4CA774559315BF18137AEED39AAB42B。桌面 JHA.LS 原模板未修改。
+- 使用限制：当前为笛卡尔目标格式导出，FANUC CONFIG/turn 沿用模板而非机器人逆解；UF2/UT1 需匹配实际场景，控制器 L/CNT 路径与原 CDF 关节插值不同。未宣称 FANUC 编译或实机无碰撞已验证，详见 docs/cdf_fanuc_export.md。
+
+
+## 2026-10-12 Project Assembly / Move Base 无响应修复
+
+- 根因：装配工作台的 panel resolver 随选择在 statusPanel/taskWidget 间切换；初始化只注册 statusPanel，后来 setCurrentWidget(taskWidget) 报 not contained in stack。未纳入布局的子控件仍可能 isVisible=true，不能据此判定可操作。此外 MoveRobotBase/MoveSceneObject 未进入显式打开/置前任务 dock 的菜单分支。
+- MainWindow::updateTaskPanel 在选择前按需注册 resolver 返回的新页面；Move Base/Move Object 复用已有任务面板显示入口。SceneExplorerWorkbenchLifecycle 创建备用任务页后先隐藏，避免未注册时覆盖状态页。变换草稿、Apply 的 SceneEntityWorkflow、文档 dirty、预览和 Cancel 机制不变；无依赖或领域 API 改动。
+- 新增显式 --profile-move-base <report.json> 原 MainWindow 诊断（沿用 PlaybackWindowProfile 文件），直接触发真实树右键菜单，不使用简化窗口。断言必须是 QStackedWidget 已注册且当前页面，并检查几何尺寸和可见性；覆盖未选中、右键、隐藏 dock 恢复、100mm 预览/取消/Apply/恢复、Motion Planning 往返、burnner 和 ABB 切换。测试不保存项目文件。
+- Release/Debug 主程序构建通过；两配置原窗口各 17/17 检查通过，截图确认编辑器完整布局，日志无 not contained in stack。两配置架构边界、场景树投影、工作台生命周期、文档事务、插件回归各 5/5 通过。
+- 证据：外层 build/move-base-{baseline,release,debug}.json、.json.png、.log、.err.log；复现脚本 build/test_move_base.ps1；构建及 ctest 日志在 C:/b/rs105-merge/move-base-*.log。
+- 已同步 C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe 与外层 build/Release/bin/RobotQtViewerrx64.exe；SHA256=8FA8DA16A2981930C8278062263D20C1E2983549A5F3DB78041935A38BD5C9B3。旧 EXE 保存在外层 build/backups/move-base-before-20261012，未终止用户进程。原有 FANUC/CDF/轨迹等未提交修改均保留。
+
+## 2026-10-12 外部 Freeform APF/QP 自动流程交付
+
+- 外部目录 C:/Users/14390/Desktop/Freeform_APF_QP，入口run.cmd。复用实际ProjectScene、全逆解、分层图Top-30/Top-1和原APF/一轮CDF-QP；本轮未改主项目业务源码或SDK，新增外部C++入口与Python编排/配准/图表/原主窗口录像。依赖当前源码、SDK和已有Python科学计算环境，不是独立便携软件包。
+- 姿态按最新用户指示工具局部Z轴±90度对比：−90为2400/2400、各8解，+90为0/2400。工件按0.001缩放，约平移(1.2,.6,.6)m、RPY(-90,0,-90)度；2000曲面点间距约1mm，400引入引出点约100mm，全部保留。
+- 原APF/QP输出13770点，未达10mm。用户明确只要求无碰撞。独立0.0001rad采样曾检出7个碰撞状态，故未直接交付原stage_2。新增外部DenseRepair：保守URDF力臂界及包围球一阶速度/Taylor余项界，实际FK导数有限差分误差4.94e-11m；自适应距离检查发现13段需修复，全部小幅正弦平方微扰成功，影响91点、最大0.00572958度。完整自适应复验通过，保守间距下界0.0100098mm。
+- 最终2556864个独立密采样状态、0碰撞；项目模型限位/速度/离散加速度违规均0，起终TCP误差1.57e-9m/1.01e-9rad。节点最小间距0.596690mm（不是整段最小距离），10mm软目标未达且未伪报成功。最终时长4289.127s。中间TCP最大位置偏移99.3348mm、法向偏差68.3798度：当前未约束中间完整位姿，不能称为保法向工艺轨迹。
+- FANUC导出13770点逐点反序列化，XYZ误差≤8.40e-7m、WPR误差≤1.85e-5rad；播放JSON与stored-sign TXT一致。UF2/UT1、400mm/s、CNT100、CONFIG沿用原模板，未做控制器编译或其L/CNT插补碰撞复验。
+- 原MainWindow完整动态播放13770/13770点，无碰撞或无效状态；13563ms、P95帧49ms。MP4录自该窗口，取帧核对真实机器人/工件/轨迹，滚轮仅缩小展示视图，不改几何。原桌面输入哈希未变。Release/Debug入口均构建通过，实际Top-1 FK输出哈希一致；Debug仅做FK验证，未重复昂贵规划。Debug原OMPL PDB告警保留。
+- CMake外部目标临时钩子已清除，原GUI SHA256=8FA8DA16A2981930C8278062263D20C1E2983549A5F3DB78041935A38BD5C9B3。completed.json绑定输入/模型/算法及输出哈希，run.py --no-view --no-record实测复用通过。之前未提交的产品修改全部保留。
+- 主要证据：output/final/{adaptive_motion_validation.json,validation.json,export_validation.json,shape_validation.json,main_window_playback.json,robot_animation.mp4}，output/{polish.log,cache_replay.log,source_manifest.json}。失败旧验收存validation_before_dense_repair.json；stage_*.txt仅供对照，交付使用final_joint_angles.txt。

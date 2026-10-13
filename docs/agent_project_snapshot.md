@@ -384,3 +384,63 @@
 - 用户纠正本轮复现输入为桌面11111.txt，终止本轮自行启动的234点诊断PID3088，改用11111原完整流程；失败日志仍是234点，但不以其结果冒充用户指定749点复现。
 
 - 完成：11111原主窗口749点Top-1以10mm/一轮QP运行1998.876秒，输出4528点；最终/APF独立0.00025rad分别137279/148061样本，0碰撞/0限位，最终速度/离散加速度通过。最小最终节点间距0.723814mm，10mm未达，partial保留。Release8/8、Debug6/6；两配置构建/启动通过。外层build/Release/bin EXE已备份同步，SHA256 AF3BCDDE3A56E7229B0938AC9024DBA7DE11350AB606659CE918161B6CEF67D3；成果results/11111_Top1_10mm_20261008，详见audit。
+
+## 2026-10-11 播放中的碰撞距离线丢失
+
+- main/33fac4a，开始时工作树干净。用户确认丢失的是主视图最近点连线/数字。
+- 播放独立快照仍逐源点做碰撞检查；主视图 ProjectScene 仅使用 SDK Continuous，SDK 另有 ManualNearest / PendingManualRefresh。先以原 MainWindow 验证启用检测后的最近点状态，再在公共场景呈现层按显式可见/距离请求调用 SDK 最近点入口。
+- 不修改 SDK、APF/CDF、关节符号、turn、轨迹或播放逐点验收；不自动开启用户关闭的碰撞检测，不恢复每个源点重复主视图查询。
+- 验证：原窗口现有4528点CDF产物，启用/关闭检测的基线与修复对照，距离线实际提交及数值变化、Release/Debug构建、相关回归、两入口部署核对。
+
+- 完成：主视图按显式可见最近点请求调用SDK ManualNearest；原MainWindow 4528点验证全部476帧都有距离线，较原Continuous的0帧恢复；Release/Debug构建、各4/4相关回归通过，用户EXE同步并备份。用户2050点额外原窗口播放出现呈现等待，未冒充完整通过。
+- 新增核验发现：用户更正的桌面ABB4600_urdf_apf_cdf_qp_trajectory.txt在0.00025rad通过、0.0001rad检出1178→1179段（516.366195秒）机器人—工件碰撞，独立见证姿态复现。结果见外层results/trajectory_check_20261011；仅修显示与诊断输出，未改规划/过滤或原轨迹。交付EXE SHA=B81B637944F7B5044D30D92DAFB0785EAEF51D72ED45E16DF72C72DA2DD21C44。
+
+
+## 2026-10-12 轨迹变换与逐点最近距离图
+
+- main/33fac4a；保留上轮ProjectScene、原窗口诊断、Headless及文档未提交改动。新增Trajectory Transform第三页和Basic最近距离图，不改变APF/CDF、检测过滤和播放呈现节奏。
+- 领域：ProjectMotionPlanning复用导入，整体世界系左乘刚体变换（Rz Ry Rx，先旋转后平移），矩阵mm+秒导出；MotionPlanningCore增加按id删除。变换保留时间/速度并失效旧关节解，经mutateProject通知视图。
+- 最近距离以最近一次播放的独立碰撞快照和逐源点runtime角度为准；播放结束后后台查询，不堵塞播放，不以渲染帧替代源点。碰撞为零几何间距、查询错误NaN、注明检测器及完整/部分记录；不当作段间连续碰撞认证。
+- 验证领域旋转顺序/单位/元数据/矩阵往返/删除、真实场景距离；Release/Debug构建与原MainWindow导入变换导出删除/短轨迹播放曲线。部署前备份、核对SDK DLL，不终止用户进程。
+
+- 完成：新增第三页和距离图/导出，修复矩阵后置时间戳错位；Release/Debug构建及各4/4回归通过，原MainWindow两格式变换和20点距离图验证通过。真实碰撞返回0mm/collision，不伪造负穿透值。详情和证据见本日audit；交付SHA=034CABF644137E43A86CA01107924AE471FBA77199CFA78333ACA194980773D9，两个Release入口已同步，旧EXE已备份。
+
+## 2026-10-12 CDF FANUC LS 导出
+
+- 在 main/33fac4a 上保留既有轨迹变换、距离图、场景最近点和诊断改动。新增领域 FanucTrajectoryExport 和 CDF 按钮，按桌面 JHA.LS 序列化完整最终 TCP。
+- 固定 UF2/UT1、L/400mm/sec/CNT100、模板 N U T 及零 turn；不把 ABB 构型冒充 FANUC 构型，不改变 APF/QP。实际独立 FK、m→mm、RzRyRx WPR、原子保存归相应领域与适配层。
+- 验证计划：Release/Debug 构建与导出回归、原 MainWindow 点击导出全部点/FK 对比、两入口部署，未进行目标控制器编译。
+
+- 完成：CDF 新增“导出发那科机器人程序（.LS）...”按钮，全部最终关节点经独立实际 TCP FK 转为 XYZ/WPR；模板 UF2/UT1、400mm/sec、CNT100、N U T/零圈数，ASCII/CRLF/原子保存。新增领域 API，未增加依赖或修改原优化/导出语义。
+- Release/Debug 主程序和新回归目标构建通过，两配置各 3/3 导出/导入回归通过。正常启动原 MainWindow 的 CDF 可见按钮导出两配置均通过：4528/4528 点，位置最大误差 8.35237e-7 m、姿态 1.81050e-5 rad（三位小数序列化）；截图与 JSON 为外层 build/fanuc-main-visible-{release,debug}.*。
+- 原诊断脚本可能点击隐藏页面；本轮诊断增加真实工作台 action 和按钮可见性核验。显式 --profile-project 路径下工作台动作禁用，最终改用正常启动加载已有 ABB 项目的原窗口验证，没有改变产品工作台切换逻辑。
+- 发布至 C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe 与外层 build/Release/bin/RobotQtViewerrx64.exe，旧 EXE 保存在 build/backups/fanuc-export-20261012；两入口 SHA256=8C783D19E6630D737689F74AA1285E34D4CA774559315BF18137AEED39AAB42B。桌面 JHA.LS 原模板未修改。
+- 使用限制：当前为笛卡尔目标格式导出，FANUC CONFIG/turn 沿用模板而非机器人逆解；UF2/UT1 需匹配实际场景，控制器 L/CNT 路径与原 CDF 关节插值不同。未宣称 FANUC 编译或实机无碰撞已验证，详见 docs/cdf_fanuc_export.md。
+
+
+## 2026-10-12 Project Assembly / Move Base 无响应修复
+
+- 根因：装配工作台的 panel resolver 随选择在 statusPanel/taskWidget 间切换；初始化只注册 statusPanel，后来 setCurrentWidget(taskWidget) 报 not contained in stack。未纳入布局的子控件仍可能 isVisible=true，不能据此判定可操作。此外 MoveRobotBase/MoveSceneObject 未进入显式打开/置前任务 dock 的菜单分支。
+- MainWindow::updateTaskPanel 在选择前按需注册 resolver 返回的新页面；Move Base/Move Object 复用已有任务面板显示入口。SceneExplorerWorkbenchLifecycle 创建备用任务页后先隐藏，避免未注册时覆盖状态页。变换草稿、Apply 的 SceneEntityWorkflow、文档 dirty、预览和 Cancel 机制不变；无依赖或领域 API 改动。
+- 新增显式 --profile-move-base <report.json> 原 MainWindow 诊断（沿用 PlaybackWindowProfile 文件），直接触发真实树右键菜单，不使用简化窗口。断言必须是 QStackedWidget 已注册且当前页面，并检查几何尺寸和可见性；覆盖未选中、右键、隐藏 dock 恢复、100mm 预览/取消/Apply/恢复、Motion Planning 往返、burnner 和 ABB 切换。测试不保存项目文件。
+- Release/Debug 主程序构建通过；两配置原窗口各 17/17 检查通过，截图确认编辑器完整布局，日志无 not contained in stack。两配置架构边界、场景树投影、工作台生命周期、文档事务、插件回归各 5/5 通过。
+- 证据：外层 build/move-base-{baseline,release,debug}.json、.json.png、.log、.err.log；复现脚本 build/test_move_base.ps1；构建及 ctest 日志在 C:/b/rs105-merge/move-base-*.log。
+- 已同步 C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe 与外层 build/Release/bin/RobotQtViewerrx64.exe；SHA256=8FA8DA16A2981930C8278062263D20C1E2983549A5F3DB78041935A38BD5C9B3。旧 EXE 保存在外层 build/backups/move-base-before-20261012，未终止用户进程。原有 FANUC/CDF/轨迹等未提交修改均保留。
+
+
+## 2026-10-12 外部 Freeform APF/QP 脚本（已完成）
+
+- 用户要求在项目外创建脚本，输入 freeform_trajectory_paq.txt 与毫米制 A.STL，复用当前 ABB4600/实际喷枪 TCP、全逆解、Top-1、APF/一轮QP，输出原主窗口动画、距离图、FANUC和关节TXT。最新姿态要求是工具局部 Z 轴正/负90度择可行方向，撤销此前Rx/Ry取反。
+- 独立目录 C:/Users/14390/Desktop/Freeform_APF_QP，未修改本轮主项目业务源代码。通过CMAKE_PROJECT_INCLUDE外部钩子添加FreeformPlanner目标，Release/Debug构建通过，不部署或替换SDK DLL。原主程序只通过独立SMROBOT_CONFIG_ROOT载入场景。
+- 确认 −90° 的2400/2400点均有8个有效解（19200），+90°为0/2400；全局Top-30及Top-1已生成。实际FK复验Top-1最大位置9.9278e-7m、角度7.4012e-7rad，Release/Debug一致。数值多起点沿用GUI搜索范围，不宣称数学穷尽。
+- 工件0.001缩放；刚体对齐约平移(1.2,.6,.6)m、RPY(-90,0,-90)度。2000个表面点间距0.9855至1.0023mm；400个引入/引出点约100mm，全部保留。
+- 完成13770点、868个APF区间、一轮QP。原0.00025rad验收遗漏7个加密碰撞样本；外部DenseRepair利用URDF运动位移界和实际距离查询，找到13个需要补修的区间，全部以幅度0.0001rad的正弦平方扰动修复（91个邻近点），原业务源码未修改。最终整段自适应验收通过，0.0001rad密采样2556864状态、0碰撞，项目限位/速度/离散加速度违规均0。
+- 用户确认无碰撞即可，10mm为可选软目标。节点最小间距0.596690mm；整段几何位移界保守下界0.0100098mm。起终完整TCP位置/角度误差1.57e-9m/1.01e-9rad。中间位姿未锁定，最大位置偏移99.3348mm、法向偏差68.3798度，不能称为严格保法向/喷距的工艺轨迹。验收范围是ABB4600含喷枪对A.STL及关节直线插值，不含FANUC控制器L/CNT插补。
+- 最终TXT/LS/距离图/分阶段对比/原MainWindow动画均在外部output/final。LS全部13770点回读FK通过；原窗口播放13563ms，13770/13770点完整、碰撞/无效0，P95帧间隔49ms，录像截图核对通过。最新Release/Debug入口构建及Top-1实际FK一致通过；完成缓存复用测试，默认run.cmd不重复优化。CMAKE_PROJECT_INCLUDE已清除，原主GUI哈希保持8FA8DA16…C9B3，保留此前所有未提交修改。
+- GUI兼容副本仅将工件/检测器id映射为默认burnner/cdf_abb4600_burnner_detector，源仍为A.STL，几何/变换/过滤保持不变；已在原MainWindow启动检查2机器人/1检测器和工件显示。
+
+## 2026-10-13 Freeform 内表面喷射方向修正（进行中）
+
+- 用户指出上一版喷枪从外侧喷射。实际drawSprayRange/sprayMeasurement使用TCP +Z，而输入+Z与A.STL内侧面法向一致、背离最近表面；此前绕Z的切向修正未翻转Z。保留已校准工件刚体位置，改用R_original*Rz(±90)*Rx(180)，24点诊断+90全部可解、−90无法完整覆盖。
+- 所有者ProjectMotionPlanning增加可选TCP工艺可行性回调，空回调保留当前UI行为；APF、平滑、QP的统一有序路径验收执行回调。外部脚本加入实际网格内侧/喷射朝向条件，并在密采样及最终验收重查。主场景/动画仍用原MainWindow。
+- 先保留上一版完整输出及输入快照，重跑全逆解/Top1/APF/一轮QP；无碰撞是硬条件，10mm可选。最终还需确认扫描区喷枪位于内侧且+Z朝向内表面，输出TXT/LS/距离图及原窗口动画。本轮尚未取得新结果。

@@ -395,6 +395,11 @@ int main(int argc, char* argv[])
             });
         }
 
+        const auto moveBaseReport = argumentValue(argc, argv, "--profile-move-base");
+        if(!moveBaseReport.empty()) {
+            startMoveBaseWindowProfile(window, QString::fromStdString(moveBaseReport));
+        }
+
         const auto playbackFile = argumentValue(argc, argv, "--profile-playback");
         if(!playbackFile.empty()) {
             startPlaybackWindowProfile(window, QString::fromStdString(playbackFile),

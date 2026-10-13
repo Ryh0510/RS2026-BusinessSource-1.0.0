@@ -1,5 +1,10 @@
 #include "PlaybackWindowProfile.h"
 
+#include "SceneExplorerModuleController.h"
+#include "SceneExplorerTaskWidget.h"
+#include "SceneExplorerWidget.h"
+#include "ToolTransformEditorWidget.h"
+
 #include <RobotViewport.h>
 #include <QAction>
 #include <QApplication>
@@ -7,24 +12,33 @@
 #include <QComboBox>
 #include <QDir>
 #include <QDialog>
+#include <QDockWidget>
+#include <QEventLoop>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QMenu>
 #include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QStackedWidget>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 #include <algorithm>
 #include <iostream>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -55,6 +69,66 @@ namespace
         bool m_handled = false;
     };
 
+    struct ProfilePose { Eigen::Matrix4d pose = Eigen::Matrix4d::Identity(); double time = 0; };
+
+    // Independent reader restricted to the two user fixtures and the exported matrix layout.
+    std::vector<ProfilePose> readProfilePoses(const QString& path)
+    {
+        QFile file(path);
+        if(!file.open(QIODevice::ReadOnly)) return {};
+        std::vector<ProfilePose> points;
+        ProfilePose point;
+        int row = 0;
+        for(const auto& line : QString::fromUtf8(file.readAll()).split('\n', Qt::SkipEmptyParts)) {
+            const auto text = line.trimmed();
+            if(text.isEmpty() || text.startsWith('#')) continue;
+            const auto fields = text.split(QRegularExpression(QStringLiteral("\\s+")));
+            QVector<double> values;
+            for(const auto& field : fields) {
+                bool ok = false;
+                const double value = field.toDouble(&ok);
+                if(!ok || !std::isfinite(value)) return {};
+                values.push_back(value);
+            }
+            if(values.size() == 12 && row == 0) {
+                ProfilePose pose;
+                pose.pose.block<3,1>(0,3) = Eigen::Vector3d(values[0],values[1],values[2]) * .001;
+                pose.pose.block<3,3>(0,0) = Eigen::Quaterniond(values[3],values[4],values[5],values[6]).normalized().toRotationMatrix();
+                pose.time = values[9];
+                points.push_back(pose);
+            } else if(values.size() == 4 && row < 4) {
+                for(int col = 0; col < 4; ++col) point.pose(row,col) = values[col];
+                ++row;
+            } else if(values.size() == 1 && row == 4) {
+                point.pose.block<3,1>(0,3) *= .001;
+                point.time = values[0];
+                points.push_back(point);
+                row = 0;
+            } else return {};
+        }
+        return row == 0 ? points : std::vector<ProfilePose>{};
+    }
+
+    class TransformSettingsResponder : public QObject
+    {
+    public:
+        bool eventFilter(QObject* object, QEvent* event) override
+        {
+            if(event->type() == QEvent::Show && object->objectName() == QStringLiteral("trajectoryTransformDialog")) {
+                if(auto* dialog = qobject_cast<QDialog*>(object)) {
+                    QTimer::singleShot(0, dialog, [dialog]() {
+                        const double values[] = {100, -200, 300, 90, 90, 0};
+                        for(int i = 0; i < 6; ++i) {
+                            if(auto* field = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("transformValue%1").arg(i))) field->setValue(values[i]);
+                        }
+                        dialog->accept();
+                    });
+                }
+            }
+            return QObject::eventFilter(object, event);
+        }
+    };
+
     class IkSettingsResponder : public QObject
     {
     public:
@@ -81,6 +155,14 @@ namespace
         QPointer<QPushButton> play;
         QPointer<QWidget> editor;
         bool started = false;
+        bool profileDistance = false;
+        int nearestFrames = 0;
+        int overlayFrames = 0;
+        int missingNearestFrames = 0;
+        double minDistance = std::numeric_limits<double>::infinity();
+        double maxDistance = 0.0;
+        QJsonObject lastNearestStates;
+        QJsonObject lastDetectorResults;
     };
 
     QPushButton* button(QWidget& widget, const QString& text)
@@ -109,6 +191,173 @@ namespace
     }
 }
 
+// Opt-in regression in the real MainWindow. No project file is saved.
+void startMoveBaseWindowProfile(QWidget& window, const QString& reportFile)
+{
+    window.showMaximized();
+    auto* ready = new QTimer(&window);
+    auto elapsed = std::make_shared<QElapsedTimer>();
+    elapsed->start();
+    QObject::connect(ready, &QTimer::timeout, &window, [&window, reportFile, ready, elapsed]() {
+        QAction* assembly = nullptr;
+        for(auto* action : window.findChildren<QAction*>()) {
+            if(action->actionGroup() && action->text() == QStringLiteral("Project Assembly")) {
+                assembly = action;
+                break;
+            }
+        }
+        auto* explorer = window.findChild<SceneExplorerWidget*>();
+        auto* controller = window.findChild<robot_qt_viewer::SceneExplorerModuleController*>();
+        auto* task = window.findChild<SceneExplorerTaskWidget*>();
+        auto* viewport = window.findChild<RobotViewport*>();
+        if(!assembly || !assembly->isEnabled() || !explorer || !controller || !task ||
+            !viewport || explorer->treeWidget()->topLevelItemCount() == 0) {
+            if(elapsed->elapsed() > 60000) {
+                ready->stop();
+                fail("Move Base: original workbench did not become ready");
+            }
+            return;
+        }
+        ready->stop();
+        using namespace robot_qt_viewer;
+        QJsonArray checks;
+        bool passed = true;
+        const auto check = [&](const char* name, bool ok) {
+            checks.append(QJsonObject{{"check", QString::fromLatin1(name)}, {"passed", ok}});
+            passed = passed && ok;
+        };
+        const auto settle = []() {
+            QEventLoop loop;
+            QTimer::singleShot(200, &loop, &QEventLoop::quit);
+            loop.exec();
+        };
+        auto* tree = explorer->treeWidget();
+        tree->setCurrentItem(nullptr);
+        controller->refreshViewModel();
+        assembly->trigger();
+        settle();
+        check("unselected assembly task is hidden", !task->isVisible());
+        auto* editor = task->findChild<ToolTransformEditorWidget*>();
+        auto* apply = task->findChild<QPushButton*>(QStringLiteral("sceneExplorerApplyTransformButton"));
+        auto* cancel = task->findChild<QPushButton*>(QStringLiteral("sceneExplorerCancelTransformButton"));
+        QDockWidget* dock = nullptr;
+        for(QWidget* parent = task->parentWidget(); parent; parent = parent->parentWidget()) {
+            if((dock = qobject_cast<QDockWidget*>(parent))) break;
+        }
+        const auto findItem = [&](const QString& kind, const QString& id = QString()) {
+            for(QTreeWidgetItemIterator it(tree); *it; ++it) {
+                if((*it)->data(0, kSceneExplorerRoleType).toString() == kind &&
+                    (id.isEmpty() || (*it)->data(0, kSceneExplorerRoleId).toString() == id)) return *it;
+            }
+            return static_cast<QTreeWidgetItem*>(nullptr);
+        };
+        const auto openMoveMenu = [&](QTreeWidgetItem* item, const QString& label) {
+            if(!item) return false;
+            tree->scrollToItem(item);
+            auto triggered = std::make_shared<bool>(false);
+            // Enter the actual context-menu handler without a preceding left click.
+            QTimer::singleShot(0, tree, [triggered, label]() {
+                if(auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                    for(auto* action : menu->actions()) {
+                        if(action->text() == label && action->isEnabled()) {
+                            action->trigger();
+                            *triggered = true;
+                            break;
+                        }
+                    }
+                    menu->close();
+                }
+            });
+            tree->customContextMenuRequested(tree->visualItemRect(item).center());
+            settle();
+            return *triggered;
+        };
+        const auto panelDisplayed = [&]() {
+            auto* stack = qobject_cast<QStackedWidget*>(task->parentWidget());
+            return stack && stack->indexOf(task) >= 0 && stack->currentWidget() == task &&
+                task->isVisible() && task->width() > 200 && task->height() > 200 &&
+                editor && editor->isVisible() && apply && apply->isVisible();
+        };
+        check("original controls available", editor && apply && cancel && dock);
+        check("direct right-click Move Base action", openMoveMenu(findItem(kSceneExplorerNodeRobot), QStringLiteral("Move Base...")));
+        check("direct right-click displays transform panel", panelDisplayed());
+        if(dock) dock->hide();
+        check("hidden panel Move Base action", openMoveMenu(findItem(kSceneExplorerNodeRobot), QStringLiteral("Move Base...")));
+        check("Move Base restores hidden panel", dock && dock->isVisible() && panelDisplayed());
+        if(passed) {
+            const QString robotId = controller->currentNode().id;
+            std::vector<std::string> joints;
+            for(QTreeWidgetItemIterator it(tree); *it; ++it) {
+                if((*it)->data(0, kSceneExplorerRoleType).toString() == kSceneExplorerNodeJoint &&
+                    (*it)->data(0, kSceneExplorerRoleId).toString() == robotId) {
+                    const auto name = (*it)->data(0, kSceneExplorerRoleName).toString().toStdString();
+                    if(viewport->robotForwardKinematics(robotId, {name}, false)) {
+                        joints = {name};
+                        break;
+                    }
+                }
+            }
+            const auto position = [&]() -> Eigen::Vector3d {
+                const auto fk = viewport->robotForwardKinematics(robotId, joints, false);
+                return fk ? Eigen::Vector3d(fk({0.0}).translation()) : Eigen::Vector3d::Constant(1e20);
+            };
+            check("runtime FK available", !joints.empty());
+            const auto original = editor->transform();
+            const Eigen::Vector3d originalPosition = position();
+            const auto fields = editor->findChildren<QDoubleSpinBox*>();
+            check("six transform fields", fields.size() == 6);
+            if(fields.size() == 6) {
+                fields.front()->setValue(original.x + 0.1);
+                settle();
+                check("preview moves runtime by 100mm", (position() - originalPosition - Eigen::Vector3d(0.1, 0, 0)).norm() < 1e-8);
+                cancel->click();
+                settle();
+                check("cancel restores document and runtime", std::abs(editor->transform().x - original.x) < 1e-8 && (position() - originalPosition).norm() < 1e-8);
+                fields.front()->setValue(original.x + 0.1);
+                apply->click();
+                settle();
+                fields.front()->setValue(original.x + 0.2);
+                cancel->click();
+                settle();
+                check("apply commits document and runtime", std::abs(editor->transform().x - original.x - 0.1) < 1e-8 && (position() - originalPosition - Eigen::Vector3d(0.1, 0, 0)).norm() < 1e-8);
+                fields.front()->setValue(original.x);
+                apply->click();
+                settle();
+                check("original base restored", std::abs(editor->transform().x - original.x) < 1e-8 && (position() - originalPosition).norm() < 1e-8);
+            }
+            QAction* planning = nullptr;
+            for(auto* action : window.findChildren<QAction*>()) {
+                if(action->actionGroup() && action->text() == QStringLiteral("Motion Planning")) {
+                    planning = action;
+                    break;
+                }
+            }
+            check("Motion Planning action available", planning && planning->isEnabled());
+            if(planning && planning->isEnabled()) {
+                planning->trigger();
+                settle();
+                check("assembly editor hidden in other workbench", planning->isChecked() && !task->isVisible());
+                assembly->trigger();
+                settle();
+                check("assembly editor restored after switching back", assembly->isChecked() && panelDisplayed());
+            }
+            if(auto* fixture = findItem(kSceneExplorerNodeRobot, QStringLiteral("burnner"))) {
+                check("Move Base can target fixture", openMoveMenu(fixture, QStringLiteral("Move Base...")) &&
+                    controller->currentNode().id == QStringLiteral("burnner") && panelDisplayed());
+                check("Move Base can return to robot", openMoveMenu(findItem(kSceneExplorerNodeRobot, robotId), QStringLiteral("Move Base...")) &&
+                    controller->currentNode().id == robotId && panelDisplayed());
+            }
+        }
+        const QJsonObject report{{"passed", passed}, {"checks", checks}};
+        QFile output(reportFile);
+        if(!output.open(QIODevice::WriteOnly) || output.write(QJsonDocument(report).toJson()) < 0) passed = false;
+        window.grab().save(reportFile + QStringLiteral(".png"));
+        std::cout << "Main-window Move Base: " << QJsonDocument(report).toJson(QJsonDocument::Compact).constData() << std::endl;
+        QTimer::singleShot(0, qApp, [passed]() { qApp->exit(passed ? 0 : 2); });
+    });
+    ready->start(250);
+}
+
 // Accepts a generic trajectory JSON. The driver uses the
 // original MainWindow, import button, editor, controller and rendered viewport.
 void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
@@ -123,7 +372,8 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         .value(QStringLiteral("trajectory")).toObject()
         .value(QStringLiteral("points")).toArray().size();
     if(sourcePoints == 0 && !qApp->arguments().contains(QStringLiteral("--profile-cartesian-import")) &&
-        !qApp->arguments().contains(QStringLiteral("--profile-cdf-top1"))) {
+        !qApp->arguments().contains(QStringLiteral("--profile-cdf-top1")) &&
+        !qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform"))) {
         fail("trajectory JSON has no source points");
         return;
     }
@@ -136,7 +386,7 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         fail("original viewport is unavailable");
         return;
     }
-    QObject::connect(viewport, &QOpenGLWidget::frameSwapped, &window, [state]() {
+    QObject::connect(viewport, &QOpenGLWidget::frameSwapped, &window, [state, viewport]() {
         if(!state->started) {
             return;
         }
@@ -145,6 +395,28 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             state->frameGaps.push_back(now - state->lastFrame);
         }
         state->lastFrame = now;
+        if(state->profileDistance) {
+            bool nearest = false, overlay = false;
+            for(const auto& detector : viewport->collisionDetectors()) {
+                state->lastNearestStates[QString::fromStdString(detector.id)] =
+                    QString::fromStdString(detector.nearest.state + ": " + detector.nearest.reason);
+                state->lastDetectorResults[QString::fromStdString(detector.id)] = QJsonObject{
+                    {"inCollision", detector.inCollision}, {"contactCount", int(detector.contactCount)},
+                    {"firstPairA", QString::fromStdString(detector.firstPairA)},
+                    {"firstPairB", QString::fromStdString(detector.firstPairB)}};
+                if(detector.id != "cdf_abb4600_burnner_detector" ||
+                    !detector.enabled || !detector.visible || !detector.valid) { continue; }
+                overlay = overlay || detector.frameOverlayNearestCount > 0;
+                if(detector.nearest.valid && std::isfinite(detector.nearest.distance)) {
+                    nearest = true;
+                    state->minDistance = std::min(state->minDistance, detector.nearest.distance);
+                    state->maxDistance = std::max(state->maxDistance, detector.nearest.distance);
+                }
+            }
+            state->nearestFrames += nearest ? 1 : 0;
+            state->overlayFrames += overlay ? 1 : 0;
+            state->missingNearestFrames += nearest ? 0 : 1;
+        }
     });
     auto* setupTimeout = new QTimer(&window);
     setupTimeout->setSingleShot(true);
@@ -179,7 +451,7 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         const auto counts = QRegularExpression(QStringLiteral(
             "Collision states: ([0-9]+) / ([0-9]+).*Invalid states: ([0-9]+)")).match(summary);
         const bool allPointsChecked = counts.hasMatch() && counts.captured(2).toInt() == sourcePoints;
-        const QJsonObject result{
+        QJsonObject result{
             {"finished", finished}, {"elapsedMs", double(now)},
             {"sourcePoints", sourcePoints}, {"allPointsChecked", allPointsChecked},
             {"requestedPreviewSeconds", 5.0},
@@ -189,18 +461,69 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             {"heartbeatP95Ms", double(percentile(state->heartbeatGaps, 95))},
             {"heartbeatMaxMs", double(percentile(state->heartbeatGaps, 100))},
             {"summary", summary}};
+        const bool distancePassed = !state->profileDistance ||
+            (state->nearestFrames > 10 && state->overlayFrames == state->nearestFrames &&
+             state->missingNearestFrames == 0 && state->maxDistance - state->minDistance > 1e-6);
+        if(state->profileDistance) {
+            result["distancePassed"] = distancePassed;
+            result["nearestFrames"] = state->nearestFrames;
+            result["overlayFrames"] = state->overlayFrames;
+            result["missingNearestFrames"] = state->missingNearestFrames;
+            result["minDistanceMeters"] = std::isfinite(state->minDistance) ? state->minDistance : -1.0;
+            result["maxDistanceMeters"] = state->maxDistance;
+            result["lastNearestStates"] = state->lastNearestStates;
+            result["lastDetectorResults"] = state->lastDetectorResults;
+        }
+        bool plotPassed = true;
+        if(finished && qApp->arguments().contains(QStringLiteral("--profile-nearest-distance-plot"))) {
+            auto* plotButton = state->editor->findChild<QPushButton*>(QStringLiteral("plotNearestDistances"));
+            plotPassed = plotButton && plotButton->isEnabled();
+            if(plotPassed) {
+                plotButton->click();
+                auto* dialog = state->editor->findChild<QDialog*>(QStringLiteral("nearestDistancePlot"));
+                auto* exportButton = dialog ? dialog->findChild<QPushButton*>(QStringLiteral("exportNearestDistances")) : nullptr;
+                plotPassed = dialog && exportButton;
+                if(plotPassed) {
+                    ImportFileResponder responder(reportFile + QStringLiteral(".distances.txt"));
+                    qApp->installEventFilter(&responder);
+                    exportButton->click();
+                    qApp->removeEventFilter(&responder);
+                    QFile data(reportFile + QStringLiteral(".distances.txt"));
+                    plotPassed = data.open(QIODevice::ReadOnly);
+                    const auto rows = QString::fromUtf8(data.readAll()).split('\n', Qt::SkipEmptyParts);
+                    int count = 0, invalid = 0;
+                    for(const auto& row : rows) {
+                        if(row.startsWith('#') || row.startsWith(QStringLiteral("index"))) continue;
+                        const auto columns = row.split('\t');
+                        if(columns.size() < 7 || columns[0].toInt() != count + 1) { plotPassed = false; break; }
+                        if(columns[3] != QStringLiteral("1")) ++invalid;
+                        ++count;
+                    }
+                    plotPassed = plotPassed && count == sourcePoints && invalid == 0;
+                    result["distanceRows"] = count;
+                    result["invalidDistanceRows"] = invalid;
+                    plotPassed = dialog->grab().save(reportFile + QStringLiteral(".distances.png")) && plotPassed;
+                }
+            }
+            result["distancePlotPassed"] = plotPassed;
+        }
         const auto json = QJsonDocument(result).toJson();
         QFile report(reportFile);
         const bool reportSaved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
         const bool screenshotSaved = window.grab().save(reportFile + QStringLiteral(".png"));
         std::cout << "Main-window playback profile: "
             << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
-        qApp->exit(finished && allPointsChecked && reportSaved && screenshotSaved ? 0 : 2);
+        qApp->exit(finished && allPointsChecked && distancePassed && plotPassed && reportSaved && screenshotSaved ? 0 : 2);
     });
-    QTimer::singleShot(500, &window, [&window, state, heartbeat, setupTimeout, trajectoryFile, reportFile, sourcePoints, viewport]() {
+    // Let the original project's deferred startup activation finish before the
+    // export diagnostic opens nested file dialogs and captures the CDF page.
+    const int setupDelay = qApp->arguments().contains(QStringLiteral("--profile-fanuc-export")) ? 3000 : 500;
+    QTimer::singleShot(setupDelay, &window, [&window, state, heartbeat, setupTimeout, trajectoryFile, reportFile, sourcePoints, viewport]() {
         for(auto* action : window.findChildren<QAction*>()) {
-            if(action->text() == QStringLiteral("Motion Planning") ||
-                action->text() == QStringLiteral("\u8fd0\u52a8\u89c4\u5212")) {
+            // A dock toggle can share this label; use the actual workbench action.
+            if(action->actionGroup() && (action->text() == QStringLiteral("Motion Planning") ||
+                action->text() == QStringLiteral("action.trajectoryPlanningWorkbench") ||
+                action->text() == QStringLiteral("\u8fd0\u52a8\u89c4\u5212"))) {
                 if(action->isEnabled()) {
                     action->trigger();
                 }
@@ -216,7 +539,14 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             fail("original Motion Planning editor is unavailable; run with --language en-US");
             return;
         }
-        auto* import = button(*state->editor, QStringLiteral("Import trajectory..."));
+        const bool transformProfile = qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform"));
+        if(transformProfile) {
+            for(auto* tabs : state->editor->findChildren<QTabWidget*>()) {
+                if(tabs->count() == 3 && tabs->tabText(2) == QStringLiteral("Trajectory Transform")) tabs->setCurrentIndex(2);
+            }
+        }
+        auto* import = transformProfile ? state->editor->findChild<QPushButton*>(QStringLiteral("importTransformTrajectory")) :
+            button(*state->editor, QStringLiteral("Import trajectory..."));
         if(!import || !import->isEnabled()) {
             fail("original import control is unavailable");
             return;
@@ -226,6 +556,54 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         import->click();
         qApp->removeEventFilter(&responder);
         const auto arguments = qApp->arguments();
+        if(transformProfile) {
+            setupTimeout->stop();
+            auto* apply = state->editor->findChild<QPushButton*>(QStringLiteral("transformTrajectory"));
+            auto* exportButton = state->editor->findChild<QPushButton*>(QStringLiteral("exportTransformTrajectory"));
+            auto* remove = state->editor->findChild<QPushButton*>(QStringLiteral("deleteTransformTrajectory"));
+            auto* points = state->editor->findChild<QCheckBox*>(QStringLiteral("trajectoryPointsVisible"));
+            if(!apply || !exportButton || !remove || !points || !apply->isEnabled() || !points->isChecked()) {
+                fail("transform controls/automatic point display not enabled"); return;
+            }
+            TransformSettingsResponder transformResponder;
+            qApp->installEventFilter(&transformResponder);
+            apply->click();
+            qApp->removeEventFilter(&transformResponder);
+            const QString outputPath = reportFile + QStringLiteral(".trajectory.txt");
+            ImportFileResponder saveResponder(outputPath);
+            qApp->installEventFilter(&saveResponder);
+            exportButton->click();
+            qApp->removeEventFilter(&saveResponder);
+            const auto original = readProfilePoses(trajectoryFile);
+            const auto output = readProfilePoses(outputPath);
+            bool valid = !original.empty() && original.size() == output.size();
+            double positionError = 0, rotationError = 0, timeError = 0;
+            Eigen::Matrix3d rotation;
+            rotation << 0, 1, 0, 0, 0, -1, -1, 0, 0;
+            for(std::size_t i = 0; valid && i < original.size(); ++i) {
+                const auto& a = original[i];
+                const auto& b = output[i];
+                positionError = std::max(positionError, (b.pose.block<3,1>(0,3) - (rotation * a.pose.block<3,1>(0,3) + Eigen::Vector3d(.1,-.2,.3))).norm());
+                rotationError = std::max(rotationError, (b.pose.block<3,3>(0,0) - rotation * a.pose.block<3,3>(0,0)).norm());
+                timeError = std::max(timeError, std::abs(a.time - b.time));
+            }
+            valid = valid && positionError < 1e-9 && rotationError < 1e-9 && timeError < 1e-9;
+            QTimer::singleShot(300, &window, [&window, state, reportFile, valid, positionError, rotationError, timeError, count = original.size()]() {
+                const bool screenshot = window.grab().save(reportFile + QStringLiteral(".png"));
+                auto* removeButton = state->editor->findChild<QPushButton*>(QStringLiteral("deleteTransformTrajectory"));
+                removeButton->click();
+                auto* combo = state->editor->findChild<QComboBox*>(QStringLiteral("transformTrajectorySelection"));
+                const bool deleted = combo && combo->count() == 0 && !removeButton->isEnabled();
+                const QJsonObject result{{"success", valid && deleted}, {"sourcePoints", int(count)}, {"deletePassed", deleted},
+                    {"maxPositionErrorMeters", positionError}, {"maxRotationMatrixError", rotationError}, {"maxTimeErrorSeconds", timeError}};
+                QFile report(reportFile);
+                const auto json = QJsonDocument(result).toJson();
+                const bool saved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
+                std::cout << "Main-window trajectory transform: " << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
+                qApp->exit(valid && deleted && saved && screenshot ? 0 : 2);
+            });
+            return;
+        }
         if(arguments.contains(QStringLiteral("--profile-cdf-top1"))) {
             setupTimeout->stop();
             auto* solve = state->editor->findChild<QPushButton*>(QStringLiteral("solveAllIk"));
@@ -355,12 +733,26 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             return;
         }
         const int rapidOption = arguments.indexOf(QStringLiteral("--profile-rapid-export"));
-        if(rapidOption >= 0 && rapidOption + 1 < arguments.size()) {
-            const QString outputPath = arguments[rapidOption + 1];
-            auto* exportButton = state->editor->findChild<QPushButton*>(QStringLiteral("exportCdfRapid"));
+        const int fanucOption = arguments.indexOf(QStringLiteral("--profile-fanuc-export"));
+        const bool fanuc = fanucOption >= 0;
+        const int exportOption = fanuc ? fanucOption : rapidOption;
+        if(exportOption >= 0 && exportOption + 1 < arguments.size()) {
+            const QString outputPath = arguments[exportOption + 1];
+            auto* exportButton = state->editor->findChild<QPushButton*>(fanuc ? QStringLiteral("exportCdfFanuc") : QStringLiteral("exportCdfRapid"));
             if(!exportButton || !exportButton->isEnabled()) {
-                fail("CDF RAPID export button was not enabled for the imported CDF result");
+                fail("CDF robot-program export button was not enabled for the imported CDF result");
                 return;
+            }
+            // Importing can select a scene node and return the main window to
+            // Browse. Re-enter through the same action the user clicks.
+            for(auto* action : window.findChildren<QAction*>()) {
+                if(action->actionGroup() && action->isEnabled() &&
+                    (action->text() == QStringLiteral("Motion Planning") ||
+                     action->text() == QStringLiteral("action.trajectoryPlanningWorkbench") ||
+                     action->text() == QStringLiteral("\u8fd0\u52a8\u89c4\u5212"))) {
+                    action->trigger();
+                    break;
+                }
             }
             for(auto* tabs : state->editor->findChildren<QTabWidget*>()) {
                 for(int index = 0; index < tabs->count(); ++index) {
@@ -370,23 +762,50 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             for(QWidget* parent = exportButton->parentWidget(); parent; parent = parent->parentWidget()) {
                 if(auto* scroll = qobject_cast<QScrollArea*>(parent)) { scroll->ensureWidgetVisible(exportButton); }
             }
+            if(!exportButton->isVisible()) {
+                for(auto* action : window.findChildren<QAction*>()) {
+                    if(action->actionGroup()) std::cerr << "Workbench action: " << action->text().toStdString()
+                        << " enabled=" << action->isEnabled() << " checked=" << action->isChecked() << '\n';
+                }
+                for(QWidget* parent = exportButton; parent; parent = parent->parentWidget()) {
+                    std::cerr << "Export ancestor: " << parent->metaObject()->className()
+                        << " name=" << parent->objectName().toStdString() << " visible=" << parent->isVisible() << '\n';
+                }
+                fail("export button is not visible in the original CDF page"); return;
+            }
             ImportFileResponder saveResponder(outputPath);
             qApp->installEventFilter(&saveResponder);
             exportButton->click();
             qApp->removeEventFilter(&saveResponder);
             setupTimeout->stop();
             QFile exportedFile(outputPath);
-            if(!exportedFile.open(QIODevice::ReadOnly)) { fail("RAPID file was not saved"); return; }
+            if(!exportedFile.open(QIODevice::ReadOnly)) { fail("robot program was not saved"); return; }
             const QString program = QString::fromUtf8(exportedFile.readAll());
-            const QRegularExpression targetPattern(QStringLiteral(
+            const QRegularExpression targetPattern(fanuc ? QStringLiteral(
+                R"(P\[(\d+)\]\{\s+GP1:\s+UF : 2, UT : 1,\s+CONFIG : 'N U T, 0, 0, 0',\s+X = ([-0-9.]+)  mm,\s+Y = ([-0-9.]+)  mm,\s+Z = ([-0-9.]+)  mm,\s+W = ([-0-9.]+) deg,\s+P = ([-0-9.]+) deg,\s+R = ([-0-9.]+) deg\s+\};)") : QStringLiteral(
                 R"(CONST\s+robtarget\s+p(\d+)\s*:=\s*\[\[([^\]]+)\],\[([^\]]+)\])"));
             auto targets = targetPattern.globalMatch(program);
             std::vector<Eigen::Isometry3d> poses;
-            bool parsed = program.startsWith(QStringLiteral("MODULE MainModule")) &&
+            bool parsed = fanuc ? (program.startsWith(QStringLiteral("/PROG  %1\r\n").arg(QFileInfo(outputPath).completeBaseName().toUpper())) &&
+                program.endsWith(QStringLiteral("/END\r\n")) &&
+                program.contains(QStringLiteral("LINE_COUNT\t= %1;").arg(sourcePoints + 2)) &&
+                program.count(QStringLiteral("400mm/sec CNT100")) == sourcePoints) :
+                (program.startsWith(QStringLiteral("MODULE MainModule")) &&
                 !program.contains(QStringLiteral("tooldata")) &&
-                program.count(QStringLiteral(", v50, z10, tool0\\WObj:=wobj0;")) == sourcePoints;
+                program.count(QStringLiteral(", v50, z10, tool0\\WObj:=wobj0;")) == sourcePoints);
             while(targets.hasNext()) {
                 const auto match = targets.next();
+                if(fanuc) {
+                    if(match.captured(1).toInt() != poses.size() + 1) { parsed = false; break; }
+                    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+                    for(int j = 0; j < 3; ++j) pose.translation()[j] = match.captured(j + 2).toDouble() * .001;
+                    const double radians = 3.14159265358979323846 / 180.0;
+                    pose.linear() = (Eigen::AngleAxisd(match.captured(7).toDouble() * radians, Eigen::Vector3d::UnitZ()) *
+                        Eigen::AngleAxisd(match.captured(6).toDouble() * radians, Eigen::Vector3d::UnitY()) *
+                        Eigen::AngleAxisd(match.captured(5).toDouble() * radians, Eigen::Vector3d::UnitX())).toRotationMatrix();
+                    poses.push_back(pose);
+                    continue;
+                }
                 const auto position = match.captured(2).split(',');
                 const auto rotation = match.captured(3).split(',');
                 if(position.size() != 3 || rotation.size() != 4 || match.captured(1).toInt() != poses.size() + 1) {
@@ -424,16 +843,16 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
                 orientationError = std::max(orientationError,
                     Eigen::AngleAxisd(expected.linear().transpose() * actual.linear()).angle());
             }
-            valid = valid && positionError < 1.0e-8 && orientationError < 1.0e-8;
+            valid = valid && positionError < (fanuc ? 9e-7 : 1e-8) && orientationError < (fanuc ? 3e-5 : 1e-8);
             const QJsonObject result{{"success", valid}, {"sourcePoints", sourcePoints},
                 {"exportedPoints", int(poses.size())},
                 {"maxPositionErrorMeters", positionError}, {"maxOrientationErrorRadians", orientationError}};
             QFile report(reportFile);
             const auto json = QJsonDocument(result).toJson();
             const bool saved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
-            QTimer::singleShot(150, &window, [&window, reportFile, result, valid, saved]() {
+            QTimer::singleShot(150, &window, [&window, reportFile, result, valid, saved, fanuc]() {
                 const bool screenshot = window.grab().save(reportFile + QStringLiteral(".png"));
-                std::cout << "Main-window RAPID export: "
+                std::cout << (fanuc ? "Main-window FANUC export: " : "Main-window RAPID export: ")
                     << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
                 qApp->exit(valid && saved && screenshot ? 0 : 2);
             });
@@ -450,6 +869,20 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         for(auto* spin : state->editor->findChildren<QDoubleSpinBox*>()) {
             if(spin->toolTip().startsWith(QStringLiteral("Preview duration."))) {
                 spin->setValue(5.0);
+            }
+        }
+        state->profileDistance = arguments.contains(QStringLiteral("--profile-collision-distance"));
+        if(state->profileDistance) {
+            viewport->resetCamera();
+            // Exercise the existing main-window query switch, not a private test viewport.
+            for(auto* action : window.findChildren<QAction*>()) {
+                if(action->text() == QStringLiteral("Collision Detection") && action->isCheckable()) {
+                    action->setChecked(true);
+                    break;
+                }
+            }
+            if(!viewport->collisionQueriesEnabled()) {
+                fail("original Collision Detection action did not enable queries"); return;
             }
         }
         // Allow import layout/overlays to settle. Timing excludes creation of

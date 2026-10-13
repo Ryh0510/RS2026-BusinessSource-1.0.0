@@ -1919,6 +1919,11 @@ void MainWindow::updateTaskPanel()
         panel = m_statusPanelWidget;
     }
     if(panel != nullptr) {
+        // A workbench may resolve a different panel after its selection/task changes.
+        // Register that page before selecting it, not only the startup page.
+        if(m_taskPanelStack->indexOf(panel) < 0) {
+            m_taskPanelStack->addWidget(panel);
+        }
         m_taskPanelStack->setCurrentWidget(panel);
     }
     if(m_taskPanelDock != nullptr) {
@@ -2727,6 +2732,8 @@ void MainWindow::handleSceneTreeContextMenuAction(
             statusBar()->showMessage(message, timeoutMs);
         });
     switch(action.kind) {
+    case robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind::MoveRobotBase:
+    case robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind::MoveSceneObject:
     case robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind::ConfigureRobotFlange:
     case robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind::AddObjectFrame:
     case robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind::EditObjectFrame:

@@ -34,6 +34,9 @@ namespace robot_qt_viewer
                 auto* dock = new QDockWidget(composition.dockTitle, composition.mainWindow);
                 auto* widget = new SceneExplorerWidget(dock);
                 auto* taskWidget = new SceneExplorerTaskWidget(panelParent);
+                // The initial resolved panel is the status page. Keep this alternate
+                // page hidden until the shell registers and selects it in the stack.
+                taskWidget->hide();
                 auto* controller = new SceneExplorerModuleController(
                     *widget,
                     *composition.documentContext,
