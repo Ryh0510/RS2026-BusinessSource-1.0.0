@@ -241,7 +241,7 @@ public:
     bool clearSurfaceScalarOverlay(const QString& objectId);
     void setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true);
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true, bool showOrientations = false);
     void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
     smrobot::visualization::CustomMeshResult upsertCustomMesh(
         const smrobot::visualization::CustomMeshDesc& desc,

@@ -1225,10 +1225,10 @@ bool RobotViewport::clearSurfaceScalarOverlay(const QString& objectId)
 
 void RobotViewport::setTrajectoryControlPointOverlay(
     const QString& trajectoryId,
-    const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
+    const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints, bool showOrientations)
 {
     if(m_scene != nullptr) {
-        m_scene->setTrajectoryControlPointOverlay(trajectoryId.toStdString(), controlPoints, showPoints);
+        m_scene->setTrajectoryControlPointOverlay(trajectoryId.toStdString(), controlPoints, showPoints, showOrientations);
         update();
     }
 }

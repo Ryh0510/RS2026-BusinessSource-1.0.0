@@ -444,3 +444,40 @@
 - 用户指出上一版喷枪从外侧喷射。实际drawSprayRange/sprayMeasurement使用TCP +Z，而输入+Z与A.STL内侧面法向一致、背离最近表面；此前绕Z的切向修正未翻转Z。保留已校准工件刚体位置，改用R_original*Rz(±90)*Rx(180)，24点诊断+90全部可解、−90无法完整覆盖。
 - 所有者ProjectMotionPlanning增加可选TCP工艺可行性回调，空回调保留当前UI行为；APF、平滑、QP的统一有序路径验收执行回调。外部脚本加入实际网格内侧/喷射朝向条件，并在密采样及最终验收重查。主场景/动画仍用原MainWindow。
 - 先保留上一版完整输出及输入快照，重跑全逆解/Top1/APF/一轮QP；无碰撞是硬条件，10mm可选。最终还需确认扫描区喷枪位于内侧且+Z朝向内表面，输出TXT/LS/距离图及原窗口动画。本轮尚未取得新结果。
+
+
+## 2026-10-13 轨迹点姿态预览（进行中）
+
+- 用户优先要求 Basic Planning 新增“显示轨迹点姿态”。沿用会话控制器和 typed viewport port：widget发意图、controller保存会话开关、ProjectScene接收完整位姿、私有overlay pass批量绘制RGB局部XYZ细线。默认关闭，独立于球状点显示；轴长按范围限定15至40mm。
+- 不改原轨迹/逆解/优化，不持久化临时预览；追加showOrientations默认false兼容现有调用。基于SDK RenderCore Geometry(GL_LINES)缓存一次上传/一次draw，避免数千debug.drawLine的分配和draw开销。
+- 外部Freeform规划按用户要求保留机器人基座，暂不继续失败规划；最新同名轨迹为世界坐标矩阵格式，需要另行输出不可达点报告。本轮先完成主项目姿态显示。
+- 验证：Release/Debug主程序构建，原MainWindow导入矩阵和四元数轨迹、显示/隐藏/球点独立性及大量点预览。旧EXE/SDK已备份于外层build/backups/trajectory-orientations-20261013。
+
+
+- 本轮姿态显示已完成：Basic Planning 的“显示轨迹点姿态”默认关闭，RGB对应完整位姿的局部XYZ；15~40mm自适应轴长，1像素细线，独立于球状点开关。开关仅更新覆盖层，不重建轨迹表；轨迹替换/变换/删除走现有refresh通知，ProjectScene统一管理预览并缓存单个GL_LINES Geometry。私有pass未加入安装头文件，SDK/DLL未变；应用层typed viewport port追加默认false参数，旧源码调用保持默认行为。
+- Release/Debug主程序构建通过，Release兼容回归RobotQtViewerConfigurationTabsSmoke 1/1通过；原MainWindow实测最新矩阵7056点（两配置）及12列四元数7056点（Release），三项均RGB显示通过、关球点姿态独立显示通过、取消后framebuffer逐像素恢复通过。测试禁用诊断窗口鼠标输入避免用户操作干扰，不使用简化窗口。证据在外层build/orientations-{matrix-release,quaternion-release,matrix-debug}.json及截图/日志。
+- 编译部署覆盖过的Release lib_coacd.dll/tbb12.dll已从本轮备份恢复，Debug未发现部署差异。CMAKE_PROJECT_INCLUDE外部钩子已清除。用户正在运行外层build/Release/bin/RobotQtViewerrx64.exe（旧版），保留不终止/覆盖；新版在C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe及外层build/Release/bin/RobotQtViewer_TrajectoryAxesrx64.exe，SHA256=3898485754431EF1380822AC0F23F01D57CD1E24D0D81F20F9DDA03CCA701465。交付清单为外层build/trajectory-orientations-delivery.json。
+
+
+## 2026-10-13 轨迹点局部轴姿态旋转（已完成）
+
+- 在现有未提交姿态轴预览改动上继续，保留原世界系整体变换。在Trajectory Transform的“变换轨迹”对话框增加模式选择及局部XYZ轴、角度字段。位置保持不变，使用R_i右乘所选轴旋转；时间/工艺属性不变，旧IK及图结果按原领域规则失效。
+- 所有者为ProjectMotionPlanning/TrajectoryControlPointEditing，新增typed轴枚举及旋转API；Widget只收集草稿，controller通过commitMotionPlanUpdate提交并通知原轨迹视图/姿态覆盖层。无SDK、依赖或项目格式变更。
+- 验证领域局部/世界旋转区别、局部轴不变、元数据和错误原子性；Release/Debug构建及原MainWindow导入-局部旋转-导出回读（XYZ、正负角及累计旋转），保留旧整体变换回归。备份在外层build/backups/trajectory-local-rotation-20261013。
+
+- 本轮局部轴旋转已完成：Trajectory Transform → 变换轨迹 → 只旋转姿态（各点局部坐标），可选红/绿/蓝对应的X/Y/Z及正负角度。使用R_i * R_axis(theta)，各点位置保持原值；时间及已存速度元数据不变，成功后清除旧关节逆解、全逆解/分层图及关联CDF初始解。原世界坐标整体变换接口和默认模式保持。
+- Release/Debug 主程序和领域回归构建通过，两配置各通过ProcessPoseImport、Architecture Boundary、ConfigurationTabs三项检查。领域覆盖三个不同姿态的XYZ±90/450度、反向恢复、轴/位置/元数据不变及错误原子性。原MainWindow实测7056点矩阵Z+90（Release/Debug），四元数样例X+90、Y−90及旧整体世界变换（Release），五项导入-真实弹窗-变换-导出回读-删除检查全部通过；位置最大回读误差4.62e-16m、姿态矩阵误差2.73e-15、时间误差0。截图核对真实轴下拉/角度/帮助文字和更新后的RGB姿态。
+- 初次诊断删除断言错误地要求项目所有轨迹清空，现改为仅断言所选导入轨迹被删除（私有测试项目已有其他轨迹）；第一次重跑被文件覆盖确认阻塞，仅关闭本轮带profile参数的测试进程，后续使用独立输出名通过。没有修改生产删除行为或关闭用户程序。
+- 原SDK DLL部署覆盖已恢复本轮初始备份，Release/Debug全部DLL哈希与初始相同；外层Release已备份两项不一致依赖并同步已验证的Release运行库。C++七文件CRLF及主仓/两个子仓diff --check通过。原有未提交姿态显示与其他业务改动保留。
+- 新版入口：C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe及外层build/Release/bin/RobotQtViewerrx64.exe、RobotQtViewer_LocalRotationrx64.exe；SHA256=AA1E0C97D78C470FE8D476FFB112C81F7B0DBAE0173FD1EB8ACF8AF07B2C2143。外层旧主EXE已备份，本轮交付清单build/trajectory-local-rotation-delivery.json；证据为build/local-rotation-{z-release-verified,x-release,y-release,world-release,z-debug}.json及截图/日志。未改用户桌面轨迹输入。
+
+## 2026-10-13 STL 导入单位选择（已完成）
+
+- 用户要求选完STL文件后选择米/毫米。UI对话框属于ProjectAssemblyDialogService，MainWindow只编排选择；SceneEntityWorkflowController在同一项目mutation内设置SceneObjectDesc.visualScale/collisionScale为1或0.001，SDK和项目格式不变。取消不修改项目；非STL保持原行为，旧接口调用默认米。
+- 修改前备份于外层build/backups/stl-import-units-20261013，保留现有姿态/轨迹变换等未提交修改。验证米/毫米、保存回读、取消和失败回滚、原MainWindow实际导入；Release/Debug编译及相关回归，恢复部署覆盖的原SDK DLL。
+
+- STL单位功能已完成：Import Object选完.stl/.STL文件后弹出“选择STL模型单位”，可选米(m)或毫米(mm)，默认米。毫米统一按0.001换算，取消不新增对象。非STL仍直接导入；旧workflow调用保留默认米，应用静态库增加typed SceneObjectImportUnit参数，未修改预编译SDK、依赖或项目格式。
+- 单位转换由SceneEntityWorkflowController同一原子项目mutation写入已有SceneObjectDesc.visualScale/collisionScale，显示与碰撞采用同一比例；之后沿用viewport reload、失败snapshot restore、dirty和视图通知。没有改写STL顶点源文件。
+- Release/Debug主程序及RobotQtViewer-RibbonPcdSmoke构建通过，两配置各通过Architecture Boundary和导入回归（米/毫米双scale、项目保存读取、恢复导入快照、非法单位不修改项目、默认调用）。原MainWindow两配置均完整验证真实Import Object文件选择→取消/米/毫米对话框→视口重载→Save Project As并用SDK回读：两个单位scale正确、取消不增加对象、只新增2对象全部通过；截图核对两项选择和解释文字。使用私有配置副本保留完整ABB/A.STL场景，只移除无关轨迹表，未使用简化窗口或改用户项目。
+- 证据：外层build/stl-units-{release,debug}.json、.unit0.png/.unit1.png、.png、.{before,cancelled,after}.sys.json、构建/运行日志。九个源码文件CRLF及git diff --check通过；构建部署覆盖的SDK DLL已恢复，Release/Debug全部DLL与本轮初始备份哈希一致。外层Release两项不一致依赖（lib_coacd.dll/tbb12.dll）先备份再同步已验证C:/b运行库；旧程序备份于build/backups/stl-import-units-20261013，未终止用户运行程序。
+- 更新C:/b/rs105-merge/Release/bin/RobotQtViewerrx64.exe及外层build/Release/bin/RobotQtViewerrx64.exe、RobotQtViewer_StlUnitsrx64.exe；SHA256=D1D96AF925A9A4D9F8CEF6DD9A299DA9B6F5D917FC2A6A2C51499A7BBA66587E。保留此前姿态轴/局部姿态变换等所有未提交改动；交付清单build/stl-import-units-delivery.json。

@@ -290,7 +290,7 @@ int main(int argc, char* argv[])
         qputenv("SMROBOT_DATA_ROOT", QByteArray(DATA_PATH));
     }
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-    if(hasArgument(argc, argv, "--profile-playback")) {
+    if(hasArgument(argc, argv, "--profile-playback") || hasArgument(argc, argv, "--profile-stl-import")) {
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     }
 
@@ -393,6 +393,12 @@ int main(int argc, char* argv[])
                     QString::fromStdString(profileEnvironment),
                     std::filesystem::path(profileScreenshot));
             });
+        }
+
+        const auto stlImportFile = argumentValue(argc, argv, "--profile-stl-import");
+        if(!stlImportFile.empty()) {
+            startStlImportWindowProfile(window, QString::fromStdString(stlImportFile),
+                QString::fromStdString(argumentValue(argc, argv, "--profile-stl-report")));
         }
 
         const auto moveBaseReport = argumentValue(argc, argv, "--profile-move-base");

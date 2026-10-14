@@ -27,6 +27,12 @@ namespace robot_qt_viewer
         bool previousDirty = false;
     };
 
+    enum class SceneObjectImportUnit
+    {
+        Meters,
+        Millimeters
+    };
+
     enum class SceneEntityKind
     {
         Robot,
@@ -62,7 +68,8 @@ namespace robot_qt_viewer
             const std::string& sourceType);
         SceneEntityImportResult importSceneObjectFromPath(
             const std::filesystem::path& path,
-            const std::string& objectType);
+            const std::string& objectType,
+            SceneObjectImportUnit unit = SceneObjectImportUnit::Meters);
         SceneEntityImportResult importPointCloudFromPath(
             const std::filesystem::path& path,
             const std::string& format);

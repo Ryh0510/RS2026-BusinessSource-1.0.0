@@ -1,4 +1,5 @@
 #include "ProjectScene.h"
+#include "ProjectTrajectoryOrientationOverlayPass.h"
 
 #include "ProjectCollisionRuntimeProjection.h"
 #include "ProjectRuntimeBuilder.h"
@@ -2816,6 +2817,8 @@ struct ProjectScene::Impl
     };
     std::unordered_map<std::string, std::vector<SpraySurfaceMesh>> spraySurfaceMeshes;
     bool trajectoryControlPointMarkersVisible = true;
+    bool trajectoryControlPointOrientationsVisible = false;
+    std::shared_ptr<ProjectTrajectoryOrientationOverlayPass> trajectoryOrientationPass;
     std::string trajectoryControlPointOverlayId;
     std::vector<collision::Transform3> trajectoryControlPointOverlay;
     simulation_project::ColorDesc defaultBackgroundColor;
@@ -3062,6 +3065,10 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     endEffectorTracePass = std::make_shared<EndEffectorTracePass>();
     for(const auto& point : endEffectorTracePoints) { endEffectorTracePass->append(toGlmVec3(point)); }
     renderer.addPass(endEffectorTracePass);
+    trajectoryOrientationPass = std::make_shared<ProjectTrajectoryOrientationOverlayPass>();
+    trajectoryOrientationPass->setPoints(trajectoryControlPointOverlay);
+    trajectoryOrientationPass->setEnabled(trajectoryControlPointOrientationsVisible);
+    renderer.addPass(trajectoryOrientationPass);
     return true;
 }
 
@@ -5671,6 +5678,10 @@ void ProjectScene::update(double timeSeconds)
     m_impl->drawSprayRange();
     m_impl->drawEndEffectorTrace();
     m_impl->drawTrajectoryControlPointOverlay();
+    if(m_impl->trajectoryOrientationPass && m_impl->cameraSystem.mainCameraNode()) {
+        const auto camera = m_impl->cameraSystem.mainCameraNode()->camera();
+        if(camera) { m_impl->trajectoryOrientationPass->setViewProjection(camera->projection() * camera->view()); }
+    }
     m_impl->drawRobotCollisionModelVariantPreview();
     m_impl->drawObjectCollisionModelVariantPreview();
     m_impl->drawInteractionModeHints();
@@ -6295,14 +6306,19 @@ bool ProjectScene::clearSurfaceScalarOverlay(const std::string& objectId)
 
 void ProjectScene::setTrajectoryControlPointOverlay(
     const std::string& trajectoryId,
-    const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
+    const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints, bool showOrientations)
 {
     m_impl->trajectoryControlPointMarkersVisible = showPoints;
+    m_impl->trajectoryControlPointOrientationsVisible = showOrientations;
     m_impl->trajectoryControlPointOverlayId = trajectoryId;
     m_impl->trajectoryControlPointOverlay.clear();
     m_impl->trajectoryControlPointOverlay.reserve(controlPoints.size());
     for(const simulation_project::TransformDesc& point : controlPoints) {
         m_impl->trajectoryControlPointOverlay.push_back(ProjectRuntimeBuilder::makeTransform(point));
+    }
+    if(m_impl->trajectoryOrientationPass) {
+        m_impl->trajectoryOrientationPass->setPoints(m_impl->trajectoryControlPointOverlay);
+        m_impl->trajectoryOrientationPass->setEnabled(showOrientations);
     }
 }
 
@@ -6314,6 +6330,10 @@ void ProjectScene::clearTrajectoryControlPointOverlay(const std::string& traject
 
     m_impl->trajectoryControlPointOverlayId.clear();
     m_impl->trajectoryControlPointOverlay.clear();
+    if(m_impl->trajectoryOrientationPass) {
+        m_impl->trajectoryOrientationPass->setPoints({});
+        m_impl->trajectoryOrientationPass->setEnabled(false);
+    }
 }
 
 smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScalarAtScreenPoint(

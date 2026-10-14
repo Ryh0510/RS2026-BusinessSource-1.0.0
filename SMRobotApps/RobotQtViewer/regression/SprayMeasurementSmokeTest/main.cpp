@@ -316,11 +316,11 @@ namespace
         bool pointsVisible = true;
         std::size_t pointCount = 0;
         void setTrajectoryControlPointOverlay(const QString& id,
-            const std::vector<simulation_project::TransformDesc>& points, bool showPoints) override
+            const std::vector<simulation_project::TransformDesc>& points, bool showPoints, bool showOrientations = false) override
         {
             pointsVisible = showPoints;
             pointCount = points.size();
-            RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(id, points, showPoints);
+            RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(id, points, showPoints, showOrientations);
         }
         void clearTrajectoryControlPointOverlay(const QString& id = QString()) override
         {

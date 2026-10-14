@@ -10,6 +10,8 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QTemporaryDir>
+#include <SimulationProject/ProjectIO.h>
 #include <QStringList>
 
 #include <SimulationProject/ProjectSession.h>
@@ -155,6 +157,39 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    QTemporaryDir fixtureDirectory;
+    if(!fixtureDirectory.isValid()) { return 1; }
+    const QString meshFile = fixtureDirectory.filePath(QStringLiteral("units.STL"));
+    QFile mesh(meshFile);
+    if(!mesh.open(QIODevice::WriteOnly)) { return 1; }
+    mesh.write("solid units\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 100 0 0\nvertex 0 100 0\nendloop\nendfacet\nendsolid units\n");
+    mesh.close();
+    using Unit = robot_qt_viewer::SceneObjectImportUnit;
+    for(Unit unit : {Unit::Meters, Unit::Millimeters}) {
+        const double expectedScale = unit == Unit::Meters ? 1.0 : .001;
+        const auto objectResult = workflow.importSceneObjectFromPath(std::filesystem::path(meshFile.toStdWString()), "workpiece", unit);
+        if(!objectResult.success || session.document().objects.size() != 1 || !session.isDirty()) { return 1; }
+        const auto& object = session.document().objects.front();
+        if(object.visualScale != expectedScale || object.collisionScale != expectedScale) {
+            std::cerr << "Visual and collision unit scales differ.\n"; return 1;
+        }
+        const auto projectPath = std::filesystem::path(fixtureDirectory.filePath(QStringLiteral("units.sys.json")).toStdWString());
+        std::string error;
+        simulation_project::ProjectDocument restored;
+        if(!simulation_project::saveProjectDocument(projectPath, session.document(), &error) ||
+            !simulation_project::loadProjectDocument(projectPath, restored, &error) || restored.objects.size() != 1 ||
+            restored.objects.front().visualScale != expectedScale || restored.objects.front().collisionScale != expectedScale) {
+            std::cerr << "Unit scales must survive project save/load: " << error << '\n'; return 1;
+        }
+        workflow.restoreImportState(objectResult);
+        if(!session.document().objects.empty() || session.isDirty()) { return 1; }
+    }
+    const auto invalidUnit = workflow.importSceneObjectFromPath(std::filesystem::path(meshFile.toStdWString()), "workpiece", static_cast<Unit>(99));
+    if(invalidUnit.success || !session.document().objects.empty() || session.isDirty()) { return 1; }
+    const auto legacy = workflow.importSceneObjectFromPath(std::filesystem::path(meshFile.toStdWString()), "workpiece");
+    if(!legacy.success || session.document().objects.front().visualScale != 1.0 || session.document().objects.front().collisionScale != 1.0) { return 1; }
+    workflow.restoreImportState(legacy);
+    std::cout << "STL units: meter/mm geometry scales, persistence, rollback and legacy defaults passed.\n";
     std::cout << "RobotQtViewer point cloud ribbon action smoke passed.\n";
     return 0;
 }

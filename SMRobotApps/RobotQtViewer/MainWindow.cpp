@@ -2496,8 +2496,13 @@ void MainWindow::importObject()
     }
 
     const std::filesystem::path path = fileName.toStdWString();
+    auto unit = robot_qt_viewer::SceneObjectImportUnit::Meters;
+    if(QString::fromStdWString(path.extension().wstring()).compare(QStringLiteral(".stl"), Qt::CaseInsensitive) == 0 &&
+        !robot_qt_viewer::ProjectAssemblyDialogService::selectStlImportUnit(this, unit)) {
+        return;
+    }
     const robot_qt_viewer::SceneEntityImportResult importResult =
-        m_appController.sceneEntityWorkflow().importSceneObjectFromPath(path, "workpiece");
+        m_appController.sceneEntityWorkflow().importSceneObjectFromPath(path, "workpiece", unit);
     if(!importResult.success) {
         statusBar()->showMessage(importResult.message, 8000);
         return;

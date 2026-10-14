@@ -36,7 +36,7 @@ namespace robot_qt_viewer
         void appendEndEffectorTraceSample() override;
         SprayMeasurementResult sprayMeasurement(const QString& robotId) const override;
         void setTrajectoryControlPointOverlay(const QString& trajectoryId,
-            const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true) override;
+            const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true, bool showOrientations = false) override;
         void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) override;
     private:
         RobotViewport& m_viewport;

@@ -8,6 +8,8 @@ class QWidget;
 
 namespace robot_qt_viewer {
 
+enum class SceneObjectImportUnit;
+
 class ProjectAssemblyDialogService
 {
 public:
@@ -15,6 +17,7 @@ public:
     static QString selectRobotPackageForExport(QWidget* parent, const QString& initialPath);
     static QString selectRobotForImport(QWidget* parent);
     static QString selectObjectForImport(QWidget* parent);
+    static bool selectStlImportUnit(QWidget* parent, SceneObjectImportUnit& unit);
     static QString selectPointCloudForImport(QWidget* parent);
 
     static bool confirmDelete(

@@ -23,6 +23,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QInputDialog>
+#include <SimulationProject/ProjectIO.h>
 #include <QMenu>
 #include <QPointer>
 #include <QPushButton>
@@ -117,6 +119,24 @@ namespace
             if(event->type() == QEvent::Show && object->objectName() == QStringLiteral("trajectoryTransformDialog")) {
                 if(auto* dialog = qobject_cast<QDialog*>(object)) {
                     QTimer::singleShot(0, dialog, [dialog]() {
+                        const auto args = qApp->arguments();
+                        const int localOption = args.indexOf(QStringLiteral("--profile-local-rotation"));
+                        if(localOption >= 0 && localOption + 2 < args.size()) {
+                            auto* mode = dialog->findChild<QComboBox*>(QStringLiteral("trajectoryTransformMode"));
+                            auto* axis = dialog->findChild<QComboBox*>(QStringLiteral("trajectoryLocalRotationAxis"));
+                            auto* angle = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("trajectoryLocalRotationAngle"));
+                            const int axisIndex = QStringLiteral("XYZ").indexOf(args[localOption+1].toUpper());
+                            if(!mode || !axis || !angle || axisIndex < 0) { dialog->reject(); return; }
+                            mode->setCurrentIndex(1);
+                            axis->setCurrentIndex(axisIndex);
+                            angle->setValue(args[localOption+2].toDouble());
+                            const int reportOption = args.indexOf(QStringLiteral("--profile-playback-report"));
+                            if(reportOption >= 0 && reportOption + 1 < args.size()) {
+                                dialog->grab().save(args[reportOption+1] + QStringLiteral(".dialog.png"));
+                            }
+                            dialog->accept();
+                            return;
+                        }
                         const double values[] = {100, -200, 300, 90, 90, 0};
                         for(int i = 0; i < 6; ++i) {
                             if(auto* field = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("transformValue%1").arg(i))) field->setValue(values[i]);
@@ -373,7 +393,8 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         .value(QStringLiteral("points")).toArray().size();
     if(sourcePoints == 0 && !qApp->arguments().contains(QStringLiteral("--profile-cartesian-import")) &&
         !qApp->arguments().contains(QStringLiteral("--profile-cdf-top1")) &&
-        !qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform"))) {
+        !qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform")) &&
+        !qApp->arguments().contains(QStringLiteral("--profile-trajectory-orientations"))) {
         fail("trajectory JSON has no source points");
         return;
     }
@@ -517,7 +538,9 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
     });
     // Let the original project's deferred startup activation finish before the
     // export diagnostic opens nested file dialogs and captures the CDF page.
-    const int setupDelay = qApp->arguments().contains(QStringLiteral("--profile-fanuc-export")) ? 3000 : 500;
+    const int setupDelay = (qApp->arguments().contains(QStringLiteral("--profile-fanuc-export")) ||
+        qApp->arguments().contains(QStringLiteral("--profile-trajectory-orientations")) ||
+        qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform"))) ? 3000 : 500;
     QTimer::singleShot(setupDelay, &window, [&window, state, heartbeat, setupTimeout, trajectoryFile, reportFile, sourcePoints, viewport]() {
         for(auto* action : window.findChildren<QAction*>()) {
             // A dock toggle can share this label; use the actual workbench action.
@@ -569,6 +592,9 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             qApp->installEventFilter(&transformResponder);
             apply->click();
             qApp->removeEventFilter(&transformResponder);
+            if(arguments.contains(QStringLiteral("--profile-local-rotation"))) {
+                if(auto* axes = state->editor->findChild<QCheckBox*>(QStringLiteral("trajectoryOrientationsVisible"))) axes->setChecked(true);
+            }
             const QString outputPath = reportFile + QStringLiteral(".trajectory.txt");
             ImportFileResponder saveResponder(outputPath);
             qApp->installEventFilter(&saveResponder);
@@ -580,22 +606,38 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             double positionError = 0, rotationError = 0, timeError = 0;
             Eigen::Matrix3d rotation;
             rotation << 0, 1, 0, 0, 0, -1, -1, 0, 0;
+            const int localOption = arguments.indexOf(QStringLiteral("--profile-local-rotation"));
+            const bool local = localOption >= 0 && localOption + 2 < arguments.size();
+            const int localAxis = local ? QStringLiteral("XYZ").indexOf(arguments[localOption+1].toUpper()) : 2;
+            const double angle = local ? arguments[localOption+2].toDouble() : 0;
+            valid = valid && localAxis >= 0;
             for(std::size_t i = 0; valid && i < original.size(); ++i) {
                 const auto& a = original[i];
                 const auto& b = output[i];
-                positionError = std::max(positionError, (b.pose.block<3,1>(0,3) - (rotation * a.pose.block<3,1>(0,3) + Eigen::Vector3d(.1,-.2,.3))).norm());
-                rotationError = std::max(rotationError, (b.pose.block<3,3>(0,0) - rotation * a.pose.block<3,3>(0,0)).norm());
+                const Eigen::Vector3d expectedPosition = local ? a.pose.block<3,1>(0,3).eval()
+                    : (rotation * a.pose.block<3,1>(0,3) + Eigen::Vector3d(.1,-.2,.3)).eval();
+                const Eigen::Matrix3d expectedRotation = local
+                    ? (Eigen::AngleAxisd(angle * 3.14159265358979323846 / 180.0,
+                        a.pose.block<3,3>(0,0).col(localAxis)).toRotationMatrix() * a.pose.block<3,3>(0,0)).eval()
+                    : (rotation * a.pose.block<3,3>(0,0)).eval();
+                positionError = std::max(positionError, (b.pose.block<3,1>(0,3) - expectedPosition).norm());
+                rotationError = std::max(rotationError, (b.pose.block<3,3>(0,0) - expectedRotation).norm());
                 timeError = std::max(timeError, std::abs(a.time - b.time));
             }
             valid = valid && positionError < 1e-9 && rotationError < 1e-9 && timeError < 1e-9;
-            QTimer::singleShot(300, &window, [&window, state, reportFile, valid, positionError, rotationError, timeError, count = original.size()]() {
+            QTimer::singleShot(300, &window, [&window, state, reportFile, valid, positionError, rotationError, timeError, count = original.size(), local, localAxis, angle]() {
                 const bool screenshot = window.grab().save(reportFile + QStringLiteral(".png"));
                 auto* removeButton = state->editor->findChild<QPushButton*>(QStringLiteral("deleteTransformTrajectory"));
-                removeButton->click();
                 auto* combo = state->editor->findChild<QComboBox*>(QStringLiteral("transformTrajectorySelection"));
-                const bool deleted = combo && combo->count() == 0 && !removeButton->isEnabled();
+                const QString removedId = combo ? combo->currentData().toString() : QString();
+                const int previousCount = combo ? combo->count() : 0;
+                removeButton->click();
+                // Other Cartesian plans may already exist in the loaded project.
+                const bool deleted = combo && !removedId.isEmpty() && combo->findData(removedId) < 0 &&
+                    combo->count() == previousCount - 1;
                 const QJsonObject result{{"success", valid && deleted}, {"sourcePoints", int(count)}, {"deletePassed", deleted},
-                    {"maxPositionErrorMeters", positionError}, {"maxRotationMatrixError", rotationError}, {"maxTimeErrorSeconds", timeError}};
+                    {"maxPositionErrorMeters", positionError}, {"maxRotationMatrixError", rotationError}, {"maxTimeErrorSeconds", timeError},
+                    {"localOrientationOnly",local},{"localAxis",localAxis},{"angleDegrees",angle}};
                 QFile report(reportFile);
                 const auto json = QJsonDocument(result).toJson();
                 const bool saved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
@@ -693,6 +735,63 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             solve->click();
             qApp->removeEventFilter(&settingsResponder);
             elapsed->restart(); poll->start();
+            return;
+        }
+        if(arguments.contains(QStringLiteral("--profile-trajectory-orientations"))) {
+            setupTimeout->stop();
+            auto* axes = state->editor->findChild<QCheckBox*>(QStringLiteral("trajectoryOrientationsVisible"));
+            auto* points = state->editor->findChild<QCheckBox*>(QStringLiteral("trajectoryPointsVisible"));
+            auto* table = state->editor->findChild<QTableWidget*>(QStringLiteral("cartesianControlPoints"));
+            const auto poses = readProfilePoses(trajectoryFile);
+            bool lastSourcePresent = false;
+            if(table) for(int i = 0; i < table->rowCount(); ++i) {
+                if(table->item(i,0) && table->item(i,0)->text().toInt() == int(poses.size())) lastSourcePresent = true;
+            }
+            if(!axes || !points || !table || poses.empty() || !lastSourcePresent || axes->isChecked()) {
+                fail("orientation toggle/default/imported pose count incorrect"); return;
+            }
+            points->setChecked(false);
+            viewport->setEnabled(false);
+            for(QWidget* parent = axes->parentWidget(); parent; parent = parent->parentWidget()) {
+                if(auto* scroll = qobject_cast<QScrollArea*>(parent)) { scroll->ensureWidgetVisible(axes); }
+            }
+            QTimer::singleShot(500, &window, [&window, viewport, axes, points, table, reportFile, count = poses.size()]() {
+                const QImage off = viewport->grabFramebuffer();
+                off.save(reportFile + QStringLiteral(".off.png"));
+                axes->setChecked(true);
+                QTimer::singleShot(500, &window, [&window, viewport, axes, points, table, off, reportFile, count]() {
+                    const QImage on = viewport->grabFramebuffer();
+                    on.save(reportFile + QStringLiteral(".axes.png"));
+                    window.grab().save(reportFile + QStringLiteral(".png"));
+                    int changed = 0, red = 0, green = 0, blue = 0;
+                    if(on.size() == off.size()) {
+                        for(int y = 0; y < on.height(); ++y) for(int x = 0; x < on.width(); ++x) {
+                            const QColor a = off.pixelColor(x,y), b = on.pixelColor(x,y);
+                            if(a == b) { continue; }
+                            ++changed;
+                            red += b.red() > 180 && b.green() < 80 && b.blue() < 80;
+                            green += b.green() > 180 && b.red() < 80 && b.blue() < 80;
+                            blue += b.blue() > 180 && b.red() < 80 && b.green() < 80;
+                        }
+                    }
+                    const bool independent = !points->isChecked() && axes->isChecked();
+                    axes->setChecked(false);
+                    QTimer::singleShot(500, &window, [viewport, off, reportFile, count, changed, red, green, blue, independent]() {
+                        const QImage hidden = viewport->grabFramebuffer();
+                        hidden.save(reportFile + QStringLiteral(".hidden.png"));
+                        const bool restored = hidden == off;
+                        const bool passed = independent && restored && changed > 30 && red > 5 && green > 5 && blue > 5;
+                        const QJsonObject result{{"passed",passed},{"sourcePoints",int(count)},
+                            {"independentOfSphereMarkers",independent},{"hideRestoresViewport",restored},
+                            {"changedPixels",changed},{"redAxisPixels",red},{"greenAxisPixels",green},{"blueAxisPixels",blue},
+                            {"renderer","original MainWindow"}};
+                        QFile file(reportFile); const auto bytes = QJsonDocument(result).toJson();
+                        const bool saved = file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+                        std::cout << "Main-window trajectory orientations: " << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
+                        qApp->exit(passed && saved ? 0 : 2);
+                    });
+                });
+            });
             return;
         }
         if(arguments.contains(QStringLiteral("--profile-cartesian-import"))) {
@@ -897,6 +996,89 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             state->clock.start();
             state->started = true;
             heartbeat->start();
+        });
+    });
+}
+
+// Exercises the real Import Object action, unit dialog, viewport reload and project IO.
+void startStlImportWindowProfile(QWidget& window, const QString& meshFile, const QString& reportFile)
+{
+    window.showMaximized();
+    QTimer::singleShot(5000, &window, [&window, meshFile, reportFile]() {
+        QAction* importAction = nullptr;
+        QAction* saveAction = nullptr;
+        for(auto* action : window.findChildren<QAction*>()) {
+            if(action->text() == QStringLiteral("Import Object")) importAction = action;
+            if(action->text() == QStringLiteral("Save Project As")) saveAction = action;
+        }
+        if(!importAction || !saveAction || !importAction->isEnabled()) { fail("STL import actions unavailable"); return; }
+        const auto saveSnapshot = [&](const QString& suffix, simulation_project::ProjectDocument& document) {
+            const QString path = reportFile + suffix + QStringLiteral(".sys.json");
+            ImportFileResponder responder(path);
+            qApp->installEventFilter(&responder);
+            saveAction->trigger();
+            qApp->removeEventFilter(&responder);
+            std::string error;
+            return simulation_project::loadProjectDocument(std::filesystem::path(path.toStdWString()), document, &error);
+        };
+        class UnitResponder : public QObject {
+        public:
+            int mode = 0;
+            bool handled = false;
+            QString screenshot;
+            bool eventFilter(QObject* object, QEvent* event) override {
+                if(!handled && event->type() == QEvent::Show && object->objectName() == QStringLiteral("stlImportUnitDialog")) {
+                    if(auto* dialog = qobject_cast<QInputDialog*>(object)) {
+                        handled = true;
+                        QTimer::singleShot(0, dialog, [this, dialog]() {
+                            if(mode < 0) { dialog->reject(); return; }
+                            const auto items = dialog->comboBoxItems();
+                            if(items.size() != 2) { dialog->reject(); return; }
+                            dialog->setTextValue(items[mode]);
+                            dialog->grab().save(screenshot);
+                            dialog->accept();
+                        });
+                    }
+                }
+                return QObject::eventFilter(object, event);
+            }
+        };
+        simulation_project::ProjectDocument before, cancelled, after;
+        bool valid = saveSnapshot(QStringLiteral(".before"), before);
+        bool allDialogs = true;
+        for(int mode : {-1, 0, 1}) {
+            ImportFileResponder fileResponder(meshFile);
+            UnitResponder unitResponder;
+            unitResponder.mode = mode;
+            unitResponder.screenshot = reportFile + QStringLiteral(".unit%1.png").arg(mode);
+            qApp->installEventFilter(&fileResponder);
+            qApp->installEventFilter(&unitResponder);
+            importAction->trigger();
+            qApp->removeEventFilter(&unitResponder);
+            qApp->removeEventFilter(&fileResponder);
+            allDialogs = allDialogs && unitResponder.handled;
+            if(mode == -1) valid = saveSnapshot(QStringLiteral(".cancelled"), cancelled) && valid;
+        }
+        valid = saveSnapshot(QStringLiteral(".after"), after) && valid;
+        const bool cancellationPassed = before.objects.size() == cancelled.objects.size();
+        bool meterPassed = false, millimeterPassed = false;
+        const std::string name = QFileInfo(meshFile).completeBaseName().toStdString();
+        for(const auto& object : after.objects) {
+            if(object.name != name) continue;
+            meterPassed = meterPassed || (object.visualScale == 1.0 && object.collisionScale == 1.0);
+            millimeterPassed = millimeterPassed || (object.visualScale == .001 && object.collisionScale == .001);
+        }
+        valid = valid && allDialogs && cancellationPassed && meterPassed && millimeterPassed &&
+            after.objects.size() == before.objects.size() + 2;
+        const QJsonObject result{{"success",valid},{"unitDialogsShown",allDialogs},{"cancellationPassed",cancellationPassed},
+            {"meterScalesPassed",meterPassed},{"millimeterScalesPassed",millimeterPassed},
+            {"beforeObjects",int(before.objects.size())},{"afterObjects",int(after.objects.size())}};
+        const auto bytes = QJsonDocument(result).toJson();
+        QFile report(reportFile);
+        const bool saved = report.open(QIODevice::WriteOnly) && report.write(bytes) == bytes.size();
+        QTimer::singleShot(300, &window, [&window, reportFile, valid, saved]() {
+            const bool screenshot = window.grab().save(reportFile + QStringLiteral(".png"));
+            qApp->exit(valid && saved && screenshot ? 0 : 2);
         });
     });
 }

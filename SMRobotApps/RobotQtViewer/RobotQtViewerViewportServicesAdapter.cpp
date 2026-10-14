@@ -988,9 +988,9 @@ namespace robot_qt_viewer
 
     void RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints)
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints, bool showOrientations)
     {
-        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints, showPoints);
+        m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints, showPoints, showOrientations);
     }
 
     void RobotQtViewerMotionPlanningViewportAdapter::clearTrajectoryControlPointOverlay(

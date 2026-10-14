@@ -261,7 +261,8 @@ namespace robot_qt_viewer
 
     SceneEntityImportResult SceneEntityWorkflowController::importSceneObjectFromPath(
         const std::filesystem::path& path,
-        const std::string& objectType)
+        const std::string& objectType,
+        SceneObjectImportUnit unit)
     {
         SceneEntityImportResult result;
         result.previousDocument = m_context.document();
@@ -270,6 +271,14 @@ namespace robot_qt_viewer
         simulation_project::AddSceneObjectEntityCommand command;
         command.displayName = pathStemUtf8(path);
         command.objectType = objectType;
+        double scale = 1.0;
+        switch(unit) {
+        case SceneObjectImportUnit::Meters: break;
+        case SceneObjectImportUnit::Millimeters: scale = 0.001; break;
+        default:
+            result.message = QStringLiteral("Unsupported object import unit.");
+            return result;
+        }
         command.sourcePath = m_context.projectSession().makePortableAssetPath(path);
         simulation_project::ProjectSceneEntityCommandResult commandResult;
         const ProjectMutationResult mutationResult = m_context.documentController().mutateProject(
@@ -282,6 +291,14 @@ namespace robot_qt_viewer
                     error = commandResult.message;
                     return false;
                 }
+                auto* object = service.findSceneObject(commandResult.entityId);
+                if(!object) {
+                    error = "Imported object is missing from the project document.";
+                    return false;
+                }
+                // Persist one unit conversion for both rendering and collision geometry.
+                object->visualScale = scale;
+                object->collisionScale = scale;
                 changed = true;
                 return true;
             });

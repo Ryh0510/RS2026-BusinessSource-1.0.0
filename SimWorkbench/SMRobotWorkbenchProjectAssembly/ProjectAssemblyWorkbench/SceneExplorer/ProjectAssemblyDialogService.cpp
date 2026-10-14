@@ -1,5 +1,7 @@
 #include "ProjectAssemblyDialogService.h"
 
+#include <SceneEntityWorkflowController.h>
+
 #include <RobotQtViewerFileDialog.h>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -49,6 +51,25 @@ QString ProjectAssemblyDialogService::selectObjectForImport(QWidget* parent)
         QStringLiteral("Import object"),
         QString(),
         QStringLiteral("Object Meshes (*.stl *.STL *.obj *.OBJ *.dae *.DAE *.ply *.PLY);;STL Files (*.stl *.STL);;All Files (*.*)"));
+}
+
+bool ProjectAssemblyDialogService::selectStlImportUnit(QWidget* parent, SceneObjectImportUnit& unit)
+{
+    QInputDialog dialog(parent);
+    dialog.setObjectName(QStringLiteral("stlImportUnitDialog"));
+    dialog.setWindowTitle(QStringLiteral("\u9009\u62e9 STL \u6a21\u578b\u5355\u4f4d"));
+    dialog.setLabelText(QStringLiteral("STL \u6587\u4ef6\u4e2d\u7684\u5750\u6807\u5355\u4f4d\uff1a\n"
+        "\u9009\u62e9\u6beb\u7c73\u65f6\uff0c\u6a21\u578b\u5c06\u6309 0.001 \u6362\u7b97\u4e3a\u7c73\u3002"));
+    const QString meters = QStringLiteral("\u7c73 (m)");
+    const QString millimeters = QStringLiteral("\u6beb\u7c73 (mm)");
+    dialog.setComboBoxItems({meters, millimeters});
+    dialog.setComboBoxEditable(false);
+    dialog.setTextValue(meters);
+    dialog.setOkButtonText(QStringLiteral("\u5bfc\u5165"));
+    dialog.setCancelButtonText(QStringLiteral("\u53d6\u6d88"));
+    if(dialog.exec() != QDialog::Accepted) return false;
+    unit = dialog.textValue() == millimeters ? SceneObjectImportUnit::Millimeters : SceneObjectImportUnit::Meters;
+    return true;
 }
 
 QString ProjectAssemblyDialogService::selectPointCloudForImport(QWidget* parent)

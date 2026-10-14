@@ -273,7 +273,7 @@ public:
     bool clearSurfaceScalarOverlay(const std::string& objectId);
     void setTrajectoryControlPointOverlay(
         const std::string& trajectoryId,
-        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true);
+        const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true, bool showOrientations = false);
     void clearTrajectoryControlPointOverlay(const std::string& trajectoryId = std::string());
     smrobot::visualization::SurfaceScalarProbeResult probeSurfaceScalarAtScreenPoint(
         const std::string& objectId,

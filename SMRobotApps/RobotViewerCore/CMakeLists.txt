@@ -50,6 +50,8 @@ add_library(${TARGET_NAME} STATIC
     ProjectSceneStewartPresentationSystem.h
     ProjectScene.cpp
     ProjectScene.h
+    ProjectTrajectoryOrientationOverlayPass.cpp
+    ProjectTrajectoryOrientationOverlayPass.h
     ProjectScenePickingService.cpp
     ProjectScenePickingService.h
     ProjectScenePreviewOverlayState.cpp
