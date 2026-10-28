@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <unordered_set>
 
 const char* projectSceneEnvironmentPresetId(ProjectSceneEnvironmentPreset preset)
 {
@@ -35,4 +37,28 @@ bool parseProjectSceneEnvironmentPreset(
         }
     }
     return false;
+}
+
+bool validateProjectSceneEnvironment(const ProjectSceneEnvironmentSelection& selection, std::string& error)
+{
+    error.clear();
+    if(!std::isfinite(selection.scale) || selection.scale <= 0.0f || selection.scale > 1000.0f ||
+        !std::isfinite(selection.groundHeight) || selection.parts.size() > 128) {
+        error = "Invalid environment scale, ground height or part count.";
+        return false;
+    }
+    std::unordered_set<std::string> ids;
+    for(const auto& part : selection.parts) {
+        if(part.id.empty() || part.source.empty() || !ids.insert(part.id).second) {
+            error = "Environment part requires a unique ID and model source.";
+            return false;
+        }
+        if(part.role == ProjectSceneEnvironmentPartRole::Wall &&
+            (!std::isfinite(part.wallOffset) || !std::isfinite(glm::length(part.wallNormal)) ||
+             std::abs(glm::length(part.wallNormal) - 1.0f) > 0.001f)) {
+            error = "Environment wall requires a finite plane and unit normal.";
+            return false;
+        }
+    }
+    return true;
 }

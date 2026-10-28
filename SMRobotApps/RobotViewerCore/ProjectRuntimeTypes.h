@@ -46,6 +46,11 @@ public:
         m_visible = visible;
     }
 
+    bool isModelVisible() const
+    {
+        return m_visible;
+    }
+
     void collect(scenecore::RenderQueue& queue) override
     {
         if(m_visible) {
@@ -167,11 +172,14 @@ struct RuntimeSceneObject
     std::vector<std::shared_ptr<rendercore::Material>> originalMaterials;
     std::shared_ptr<rendercore::Material> highlightMaterial;
     std::shared_ptr<RuntimeSurfaceScalarOverlay> surfaceScalarOverlay;
+    std::shared_ptr<rendercore::Model> coatingPredictionOriginalModel;
+    std::shared_ptr<rendercore::Model> coatingPredictionModel;
     collision::CollisionObjectPtr collisionObject;
     collision::CollisionShapeDesc collisionShape;
     std::vector<RuntimeSceneCollisionObject> collisionObjects;
     bool collisionEnabled = true;
     bool highlighted = false;
+    bool collisionHighlighted = false;
     float pointCloudBasePointSize = 2.0f;
     bool pointCloudBoundsValid = false;
     collision::Vec3 pointCloudLocalBoundsMin = collision::Vec3::Zero();

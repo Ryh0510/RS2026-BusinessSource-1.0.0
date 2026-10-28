@@ -1,4 +1,5 @@
 #include "SceneEntityWorkflowController.h"
+#include "UserCoordinateFrame.h"
 
 #include "RobotQtViewerDocumentContext.h"
 #include "RobotQtViewerDocumentController.h"
@@ -15,6 +16,9 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <algorithm>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace
 {
@@ -267,10 +271,6 @@ namespace robot_qt_viewer
         SceneEntityImportResult result;
         result.previousDocument = m_context.document();
         result.previousDirty = m_context.projectSession().isDirty();
-
-        simulation_project::AddSceneObjectEntityCommand command;
-        command.displayName = pathStemUtf8(path);
-        command.objectType = objectType;
         double scale = 1.0;
         switch(unit) {
         case SceneObjectImportUnit::Meters: break;
@@ -279,6 +279,26 @@ namespace robot_qt_viewer
             result.message = QStringLiteral("Unsupported object import unit.");
             return result;
         }
+        return importSceneObjectFromPath(path, objectType, scale);
+    }
+
+    SceneEntityImportResult SceneEntityWorkflowController::importSceneObjectFromPath(
+        const std::filesystem::path& path,
+        const std::string& objectType,
+        double scale)
+    {
+        SceneEntityImportResult result;
+        result.previousDocument = m_context.document();
+        result.previousDirty = m_context.projectSession().isDirty();
+
+        if(!std::isfinite(scale) || scale <= 0.0) {
+            result.message = QStringLiteral("Import scale must be positive and finite.");
+            return result;
+        }
+
+        simulation_project::AddSceneObjectEntityCommand command;
+        command.displayName = pathStemUtf8(path);
+        command.objectType = objectType;
         command.sourcePath = m_context.projectSession().makePortableAssetPath(path);
         simulation_project::ProjectSceneEntityCommandResult commandResult;
         const ProjectMutationResult mutationResult = m_context.documentController().mutateProject(
@@ -299,6 +319,8 @@ namespace robot_qt_viewer
                 // Persist one unit conversion for both rendering and collision geometry.
                 object->visualScale = scale;
                 object->collisionScale = scale;
+                if(belongsToUserFrame(service.document(), *object))
+                    object->transform = userCoordinateFrame(service.document());
                 changed = true;
                 return true;
             });
@@ -403,6 +425,21 @@ namespace robot_qt_viewer
                     removed = service.removeRobot(entityId.toStdString(), report, &error);
                 } else if(kind == SceneEntityKind::PointCloud) {
                     removed = service.removePointCloud(entityId.toStdString(), report, &error);
+                } else if(kind == SceneEntityKind::AttachmentAsset) {
+                    if(!service.removeAttachmentAssetIfUnused(entityId.toStdString(), &removed, &error)) {
+                        return false;
+                    }
+                    if(!removed) {
+                        error = "Device definition is still in use. Delete or unbind its installed instances first.";
+                    }
+                } else if(kind == SceneEntityKind::MountedAttachment) {
+                    const auto* attachment = service.findMountedAttachment(entityId.toStdString());
+                    const std::string assetId = attachment != nullptr ? attachment->assetId : std::string();
+                    removed = service.removeMountedAttachment(entityId.toStdString(), &error);
+                    if(removed && !assetId.empty() &&
+                        !service.removeAttachmentAssetIfUnused(assetId, nullptr, &error)) {
+                        return false;
+                    }
                 } else {
                     removed = service.removeObject(entityId.toStdString(), report, &error);
                 }
@@ -425,6 +462,135 @@ namespace robot_qt_viewer
             .arg(static_cast<qulonglong>(result.removedCollisionDetectors))
             .arg(static_cast<qulonglong>(result.removedTools))
             .arg(static_cast<qulonglong>(result.removedSensors));
+        return result;
+    }
+
+    SceneEntityMutationResult SceneEntityWorkflowController::setEntityRole(
+        SceneEntityKind kind, const QString& entityId, const QString& role)
+    {
+        SceneEntityMutationResult result;
+        result.entityId = entityId;
+        if(role != "tool" && role != "workpiece") {
+            result.message = "Role must be tool or workpiece.";
+            return result;
+        }
+        const auto mutation = m_context.documentController().mutateProject(
+            QStringLiteral("setEntityRole"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                auto& doc = service.document();
+                const auto id = entityId.toStdString();
+                std::vector<std::string> assetIds;
+                std::vector<std::string> sourceIds;
+                if(kind == SceneEntityKind::Object) {
+                    auto* object = service.findSceneObject(id);
+                    if(!object) { error = "Object not found"; return false; }
+                    sourceIds.push_back(id);
+                    for(const auto& attachment : doc.mountedAttachments)
+                        if(attachment.sourceObjectId == id) assetIds.push_back(attachment.assetId);
+                } else if(kind == SceneEntityKind::MountedAttachment) {
+                    auto* attachment = service.findMountedAttachment(id);
+                    if(!attachment) { error = "Attachment not found"; return false; }
+                    // A role belongs to this installed instance, not every use of a shared asset.
+                    const auto oldAssetId = attachment->assetId;
+                    if(std::count_if(doc.mountedAttachments.begin(), doc.mountedAttachments.end(),
+                        [&](const auto& value) { return value.assetId == oldAssetId; }) > 1) {
+                        auto copy = *service.findAttachmentAsset(oldAssetId);
+                        copy.id = service.makeUniqueId(oldAssetId + "_instance");
+                        doc.attachmentAssets.push_back(copy);
+                        attachment->assetId = copy.id;
+                        changed = true;
+                    }
+                    assetIds.push_back(attachment->assetId);
+                    if(!attachment->sourceObjectId.empty()) sourceIds.push_back(attachment->sourceObjectId);
+                } else if(kind == SceneEntityKind::AttachmentAsset) {
+                    if(!service.findAttachmentAsset(id)) { error = "Definition not found"; return false; }
+                    assetIds.push_back(id);
+                    for(const auto& attachment : doc.mountedAttachments)
+                        if(attachment.assetId == id && !attachment.sourceObjectId.empty()) sourceIds.push_back(attachment.sourceObjectId);
+                } else { error = "Select an object or installed device"; return false; }
+                for(auto& asset : doc.attachmentAssets) {
+                    if(std::find(assetIds.begin(), assetIds.end(), asset.id) == assetIds.end()) continue;
+                    if(asset.hasSensorIntrinsics || asset.assetKind == "sensor") {
+                        error = "A sensor definition cannot be converted into a tool/workpiece";
+                        return false;
+                    }
+                    changed |= asset.assetKind != role.toStdString() || asset.assetType != role.toStdString();
+                    asset.assetKind = role.toStdString();
+                    asset.assetType = role.toStdString();
+                }
+                for(auto& object : doc.objects) {
+                    if(std::find(sourceIds.begin(), sourceIds.end(), object.id) == sourceIds.end()) continue;
+                    changed |= object.objectType != role.toStdString();
+                    object.objectType = role.toStdString();
+                }
+                return true;
+            });
+        result.success = mutation.success;
+        result.message = mutation.success ? QString("Role set to %1.").arg(role) : mutation.message;
+        return result;
+    }
+
+    SceneEntityMutationResult SceneEntityWorkflowController::setMountedTcp(
+        const QString& attachmentId, const simulation_project::TransformDesc& assetToTcp,
+        const QString& convention, const QString& referenceLink)
+    {
+        SceneEntityMutationResult result;
+        result.entityId = attachmentId;
+        for(double value : {assetToTcp.x, assetToTcp.y, assetToTcp.z, assetToTcp.roll, assetToTcp.pitch, assetToTcp.yaw}) {
+            if(!std::isfinite(value)) { result.message = "TCP values must be finite."; return result; }
+        }
+        if(convention != "fanuc" && convention != "abb" && convention != "generic") {
+            result.message = "Unknown TCP convention.";
+            return result;
+        }
+        const auto mutation = m_context.documentController().mutateProject(
+            QStringLiteral("setMountedTcp"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                auto* attachment = service.findMountedAttachment(attachmentId.toStdString());
+                if(!attachment) { error = "Installed device not found"; return false; }
+                auto& doc = service.document();
+                const auto oldAssetId = attachment->assetId;
+                auto* asset = service.findAttachmentAsset(oldAssetId);
+                if(!asset || asset->hasSensorIntrinsics || asset->assetKind == "sensor") {
+                    error = "Select a tool, not a sensor"; return false;
+                }
+                if(std::count_if(doc.mountedAttachments.begin(), doc.mountedAttachments.end(),
+                    [&](const auto& value) { return value.assetId == oldAssetId; }) > 1) {
+                    auto copy = *asset;
+                    copy.id = service.makeUniqueId(oldAssetId + "_tcp");
+                    doc.attachmentAssets.push_back(copy);
+                    attachment->assetId = copy.id;
+                    asset = service.findAttachmentAsset(copy.id);
+                }
+                asset->assetKind = "tool";
+                asset->assetType = "tool";
+                if(auto* source = service.findSceneObject(attachment->sourceObjectId)) source->objectType = "tool";
+                auto& frames = asset->functionalFrames;
+                frames.erase(std::remove_if(frames.begin(), frames.end(), [](const auto& f) {
+                    return f.frameType == "tcp";
+                }), frames.end());
+                for(auto& frame : frames) frame.primary = false;
+                simulation_project::AttachmentFunctionalFrameDesc tcp;
+                tcp.id = asset->id + ".tcp";
+                tcp.name = "TCP";
+                tcp.frameType = "tcp";
+                tcp.primary = true;
+                tcp.assetMountToFrame = assetToTcp;
+                frames.push_back(tcp);
+                if(!service.setActiveMountedAttachment(attachment->mountFrameId, attachment->id, &error)) return false;
+                const auto key = "rws.tcp." + attachment->id;
+                const auto payload = QJsonDocument(QJsonObject{{"convention", convention},
+                    {"reference_link", referenceLink}}).toJson(QJsonDocument::Compact).toStdString();
+                auto pref = std::find_if(doc.extensions.begin(), doc.extensions.end(), [&](const auto& e) { return e.key == key; });
+                if(pref == doc.extensions.end()) doc.extensions.push_back({key, 1, payload});
+                else pref->serializedPayload = payload;
+                if(coordinateFrameDeleted(doc,"tcp:"+attachment->id))
+                    setCoordinateFrameState(doc,"tcp:"+attachment->id,true,false);
+                changed = true;
+                return true;
+            });
+        result.success = mutation.success;
+        result.message = mutation.success ? QStringLiteral("TCP updated.") : mutation.message;
         return result;
     }
 

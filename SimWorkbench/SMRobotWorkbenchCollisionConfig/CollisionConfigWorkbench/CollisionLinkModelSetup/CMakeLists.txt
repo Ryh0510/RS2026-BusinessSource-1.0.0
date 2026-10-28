@@ -73,9 +73,7 @@ set_target_properties(${TARGET_NAME}
 )
 
 if(BuildTests)
-    add_subdirectory(
-        regression/CollisionLinkModelsControllerSmokeTest
-        ${PROJECT_BINARY_DIR}/tests/collision_variants)
+    rs2026_add_test_unit(regression/CollisionLinkModelsControllerSmokeTest)
 endif()
 
 if(ExportPacakge${PACKAGE_NAME})

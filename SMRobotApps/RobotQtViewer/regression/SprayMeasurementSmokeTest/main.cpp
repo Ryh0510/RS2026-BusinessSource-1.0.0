@@ -21,6 +21,11 @@
 #include "RobotQtViewerViewportEventController.h"
 #include <SceneExplorerModuleController.h>
 #include <SceneExplorerWidget.h>
+#include <CollisionWorkbenchModuleController.h>
+#include <CollisionWorkbenchPanel.h>
+#include <CollisionWorkbenchServices.h>
+#include <CollisionDetectorCommandController.h>
+#include <SceneEntityWorkflowController.h>
 #include <MotionPlanningCore/MotionPlanning.h>
 #include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/CdfJointAngleImport.h>
@@ -36,6 +41,7 @@
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 #include <ProjectMotionPlanning/LayeredIkGraph.h>
 #include <SimulationProject/ProjectIo.h>
+#include <SimulationProject/ProjectDocumentService.h>
 #include <Eigen/SVD>
 #include <iomanip>
 
@@ -71,7 +77,7 @@ namespace
     void writeFixture(const std::filesystem::path& folder)
     {
         std::ofstream(folder / "gun.urdf") << R"(<robot name="gun">
-<link name="base"/><link name="carriage"/><link name="Link6"/>
+<link name="base"/><link name="carriage"/><link name="Link6"><collision><geometry><sphere radius="0.01"/></geometry></collision></link>
 <joint name="slide" type="prismatic"><parent link="base"/><child link="carriage"/>
 <axis xyz="1 0 0"/><limit lower="-10" upper="10" effort="1" velocity="1"/></joint>
 <joint name="tilt" type="revolute"><parent link="carriage"/><child link="Link6"/>
@@ -120,7 +126,7 @@ namespace
         ProjectScene scene;
         scene.setProjectDocument(document, folder);
         require(scene.initialize(), "Synthetic scene initializes with collision disabled");
-        auto value = scene.sprayMeasurement("gun");
+        auto value = scene.sprayMeasurement("gun", "burnner");
         require(value.valid && std::abs(value.distanceMeters - 0.3) < 1.0e-6,
             "Nearest forward STL intersection is 0.3 m");
         require(value.valid && std::abs(value.angleDegrees) < 1.0e-6,
@@ -148,12 +154,12 @@ namespace
         require(scene.endEffectorTracePointCount() == 0, "Playback reset clears trace independently");
         scene.setRobotJointValue("gun", "slide", 0.0);
         scene.setSprayRangeVisible("gun", true);
-        const auto visible = scene.sprayMeasurement("gun");
+        const auto visible = scene.sprayMeasurement("gun", "burnner");
         require(visible.valid && visible.distanceMeters == value.distanceMeters,
             "Measurement is independent of cone visibility");
         constexpr double pi = 3.14159265358979323846;
         scene.setRobotJointValue("gun", "tilt", pi / 6.0);
-        value = scene.sprayMeasurement("gun");
+        value = scene.sprayMeasurement("gun", "burnner");
         require(value.valid && std::abs(value.distanceMeters - 0.3 / std::cos(pi / 6.0)) < 1.0e-6,
             "FK tilt updates ray distance immediately");
         require(value.valid && std::abs(value.angleDegrees + 30.0) < 1.0e-6,
@@ -162,32 +168,359 @@ namespace
         require(flipped.valid && std::abs(flipped.angleDegrees - value.angleDegrees) < 1.0e-6,
             "Reversed STL winding preserves signed angle");
         scene.setRobotJointValue("gun", "tilt", -pi / 6.0);
-        value = scene.sprayMeasurement("gun");
+        value = scene.sprayMeasurement("gun", "burnner");
         require(value.valid && std::abs(value.angleDegrees - 30.0) < 1.0e-6,
             "Opposite tilt gives +30 degrees");
         scene.setRobotJointValue("gun", "tilt", 0.0);
         simulation_project::TransformDesc gunPose;
         gunPose.z = 0.1;
         scene.setRobotBaseTransform("gun", gunPose);
-        value = scene.sprayMeasurement("gun");
+        value = scene.sprayMeasurement("gun", "burnner");
         require(value.valid && std::abs(value.distanceMeters - 0.2) < 1.0e-6,
             "Nozzle translation changes distance to 0.2 m");
         simulation_project::TransformDesc targetPose;
         targetPose.z = 0.4;
         scene.setRobotBaseTransform("burnner", targetPose);
-        value = scene.sprayMeasurement("gun");
+        value = scene.sprayMeasurement("gun", "burnner");
         require(value.valid && std::abs(value.distanceMeters - 0.3) < 1.0e-6,
             "Target transform updates despite cached local mesh");
         scene.setRobotJointValue("gun", "tilt", pi);
-        require(!scene.sprayMeasurement("gun").valid, "Backward-only intersections are invalid");
+        require(!scene.sprayMeasurement("gun", "burnner").valid, "Backward-only intersections are invalid");
         scene.setRobotJointValue("gun", "tilt", pi / 2.0);
-        require(!scene.sprayMeasurement("gun").valid, "Parallel ray is invalid");
+        require(!scene.sprayMeasurement("gun", "burnner").valid, "Parallel ray is invalid");
         require(!scene.sprayMeasurement("missing").valid, "Missing nozzle is invalid");
         require(!scene.sprayMeasurement("gun", "missing").valid, "Missing target is invalid");
         scene.appendEndEffectorTraceSample();
         require(scene.endEffectorTracePointCount() == 1, "Trace still samples when spray ray misses target");
         scene.setProjectDocument(document, folder);
         require(scene.endEffectorTracePointCount() == 0, "Project reload clears trace");
+    }
+
+    void verifyAWorkpiece(const std::filesystem::path& folder, const std::filesystem::path& projectPath)
+    {
+        using namespace simulation_project;
+        using namespace motion_planning;
+        ProjectDocument document;
+        RobotDesc gun;
+        gun.id="ABB4600_urdf"; gun.name="ABB4600"; gun.sourceType="urdf";
+        gun.sourcePath=(folder/"gun.urdf").generic_string();
+        document.robots.push_back(gun);
+        RobotDesc decoy; decoy.id="burnner"; decoy.name="burnner"; decoy.sourceType="urdf";
+        decoy.sourcePath=(folder/"target.urdf").generic_string();
+        decoy.baseTransform.z=0.1;
+        document.robots.push_back(decoy);
+        SceneObjectDesc workpiece;
+        workpiece.id="A"; workpiece.name="A.STL"; workpiece.objectType="workpiece";
+        workpiece.sourcePath=(folder/"surface.stl").generic_string();
+        workpiece.visualScale=workpiece.collisionScale=0.5;
+        workpiece.transform.z=0.6;
+        document.objects.push_back(workpiece);
+        ProjectScene scene;
+        scene.setProjectDocument(document,folder);
+        require(scene.initialize(),"A.STL workpiece initializes alongside a burnner URDF decoy");
+        auto measured=scene.sprayMeasurement(gun.id);
+        require(measured.valid && std::abs(measured.distanceMeters-0.6)<1e-6 && std::abs(measured.angleDegrees)<1e-6,
+            "Default spray distance/angle use the STL object, ignoring the closer URDF");
+        auto pose=workpiece.transform; pose.z=0.8; pose.roll=3.141592653589793/6.0;
+        require(scene.setSceneObjectTransform("A",pose),"Workpiece can move after mesh caching");
+        measured=scene.sprayMeasurement(gun.id);
+        require(measured.valid && std::abs(measured.distanceMeters-0.8)<1e-6 && std::abs(std::abs(measured.angleDegrees)-30.0)<1e-5,
+            "Cached STL follows the workpiece's current translation and rotation");
+        ProjectCdfQpRepairOptions options;
+        std::string error, detector;
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,gun.id,options,&detector),
+            "Default CDF detector configures ABB4600 versus A.STL");
+        const auto& configured=document.collision.detectors.back();
+        require(configured.type=="RobotObject" && configured.pairGenerators.size()==1 &&
+            configured.pairGenerators.front().robotId==gun.id && configured.pairGenerators.front().objectId=="A",
+            "Collision query contains exactly the robot/A workpiece pair");
+        // A closer unrelated object must not change the dedicated distance result.
+        auto unrelated=workpiece; unrelated.id="closer_unrelated"; unrelated.name="Unrelated"; unrelated.transform.z=0.1;
+        document.objects.push_back(unrelated);
+        ProjectPlanningRequest request; request.robotId=gun.id; request.jointNames={"tilt","slide"};
+        request.start=request.goal={0.0,0.0}; request.collisionDetectorIds={detector};
+        auto collisionScene=ProjectPlanningSceneBuilder::build(document,folder,request,&error);
+        require(bool(collisionScene),"Dedicated nearest-distance snapshot builds");
+        if(collisionScene) {
+            const auto sample=collisionScene->nearestDistance({0.0,0.0});
+            require(sample.valid && std::abs(sample.distanceMeters-0.59)<1e-5 && sample.detectorId==detector,
+                "Nearest distance is robot/A clearance, excluding closer unrelated geometry");
+        }
+        auto absent=document; absent.objects.clear();
+        scene.setProjectDocument(absent,folder);
+        require(scene.initialize() && !scene.sprayMeasurement(gun.id).valid,
+            "Missing A.STL reports invalid instead of measuring burnner");
+        for(bool keepA : {false,true}) {
+            auto saved=document;
+            ProjectDocumentService service(saved);
+            ProjectReferenceCleanupReport cleanup;
+            if(!keepA) {
+                require(service.removeObject("A",cleanup,&error) && service.removeObject("closer_unrelated",cleanup,&error),
+                    "Scene commands remove workpieces and clean their detector references");
+            }
+            require(service.removeRobot("burnner",cleanup,&error),"Scene command deletes the burnner robot");
+            const auto path=folder/(keepA ? "deleted-with-A.sys.json" : "deleted-no-A.sys.json");
+            const bool saveOk=saveProjectDocumentV3(path,service.document(),&error);
+            require(saveOk,"Deleted scene saves as a new system project");
+            if(!saveOk) { std::cerr << "Deletion fixture save: " << error << '\n'; continue; }
+            ProjectDocument reopened;
+            require(loadProjectDocument(path,reopened,&error),"Saved scene reopens");
+            robot_qt_viewer::RobotQtViewerEventHub hub;
+            ProjectSession session; session.setDocument(reopened,path,false,false);
+            robot_qt_viewer::RobotQtViewerDocumentController documents(session,hub);
+            robot_qt_viewer::RobotQtViewerSelectionModel selection(hub);
+            robot_qt_viewer::RobotQtViewerViewportPreviewState preview(hub);
+            robot_qt_viewer::RobotQtViewerOperationStatusStore status(hub);
+            robot_qt_viewer::RobotQtViewerDocumentContext context(session,documents,selection,preview,hub,status);
+            MotionPlanningEditorWidget widget;
+            robot_qt_viewer::MotionPlanningModuleController controller(widget,context);
+            robot_qt_viewer::RobotQtViewerEvent opened;
+            opened.kind=robot_qt_viewer::RobotQtViewerEventKind::ProjectOpened;
+            controller.handleEvent(opened);
+            require(context.document().robots.size()==1 && context.document().robots.front().id==gun.id,
+                "Opening Motion Planning and reloading never resurrect the deleted URDF");
+            require(saveProjectDocumentV3(path,context.document(),&error) && loadProjectDocument(path,reopened,&error) && reopened.robots.size()==1,
+                "Deletion remains stable after another save/reopen");
+        }
+        auto missing=document; missing.objects.clear(); missing.robots.resize(1);
+        missing.collision.query.enabled=false;
+        require(!ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(missing,gun.id,options) &&
+            missing.robots.size()==1 && missing.objects.empty() && !missing.collision.query.enabled,
+            "Missing collision target fails without inserting entities or enabling queries");
+        ProjectDocument actual;
+        require(loadProjectDocument(projectPath,actual,&error),"Requested default ABB4600-A scene loads");
+        require(actual.robots.size()==1 && actual.robots.front().id=="ABB4600_urdf" &&
+            actual.objects.size()==1 && actual.objects.front().id=="A",
+            "Requested scene contains ABB4600 and A.STL, without burnner");
+        require(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(actual,"ABB4600_urdf",options),
+            "Requested default scene accepts the robot/A collision setup");
+        ProjectScene actualScene; actualScene.setProjectDocument(actual,projectPath.parent_path());
+        require(actualScene.initialize(),"Actual ABB4600 URDF and scaled A.STL initialize successfully");
+    }
+
+    class CollisionConfigTestServices final : public robot_qt_viewer::CollisionWorkbenchServices
+    {
+    public:
+        explicit CollisionConfigTestServices(robot_qt_viewer::RobotQtViewerDocumentContext& context) : context(context) {}
+        const simulation_project::ProjectDocument& document() const override { return context.document(); }
+        const simulation_project::ProjectSession& session() const override { return context.projectSession(); }
+        robot_qt_viewer::ProjectMutationResult mutateProject(const QString& source,
+            robot_qt_viewer::ProjectDirtyPolicy policy, const robot_qt_viewer::ProjectMutation& mutation) override
+        { return context.documentController().mutateProject(source, policy, mutation); }
+        const QString& selectedRobotId() const override { return empty; }
+        const QString& selectedLinkName() const override { return empty; }
+        const QString& selectedObjectId() const override { return empty; }
+        const QString& selectedToolAttachmentId() const override { return empty; }
+        const QString& collisionPairRobotA() const override { return empty; }
+        const QString& collisionPairLinkA() const override { return empty; }
+        void setActiveCollisionDetectorContext(const QString&) override {}
+        void setMarkedCollisionPairAContext(const QString&, const QString&) override {}
+        robot_qt_viewer::ProjectSessionWorkflowResult saveProject(const std::filesystem::path&, bool, const QString&) override { return {}; }
+        void reloadViewport(const QString&) override {}
+        bool refreshViewportCollisionConfiguration(const QString&) override { return false; }
+        bool saveRobotCollisionOverride(const std::filesystem::path&, const simulation_project::RobotCollisionOverrideDesc&, std::string*) override { return false; }
+        bool exportRobotCollisionOverrideToUrdf(const std::filesystem::path&, const std::filesystem::path&,
+            const simulation_project::RobotCollisionOverrideDesc&, std::string*) override { return false; }
+    private:
+        robot_qt_viewer::RobotQtViewerDocumentContext& context;
+        QString empty;
+    };
+
+    void verifyCollisionConfigNearest(QApplication& application, const std::filesystem::path& folder)
+    {
+        using namespace simulation_project;
+        using namespace robot_qt_viewer;
+        {
+            ProjectDocument draft;
+            CollisionDetectorDesc scoped; scoped.id="draft"; scoped.type="SceneAll"; scoped.queryPolicy="AllEnabled";
+            CollisionPairGeneratorDesc all; all.type="SceneAll"; scoped.pairGenerators.push_back(all);
+            draft.collision.detectors.push_back(scoped);
+            CollisionDetectorDraftMemberView link; link.robotId="gun"; link.linkName="Link6";
+            CollisionDetectorDraftMemberView target; target.objectId="A";
+            auto bound=CollisionDetectorCommandController::bindDetectorPairGenerators(draft,nullptr,"draft",{link},{target});
+            require(bound.success && draft.collision.detectors.front().pairGenerators.size()==1 &&
+                draft.collision.detectors.front().pairGenerators.front().type=="LinkObject",
+                "Binding explicit pairs replaces the default SceneAll fallback");
+            auto secondLink=link; secondLink.linkName="carriage";
+            bound=CollisionDetectorCommandController::bindDetectorPairGenerators(draft,nullptr,"draft",{secondLink},{target});
+            require(bound.success && draft.collision.detectors.front().pairGenerators.size()==2,
+                "Adding explicit pairs preserves previously selected pairs");
+            draft.collision.detectors.front().pairGenerators.insert(draft.collision.detectors.front().pairGenerators.begin(),all);
+            bound=CollisionDetectorCommandController::bindDetectorPairGenerators(draft,nullptr,"draft",{link},{target});
+            require(bound.success && draft.collision.detectors.front().pairGenerators.size()==2 &&
+                std::none_of(draft.collision.detectors.front().pairGenerators.begin(),draft.collision.detectors.front().pairGenerators.end(),
+                    [](const auto& rule) { return rule.type=="SceneAll"; }),
+                "Rebinding existing pairs repairs a legacy mixed SceneAll detector without duplicating pairs");
+        }
+        ProjectDocument document;
+        RobotDesc gun; gun.id="gun"; gun.name="gun"; gun.sourceType="urdf";
+        gun.sourcePath=(folder/"gun.urdf").generic_string(); document.robots.push_back(gun);
+        SceneObjectDesc workpiece; workpiece.id="A"; workpiece.name="A.STL";
+        workpiece.sourcePath=(folder/"surface.stl").generic_string(); workpiece.transform.z=0.6;
+        document.objects.push_back(workpiece);
+        motion_planning::ProjectCdfQpRepairOptions options;
+        std::string detectorId;
+        require(motion_planning::ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document,"gun",options,&detectorId),
+            "Configuration fixture creates robot/A detector");
+        auto& detector=document.collision.detectors.back();
+        detector.visualization.visible=false;
+        detector.visualization.showNearestPoints=false;
+        auto disabled=detector; disabled.id="disabled"; disabled.enabled=false;
+        document.collision.detectors.push_back(disabled);
+        ProjectSession session; session.setDocument(document,folder/"config.sys.json",false,false);
+        RobotQtViewerEventHub hub;
+        RobotQtViewerDocumentController documents(session,hub);
+        RobotQtViewerSelectionModel selection(hub);
+        RobotQtViewerViewportPreviewState preview(hub);
+        RobotQtViewerOperationStatusStore status(hub);
+        RobotQtViewerDocumentContext context(session,documents,selection,preview,hub,status);
+        RobotViewport viewport; viewport.resize(640,480);
+        viewport.loadProjectDocument(document,folder); viewport.show(); application.processEvents();
+        RobotQtViewerViewportProjectState projectState;
+        RobotQtViewerCollisionViewportAdapter collisionViewport(viewport,projectState);
+        context.setCollisionViewport(&collisionViewport);
+        CollisionConfigTestServices services(context);
+        CollisionWorkbenchPanel panel;
+        CollisionWorkbenchModuleController controller(panel,context,services);
+        controller.refreshInspector({}); panel.selectDetector(QString::fromStdString(detectorId));
+        controller.setWorkbenchActive(true);
+        auto* result=panel.findChild<QLabel*>(QStringLiteral("collisionConfigNearestResult"));
+        require(result && result->text().contains("paused"),"Collision configuration explains paused queries without displaying an old distance");
+        require(viewport.setCollisionQueriesEnabled(true),"Starting collision detection builds the lazy collision runtime");
+        auto waitFor=[&](const QString& text) {
+            QElapsedTimer timer; timer.start();
+            while(result && !result->text().contains(text) && timer.elapsed()<5000) {
+                application.processEvents(QEventLoop::AllEvents,20);
+            }
+            return result && result->text().contains(text);
+        };
+        require(waitFor("590.000 mm"),"Starting detection automatically displays nearest distance even with the overlay hidden");
+        require(viewport.refreshCollisionConfiguration(document,folder) && viewport.collisionQueriesEnabled(),
+            "Editing collision configuration preserves running detection");
+        const auto refreshed=viewport.collisionDetectors();
+        const auto refreshedIt=std::find_if(refreshed.begin(),refreshed.end(),[&](const auto& item) { return item.id==detectorId; });
+        require(refreshedIt!=refreshed.end() && refreshedIt->valid && refreshedIt->includePairCount>0,
+            "Live configuration refresh rebuilds collision geometry and pair endpoints");
+        application.processEvents();
+        require(waitFor("590.000 mm"),"Live configuration refresh continues to display the measured distance");
+        auto pose=workpiece.transform; pose.z=0.8;
+        require(viewport.setSceneObjectTransform("A",pose) && waitFor("790.000 mm"),
+            "Configuration panel automatically follows moved workpiece geometry");
+        pose.z=0.0;
+        require(viewport.setSceneObjectTransform("A",pose) && waitFor("Nearest distance: 0.000 mm") &&
+            result->text().contains("Collision: Yes"),
+            "Contact reports zero clearance even when the backend suppresses nearest-point coordinates");
+        pose.z=0.8;
+        require(viewport.setSceneObjectTransform("A",pose) && waitFor("790.000 mm"),
+            "Separating the workpiece replaces collision clearance with the measured distance");
+        panel.selectDetector(QStringLiteral("disabled"));
+        require(waitFor("detector disabled"),"Selecting a disabled detector clears the previous distance");
+        panel.selectDetector(QString::fromStdString(detectorId));
+        require(waitFor("790.000 mm"),"Switching back restores the selected detector's current distance");
+        viewport.setCollisionQueriesEnabled(false);
+        require(waitFor("paused") && !result->text().contains("790.000"),"Pausing detection clears stale distance in configuration panel");
+        controller.setWorkbenchActive(false);
+        viewport.close();
+    }
+
+    void verifyImportedCollisionModels(QApplication& application, const std::filesystem::path& folder,
+        const std::filesystem::path& robotPath, const std::filesystem::path& objectPath)
+    {
+        using namespace simulation_project;
+        using namespace robot_qt_viewer;
+        for(const double scale : {1.0,0.001}) {
+            ProjectSession session; session.setDocument(ProjectDocument{},folder/"new-project.sys.json",false,false);
+            RobotQtViewerEventHub hub;
+            RobotQtViewerDocumentController documents(session,hub);
+            RobotQtViewerSelectionModel selection(hub);
+            RobotQtViewerViewportPreviewState preview(hub);
+            RobotQtViewerOperationStatusStore status(hub);
+            RobotQtViewerDocumentContext context(session,documents,selection,preview,hub,status);
+            SceneEntityWorkflowController importer(context);
+            const auto robot=importer.importRobotFromPath(robotPath,"urdf");
+            const auto object=importer.importSceneObjectFromPath(objectPath,"workpiece",scale);
+            require(robot.success && object.success,"New project imports the supplied URDF and Unicode STL through scene commands");
+            if(!robot.success || !object.success) {
+                std::cerr << robot.message.toStdString() << ' ' << object.message.toStdString() << '\n';
+                continue;
+            }
+            auto document=context.document();
+            CollisionSelectionSetDesc robots; robots.id="robot-set";
+            CollisionSelectionSetMemberDesc robotMember; robotMember.robotId=robot.entityId.toStdString();
+            robots.members.push_back(robotMember);
+            CollisionSelectionSetDesc objects; objects.id="object-set";
+            CollisionSelectionSetMemberDesc objectMember; objectMember.objectId=object.entityId.toStdString();
+            objects.members.push_back(objectMember);
+            document.collision.selectionSets={robots,objects};
+            CollisionDetectorDesc detector; detector.id="new-project-pair"; detector.name="ABB / imported STL";
+            detector.queryPolicy="BetweenSets"; detector.selectionSetAId=robots.id; detector.selectionSetBId=objects.id;
+            detector.visualization.visible=false; detector.visualization.showNearestPoints=false;
+            document.collision.detectors={detector}; document.collision.query.enabled=true;
+            document.objects.front().transform.x=5.0;
+            session.setDocument(document,folder/"new-project.sys.json",false,false);
+            RobotViewport viewport; viewport.resize(640,480);
+            viewport.loadProjectDocument(document,folder); viewport.show(); application.processEvents();
+            RobotQtViewerViewportProjectState projectState;
+            RobotQtViewerCollisionViewportAdapter collisionViewport(viewport,projectState);
+            context.setCollisionViewport(&collisionViewport);
+            CollisionConfigTestServices services(context);
+            CollisionWorkbenchPanel panel;
+            CollisionWorkbenchModuleController controller(panel,context,services);
+            controller.refreshInspector({}); panel.selectDetector(QString::fromStdString(detector.id));
+            controller.setWorkbenchActive(true);
+            require(viewport.setCollisionQueriesEnabled(true),"New project starts collision queries");
+            auto* label=panel.findChild<QLabel*>(QStringLiteral("collisionConfigNearestResult"));
+            QElapsedTimer timer; timer.start();
+            while(label && !label->text().contains("Collision:") && timer.elapsed()<15000)
+                application.processEvents(QEventLoop::AllEvents,20);
+            const auto results=viewport.collisionDetectors();
+            require(results.size()==1 && results.front().valid && results.front().hasResult &&
+                results.front().effectiveIncludePairCount>0 && results.front().nearest.valid &&
+                results.front().nearest.distance>0 && label && label->text().contains("Collision: No"),
+                "Actual ABB and imported STL return positive clearance and clear status in configuration panel");
+            if(label) std::cout << "Import scale=" << scale << "\n" << label->text().toStdString() << '\n';
+            if(!results.empty()) std::cout << "Configured pairs=" << results.front().includePairCount
+                << " effective pairs=" << results.front().effectiveIncludePairCount
+                << " nearest state=" << results.front().nearest.state
+                << " error=" << results.front().errorMessage << '\n';
+            controller.setWorkbenchActive(false); viewport.close();
+        }
+    }
+
+    void inspectProjectCollision(QApplication& application, const std::filesystem::path& projectPath,
+        const std::string& detectorId)
+    {
+        using namespace simulation_project;
+        ProjectDocument original;
+        std::string error;
+        require(loadProjectDocument(projectPath,original,&error),"Saved collision project loads");
+        for(const bool selectedOnly : {false,true}) {
+            auto document=original;
+            if(selectedOnly) for(auto& detector : document.collision.detectors) {
+                if(detector.id==detectorId) {
+                    detector.pairGenerators.erase(std::remove_if(detector.pairGenerators.begin(),detector.pairGenerators.end(),
+                        [](const auto& generator) { return generator.type=="SceneAll"; }),detector.pairGenerators.end());
+                }
+            }
+            ProjectScene scene; scene.setProjectDocument(document,projectPath.parent_path());
+            require(scene.initialize(),"Saved collision project initializes");
+            require(scene.setActiveCollisionDetector(detectorId),"Requested detector exists");
+            require(scene.setCollisionQueriesEnabled(true),"Saved collision project starts queries");
+            scene.update(0.0);
+            const auto results=scene.collisionDetectors();
+            for(const auto& result : results) {
+                if(result.id!=detectorId) continue;
+                std::cout << "INSPECT selectedOnly=" << selectedOnly << " detector=" << result.id
+                    << " valid=" << result.valid << " hasResult=" << result.hasResult
+                    << " pairs=" << result.includePairCount << " effective=" << result.effectiveIncludePairCount
+                    << " collision=" << result.inCollision << " contacts=" << result.contactCount
+                    << " nearest=" << result.nearest.valid << " distance=" << result.nearest.distance
+                    << " state=" << result.nearest.state << " reason=" << result.nearest.reason
+                    << " error=" << result.errorMessage << '\n';
+                if(selectedOnly) require(result.valid && result.hasResult && result.effectiveIncludePairCount==7 &&
+                    (result.nearest.valid || result.inCollision),"Restricted saved detector returns a valid distance or collision");
+            }
+        }
     }
 
     void verifyPlot(QApplication& application)
@@ -1800,6 +2133,7 @@ namespace
             }
             require(timer.elapsed() < 60000, "Background multi IK finishes without blocking GUI");
         };
+        const auto plansBeforeMulti = MotionPlanningProjectStore::plans(session.document());
         widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);
         waitMulti();
         require(multiPoints->count() == static_cast<int>(imported.plan.cartesianControlPoints.points.size()) &&
@@ -1848,7 +2182,10 @@ namespace
             }
             require(services.samples == multiPoints->count(), "Multi playback applies exactly one solution per control point and draws trace");
             const auto afterMulti = MotionPlanningProjectStore::plans(session.document());
-            require(afterMulti.size() == 1 && afterMulti[0].trajectory.empty(), "Multi debug playback does not overwrite imported trajectory");
+            const auto importedAfterMulti=std::find_if(afterMulti.begin(),afterMulti.end(),
+                [&](const auto& plan) { return plan.id==imported.plan.id; });
+            require(afterMulti.size() == plansBeforeMulti.size() && importedAfterMulti!=afterMulti.end() &&
+                importedAfterMulti->trajectory.empty(), "Multi debug playback does not overwrite imported trajectory");
             widget.multiIkPlaybackRequested(10);
             widget.playbackStopRequested();
             require(multiPlay->isEnabled(), "Multi playback can stop and restart");
@@ -2121,13 +2458,13 @@ namespace
         gun.sourcePath = (folder / "gun.urdf").generic_string();
         gun.collisionEnabled = false;
         document.robots.push_back(gun);
-        simulation_project::RobotDesc target;
-        target.id = "burnner";
-        target.sourceType = "urdf";
-        target.sourcePath = (folder / "target.urdf").generic_string();
-        target.baseTransform.z = 0.3;
+        simulation_project::SceneObjectDesc target;
+        target.id = "A"; target.name = "A.STL"; target.objectType = "workpiece";
+        target.sourcePath = (folder / "surface.stl").generic_string();
+        target.visualScale = target.collisionScale = 1.0;
+        target.transform.z = 0.3;
         target.collisionEnabled = false;
-        document.robots.push_back(target);
+        document.objects.push_back(target);
         motion_planning::StoredMotionPlan plan;
         plan.id = "spray-test";
         plan.name = "Spray test";
@@ -2403,6 +2740,31 @@ int main(int argc, char** argv)
     if(failures) { return 1; }
     const std::filesystem::path folder(temporary.path().toStdWString());
     writeFixture(folder);
+    if(argc >= 4 && std::string(argv[1]) == "--collision-project") {
+        const auto arguments=application.arguments();
+        try { inspectProjectCollision(application,std::filesystem::path(arguments[2].toStdWString()),arguments[3].toStdString()); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        return failures ? 1 : 0;
+    }
+    if(argc >= 4 && std::string(argv[1]) == "--collision-models") {
+        const auto arguments=application.arguments();
+        try { verifyImportedCollisionModels(application,folder,
+            std::filesystem::path(arguments[2].toStdWString()),std::filesystem::path(arguments[3].toStdWString())); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        return failures ? 1 : 0;
+    }
+    if(argc >= 2 && std::string(argv[1]) == "--collision-config-nearest") {
+        try { verifyCollisionConfigNearest(application,folder); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        return failures ? 1 : 0;
+    }
+    if(argc >= 3 && std::string(argv[1]) == "--a-workpiece") {
+        try { verifyAWorkpiece(folder,std::filesystem::u8path(argv[2])); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        std::cout << "A workpiece failures: " << failures << '\n';
+        return failures ? 1 : 0;
+    }
+
     if(argc >= 6 && std::string(argv[1]) == "--cdf-top1-refined") {
         runTop1Repair(std::filesystem::u8path(argv[2]),std::filesystem::u8path(argv[3]),std::filesystem::u8path(argv[4]),std::filesystem::u8path(argv[5]));
         return failures?1:0;

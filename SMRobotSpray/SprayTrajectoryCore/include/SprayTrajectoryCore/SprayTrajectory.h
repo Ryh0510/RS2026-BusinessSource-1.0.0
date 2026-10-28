@@ -10,6 +10,12 @@
 
 namespace spraytrajectory
 {
+    enum class SprayPathPointType
+    {
+        Regular = 0,
+        AirMove = 1
+    };
+
     struct SprayProcessState
     {
         std::string processId;
@@ -26,6 +32,9 @@ namespace spraytrajectory
         double targetDistance{ 0.0 };
         Eigen::Vector3d targetNormal = Eigen::Vector3d::UnitZ();
         int workpieceRegionId{ -1 };
+        double velocity{ 0.0 };
+        double acceleration{ 0.0 };
+        SprayPathPointType pointType{ SprayPathPointType::Regular };
     };
 
     struct SpraySegment
@@ -58,6 +67,9 @@ namespace spraytrajectory
         double targetDistance{ 0.0 };
         Eigen::Vector3d targetNormal = Eigen::Vector3d::UnitZ();
         int workpieceRegionId{ -1 };
+        double velocity{ 0.0 };
+        double acceleration{ 0.0 };
+        SprayPathPointType pointType{ SprayPathPointType::Regular };
     };
 
     class SprayTrajectorySampler
@@ -66,6 +78,12 @@ namespace spraytrajectory
         static std::vector<SprayTrajectorySample> sample(
             const SprayTrajectory& trajectory,
             double timeStep);
+
+        // Return the source trajectory points without resampling. This is the
+        // stable counterpart to sample() for prediction paths that must retain
+        // the original timing and process boundaries.
+        static std::vector<SprayTrajectorySample> originalSamples(
+            const SprayTrajectory& trajectory);
 
         static SprayTrajectorySample evaluate(
             const SprayTrajectory& trajectory,

@@ -1,3 +1,5 @@
+#include <QMenu>
+#include <QContextMenuEvent>
 #include "RobotViewport.h"
 
 #include "ProjectScene.h"
@@ -18,6 +20,11 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QWheelEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QUuid>
+#include <cmath>
 
 #include <chrono>
 #include <algorithm>
@@ -254,11 +261,42 @@ void RobotViewport::setDefaultBackgroundColor(const simulation_project::ColorDes
 
 void RobotViewport::setEnvironmentPreset(ProjectSceneEnvironmentPreset preset)
 {
-    m_environmentPreset = preset;
-    if(m_scene != nullptr) {
-        m_scene->setEnvironmentPreset(preset);
+    ProjectSceneEnvironmentSelection selection;
+    selection.preset = preset;
+    setEnvironmentSelection(selection);
+}
+
+bool RobotViewport::setEnvironmentSelection(const ProjectSceneEnvironmentSelection& selection, std::string* error)
+{
+    std::string detail;
+    if(!validateProjectSceneEnvironment(selection, detail)) {
+        if(error) *error = detail;
+        return false;
     }
+    if(m_scene && m_scene->isInitialized() && context() && isValid()) {
+        makeCurrent();
+        CurrentContextGuard guard(*this);
+        if(!m_scene->setEnvironmentSelection(selection, &detail)) {
+            if(error) *error = detail;
+            return false;
+        }
+    }
+    m_environmentSelection = selection;
+    m_environmentPreset = selection.preset;
+    if(environmentSceneInitialized()) emit environmentCommitted();
+    if(error) error->clear();
     update();
+    return true;
+}
+
+bool RobotViewport::environmentSceneInitialized() const
+{
+    return m_scene && m_scene->isInitialized() && context() && isValid();
+}
+
+ProjectSceneEnvironmentSelection RobotViewport::environmentSelection() const
+{
+    return m_environmentSelection;
 }
 
 ProjectSceneEnvironmentPreset RobotViewport::environmentPreset() const
@@ -312,6 +350,8 @@ bool RobotViewport::loadToolAssetPreview(
     releaseScene();
     m_scene = std::make_unique<ProjectScene>();
     m_scene->setDefaultBackgroundColor(m_defaultBackgroundColor);
+    m_environmentSelection = ProjectSceneEnvironmentSelection{};
+    m_environmentSelection.preset = ProjectSceneEnvironmentPreset::Studio;
     m_scene->setEnvironmentPreset(ProjectSceneEnvironmentPreset::Studio);
     m_scene->setToolAssetPreview(asset, basePath);
     m_scene->setInteractionMode(m_interactionMode);
@@ -608,6 +648,12 @@ bool RobotViewport::setRobotJointValues(const QString& robotId,
     if(m_scene == nullptr || !m_scene->setRobotJointValues(robotId.toStdString(), jointNames, values)) {
         return false;
     }
+    // Explicit joint playback owns the displayed robot. A pending agent preview
+    // or demonstration motion must not paint another pose over its joint updates.
+    m_scene->setRobotAutoMotion(robotId.toStdString(),false,0.0,1.0);
+    if(m_sdkPreviewRobot==robotId.toStdString())m_sdkPreviewRobot.clear();
+    m_manualJointControlExpiry=Clock::now()+std::chrono::seconds(1);
+    m_manualJointControlRobot=robotId.toStdString();
     update();
     return true;
 }
@@ -646,6 +692,11 @@ void RobotViewport::previewSceneObjectTransform(
         m_scene->previewSceneObjectTransform(objectId.toStdString(), transform);
         update();
     }
+}
+
+simulation_project::ProjectDocument RobotViewport::runtimeDocumentSnapshot() const
+{
+    return m_scene ? m_scene->runtimeDocumentSnapshot() : m_pendingProjectDocument;
 }
 
 bool RobotViewport::setSceneObjectTransform(
@@ -829,6 +880,8 @@ bool RobotViewport::collisionQueriesEnabled() const
 
 bool RobotViewport::setCollisionQueriesEnabled(bool enabled)
 {
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
     const bool changed = m_scene != nullptr && m_scene->setCollisionQueriesEnabled(enabled);
     if(changed) {
         update();
@@ -882,8 +935,161 @@ bool RobotViewport::updateCollisionDetectorRuntimeOptions(const simulation_proje
     return changed;
 }
 
+bool RobotViewport::applyUserCoordinateFrameDocument(const simulation_project::ProjectDocument& document)
+{
+    bool success=false;
+    if(m_scene) {
+        makeCurrent();
+        CurrentContextGuard contextGuard(*this);
+        success=m_scene->applyUserCoordinateFrameDocument(document);
+    }
+    update();
+    repaint();
+    return success;
+}
+
+bool RobotViewport::previewSprayDirection(const QJsonObject& trajectory, QString& error)
+{
+    if(!m_scene){error="Scene unavailable";return false;}
+    const auto points=trajectory.value("points").toArray();
+    if(points.isEmpty()){m_scene->setSprayDirectionArrow({}, {},false);update();return true;}
+    const auto point=points.first().toObject(),spray=point.value("spray").toObject();
+    if(spray.isEmpty()){m_scene->setSprayDirectionArrow({}, {},false);update();return true;}
+    const auto xyz=point.value("position_m").toArray(),target=spray.value("target_mm").toArray();
+    if(xyz.size()!=3 || target.size()!=3){error="Invalid spray direction preview";return false;}
+    Eigen::Vector3d a,b;
+    for(int i=0;i<3;++i){
+        if(!xyz[i].isDouble() || !target[i].isDouble() || !std::isfinite(xyz[i].toDouble()) || !std::isfinite(target[i].toDouble())){error="Invalid spray arrow";return false;}
+        a[i]=xyz[i].toDouble();b[i]=target[i].toDouble()/1000;
+    }
+    if((b-a).norm()<1e-9) {
+        const auto q=point.value("quaternion_xyzw").toArray(),axis=spray.value("axis_tool").toArray();
+        if(q.size()!=4 || axis.size()!=3){error="Zero-distance preview requires quaternion and tool axis";return false;}
+        Eigen::Quaterniond rotation(q[3].toDouble(),q[0].toDouble(),q[1].toDouble(),q[2].toDouble());
+        Eigen::Vector3d direction(axis[0].toDouble(),axis[1].toDouble(),axis[2].toDouble());
+        if(!rotation.coeffs().allFinite() || std::abs(rotation.norm()-1)>1e-5 || !direction.allFinite() || std::abs(direction.norm()-1)>1e-5){error="Invalid zero-distance direction";return false;}
+        // A 150 mm direction glyph; never used as a physical spray distance.
+        b=a+0.15*(rotation*direction);
+    }
+    const auto frame=trajectory.value("frame").toString();
+    if(frame!="user" && frame!="world"){error="Invalid spray preview frame";return false;}
+    if(frame=="user") {
+        Eigen::Isometry3d world=Eigen::Isometry3d::Identity();
+        for(const auto& ext:runtimeDocumentSnapshot().extensions)if(ext.key=="rws.user_frame") {
+            const auto o=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object();
+            world.translation()=Eigen::Vector3d(o.value("x").toDouble(),o.value("y").toDouble(),o.value("z").toDouble());
+            world.linear()=(Eigen::AngleAxisd(o.value("yaw").toDouble(),Eigen::Vector3d::UnitZ())*
+                Eigen::AngleAxisd(o.value("pitch").toDouble(),Eigen::Vector3d::UnitY())*
+                Eigen::AngleAxisd(o.value("roll").toDouble(),Eigen::Vector3d::UnitX())).toRotationMatrix();
+        }
+        a=world*a;b=world*b;
+    }
+    m_scene->setSprayDirectionArrow(a,b,true);update();return true;
+}
+
+bool RobotViewport::renderTrajectoryRecord(const QJsonObject& trajectory, QString& error)
+{
+    if(!m_scene) { error="Scene unavailable"; return false; }
+    const auto points=trajectory.value("points").toArray();
+    const auto frame=trajectory.value("frame").toString();
+    if(points.isEmpty() || (frame!="world" && frame!="user")) {error="Invalid trajectory frame or points";return false;}
+    Eigen::Isometry3d world=Eigen::Isometry3d::Identity();
+    if(frame=="user") for(const auto& ext:runtimeDocumentSnapshot().extensions) if(ext.key=="rws.user_frame") {
+        const auto o=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object();
+        world.translation()=Eigen::Vector3d(o.value("x").toDouble(),o.value("y").toDouble(),o.value("z").toDouble());
+        world.linear()=(Eigen::AngleAxisd(o.value("yaw").toDouble(),Eigen::Vector3d::UnitZ())*
+            Eigen::AngleAxisd(o.value("pitch").toDouble(),Eigen::Vector3d::UnitY())*
+            Eigen::AngleAxisd(o.value("roll").toDouble(),Eigen::Vector3d::UnitX())).toRotationMatrix();
+    }
+    std::vector<ProjectScene::CoatingTrajectoryPreviewPoint> preview;
+    std::vector<Eigen::Vector3d> inputPoints,surfaceTargets;
+    for(const auto& value:points) {
+        const auto p=value.toObject(); const auto xyz=p.value("position_m").toArray(),q=p.value("quaternion_xyzw").toArray();
+        if(xyz.size()!=3 || q.size()!=4) {error="Invalid trajectory pose";return false;}
+        for(const auto& v:xyz) if(!v.isDouble() || !std::isfinite(v.toDouble())) {error="Invalid position";return false;}
+        for(const auto& v:q) if(!v.isDouble() || !std::isfinite(v.toDouble())) {error="Invalid rotation";return false;}
+        Eigen::Quaterniond rotation(q[3].toDouble(),q[0].toDouble(),q[1].toDouble(),q[2].toDouble());
+        if(std::abs(rotation.norm()-1)>1e-5) {error="Non-unit trajectory quaternion";return false;}
+        const Eigen::Vector3d position=world*Eigen::Vector3d(xyz[0].toDouble(),xyz[1].toDouble(),xyz[2].toDouble());
+        const Eigen::Matrix3d axes=world.linear()*rotation.toRotationMatrix();
+        const auto spray=p.value("spray").toObject();
+        if(!spray.isEmpty()) {
+            auto input=spray.value("source_position_mm").toArray();
+            if(input.isEmpty())input=spray.value("original_tcp_position_mm").toArray();
+            const auto target=spray.value("target_mm").toArray();
+            if(input.size()!=3 || target.size()!=3){error="Invalid spray reference points";return false;}
+            Eigen::Vector3d inputPoint,targetPoint;
+            for(int j=0;j<3;++j){
+                if(!input[j].isDouble() || !target[j].isDouble() || !std::isfinite(input[j].toDouble()) || !std::isfinite(target[j].toDouble())){error="Invalid spray reference values";return false;}
+                inputPoint[j]=input[j].toDouble()/1000;targetPoint[j]=target[j].toDouble()/1000;
+            }
+            inputPoints.push_back(world*inputPoint);
+            if(p.value("point_type").toInt()!=2)surfaceTargets.push_back(world*targetPoint);
+        }
+        ProjectScene::CoatingTrajectoryPreviewPoint point;
+        point.positionX=position.x();point.positionY=position.y();point.positionZ=position.z();
+        point.frameXAxisX=axes(0,0);point.frameXAxisY=axes(1,0);point.frameXAxisZ=axes(2,0);
+        point.frameYAxisX=axes(0,1);point.frameYAxisY=axes(1,1);point.frameYAxisZ=axes(2,1);
+        point.frameZAxisX=axes(0,2);point.frameZAxisY=axes(1,2);point.frameZAxisZ=axes(2,2);
+        point.directionX=axes(0,2);point.directionY=axes(1,2);point.directionZ=axes(2,2);preview.push_back(point);
+    }
+    m_scene->setCoatingTrajectoryPreview(preview,true,true,false);
+    m_scene->setSprayReferencePaths(inputPoints,surfaceTargets);
+    return previewSprayDirection(trajectory,error);
+}
+
+bool RobotViewport::loadTrajectoryRecord(const QJsonObject& input, QString& error)
+{
+    // Validate before replacing the current preview; records are embedded in the project.
+    if(!renderTrajectoryRecord(input,error)) return false;
+    auto trajectory=input;
+    QString id=trajectory.value("library_id").toString();
+    if(id.isEmpty()) id=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    trajectory["library_id"]=id;
+    auto document=runtimeDocumentSnapshot();
+    const auto upsert=[&](const std::string& key,const QJsonObject& value) {
+        simulation_project::ProjectExtensionDesc ext;ext.key=key;ext.version=1;
+        ext.serializedPayload=QJsonDocument(value).toJson(QJsonDocument::Compact).toStdString();
+        const auto it=std::find_if(document.extensions.begin(),document.extensions.end(),[&](const auto& e){return e.key==key;});
+        if(it==document.extensions.end()) document.extensions.push_back(ext);else *it=ext;
+    };
+    upsert("rws.trajectory."+id.toStdString(),trajectory);
+    upsert("rws.active_trajectory",QJsonObject{{"id",id}});
+    if(!applyUserCoordinateFrameDocument(document)) {error="Unable to retain trajectory";return false;}
+    return true;
+}
+
+bool RobotViewport::showStoredTrajectory(const QString& id, QString& error)
+{
+    for(const auto& ext:runtimeDocumentSnapshot().extensions) if(ext.key=="rws.trajectory."+id.toStdString())
+        return loadTrajectoryRecord(QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object(),error);
+    error="Trajectory not found";return false;
+}
+
+bool RobotViewport::deleteStoredTrajectory(const QString& id, QString& error)
+{
+    if(id.isEmpty()) {error="Trajectory ID required";return false;}
+    auto document=runtimeDocumentSnapshot();
+    const auto key="rws.trajectory."+id.toStdString();
+    const auto record=std::find_if(document.extensions.begin(),document.extensions.end(),
+        [&](const auto& ext){return ext.key==key;});
+    if(record==document.extensions.end()) {error="Trajectory not found";return false;}
+    document.extensions.erase(record);
+    bool active=false;
+    document.extensions.erase(std::remove_if(document.extensions.begin(),document.extensions.end(),[&](const auto& ext){
+        if(ext.key!="rws.active_trajectory") return false;
+        const bool matches=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object().value("id").toString()==id;
+        active=active || matches;return matches;
+    }),document.extensions.end());
+    if(!applyUserCoordinateFrameDocument(document)) {error="Unable to delete trajectory";return false;}
+    if(active && m_scene) {m_scene->setCoatingTrajectoryPreview({},false,false,false);m_scene->setSprayDirectionArrow({}, {},false);}
+    update();return true;
+}
+
 bool RobotViewport::rebuildCollisionDetectorsFromDocument(const simulation_project::ProjectDocument& document)
 {
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
     const bool changed = m_scene != nullptr && m_scene->rebuildCollisionDetectorsFromDocument(document);
     if(changed) {
         update();
@@ -1043,6 +1249,12 @@ std::vector<ProjectScene::ToolAttachmentInfo> RobotViewport::toolAttachments() c
     return mountedAttachments();
 }
 
+bool RobotViewport::robotLinkTransform(const std::string& robotId, const std::string& linkName,
+    simulation_project::TransformDesc& transform) const
+{
+    return m_scene && m_scene->robotLinkTransform(robotId, linkName, transform);
+}
+
 std::vector<ProjectScene::MountedAttachmentInfo> RobotViewport::mountedAttachments() const
 {
     return m_scene != nullptr ? m_scene->mountedAttachments() : std::vector<ProjectScene::MountedAttachmentInfo>();
@@ -1170,7 +1382,8 @@ ProjectSceneInteractionMode RobotViewport::interactionMode() const
 
 bool RobotViewport::applySurfaceScalarOverlay(
     const smrobot::visualization::SurfaceScalarOverlay& overlay,
-    QString* errorMessage)
+    QString* errorMessage,
+    bool blackOutsideRange)
 {
     if(m_scene == nullptr || context() == nullptr || !isValid()) {
         if(errorMessage != nullptr) {
@@ -1183,7 +1396,8 @@ bool RobotViewport::applySurfaceScalarOverlay(
     bool ok = false;
     makeCurrent();
     try {
-        ok = m_scene->applySurfaceScalarOverlay(overlay, &error);
+        ok = m_scene->applySurfaceScalarOverlay(
+            overlay, &error, blackOutsideRange);
     } catch(const std::exception& exception) {
         error = exception.what();
     } catch(...) {
@@ -1364,6 +1578,50 @@ smrobot::visualization::CustomMeshResult RobotViewport::setCustomMeshVisible(
     return result;
 }
 
+bool RobotViewport::setSceneObjectVisibilityOverride(const QString& objectId, bool visible)
+{
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return false;
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    const bool changed = m_scene->setSceneObjectVisibilityOverride(objectId.toStdString(), visible);
+    if(changed) {
+        update();
+    }
+    return changed;
+}
+
+bool RobotViewport::clearSceneObjectVisibilityOverride(const QString& objectId)
+{
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return false;
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    const bool changed = m_scene->clearSceneObjectVisibilityOverride(objectId.toStdString());
+    if(changed) {
+        update();
+    }
+    return changed;
+}
+
+void RobotViewport::clearSceneObjectVisibilityOverrides()
+{
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        return;
+    }
+    makeCurrent();
+    CurrentContextGuard contextGuard(*this);
+    m_scene->clearSceneObjectVisibilityOverrides();
+    update();
+}
+
+bool RobotViewport::sceneObjectVisible(const QString& objectId, bool& visible) const
+{
+    return m_scene != nullptr && m_scene->sceneObjectVisible(objectId.toStdString(), visible);
+}
+
 smrobot::visualization::CustomMeshResult RobotViewport::removeCustomMesh(
     smrobot::visualization::CustomMeshHandle handle)
 {
@@ -1423,6 +1681,17 @@ bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
     bool ok = true;
     try {
         ok = m_scene->initialize();
+        if(ok) {
+            std::string environmentError;
+            if(!m_scene->setEnvironmentSelection(m_environmentSelection, &environmentError)) {
+                m_lastError = QString::fromUtf8(environmentError.c_str());
+                m_environmentSelection = ProjectSceneEnvironmentSelection{};
+                m_environmentPreset = m_environmentSelection.preset;
+                m_scene->setEnvironmentSelection(m_environmentSelection);
+                LOG_WARNING("rs2026") << "Environment restore failed: " << environmentError;
+                emit environmentRestoreFailed(m_lastError);
+            }
+        }
     } catch(const std::exception& e) {
         ok = false;
         m_lastError = QString::fromLocal8Bit(e.what());
@@ -1433,6 +1702,13 @@ bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
         LOG_ERROR("rs2026") << "RobotViewport initializeSceneWithCurrentContext failed: unknown error";
     }
     if(ok) {
+        const auto document=runtimeDocumentSnapshot();
+        QString active;
+        for(const auto& e:document.extensions) if(e.key=="rws.active_trajectory")
+            active=QJsonDocument::fromJson(QByteArray::fromStdString(e.serializedPayload)).object().value("id").toString();
+        for(const auto& e:document.extensions) if(!active.isEmpty() && e.key=="rws.trajectory."+active.toStdString()) {
+            QString error;renderTrajectoryRecord(QJsonDocument::fromJson(QByteArray::fromStdString(e.serializedPayload)).object(),error);
+        }
         publishRobotLinks();
         syncCameraStreams();
     }
@@ -1443,6 +1719,10 @@ bool RobotViewport::initializeSceneWithCurrentContext(bool releaseContext)
         << elapsedMilliseconds(initializeStart)
         << ", releaseContext=" << releaseContext
         << ", ok=" << ok;
+    if(ok) {
+        emit environmentCommitted();
+        emit environmentSceneReady();
+    }
     return ok;
 }
 
@@ -1534,11 +1814,36 @@ void RobotViewport::paintGL()
     const auto now = Clock::now();
     const std::chrono::duration<double> elapsed = now - m_startTime;
     const auto updateStart = Clock::now();
-    m_scene->update(elapsed.count());
+    const bool previewRequested=!m_sdkPreviewRobot.empty() && Clock::now()<m_sdkPreviewExpiry;
+    m_scene->update(elapsed.count(),!previewRequested);
     emit robotStateUpdated();
     const double updateMs = elapsedMilliseconds(updateStart);
     const auto renderStart = Clock::now();
-    m_scene->render();
+    // Preview exists only inside this synchronous GUI paint. SDK snapshots,
+    // saved projects and planner seeds always observe the original joint state.
+    std::vector<double> previewOriginal;
+    bool previewValid=previewRequested;
+    if(previewValid) for(const auto& name:m_sdkPreviewNames) {
+        double value=0;
+        if(!m_scene->robotJointValue(m_sdkPreviewRobot,name,value)) {previewValid=false;break;}
+        previewOriginal.push_back(value);
+    }
+    if(previewValid) previewValid=m_scene->setRobotJointValues(m_sdkPreviewRobot,m_sdkPreviewNames,m_sdkPreviewValues);
+    try {
+        if(previewRequested) m_scene->refreshCollisionPresentation();
+        m_scene->render();
+    }
+    catch(...) {
+        if(previewValid) {
+            m_scene->setRobotJointValues(m_sdkPreviewRobot,m_sdkPreviewNames,previewOriginal);
+            m_scene->refreshCollisionPresentation(false);
+        }
+        throw;
+    }
+    if(previewValid) {
+        m_scene->setRobotJointValues(m_sdkPreviewRobot,m_sdkPreviewNames,previewOriginal);
+        m_scene->refreshCollisionPresentation(false);
+    }
     m_renderedFrameTicket = frameTicket;
     const double renderMs = elapsedMilliseconds(renderStart);
     const double cameraRenderMs = renderDueCameraStreams();
@@ -1933,6 +2238,7 @@ void RobotViewport::mousePressEvent(QMouseEvent* event)
 {
     m_lastMousePos = event->pos();
     m_mousePressPos = event->pos();
+    m_cameraDraggedSincePress = false;
 }
 
 void RobotViewport::mouseReleaseEvent(QMouseEvent* event)
@@ -1942,10 +2248,18 @@ void RobotViewport::mouseReleaseEvent(QMouseEvent* event)
     }
 
     const QPoint delta = event->pos() - m_mousePressPos;
-    if(delta.manhattanLength() > 3) {
+    if(m_cameraDraggedSincePress || delta.manhattanLength() > 3) {
         return;
     }
 
+    if(m_coatingSurfacePick) {
+        const auto hit=m_scene->pickTriangleScreenPoint(event->pos().x(),event->pos().y());
+        if(hit.valid()) {
+            m_coatingSurfacePick=false; unsetCursor();
+            emit coatingSurfacePicked(QString::fromStdString(hit.sceneObjectId),hit.triangleIndex,hit.hitPosition.x(),hit.hitPosition.y(),hit.hitPosition.z(),hit.normal.x(),hit.normal.y(),hit.normal.z());
+        }
+        return;
+    }
     const ProjectScenePickResult result = m_scene->pickScreenPoint(event->pos().x(), event->pos().y());
     if(!result.valid()) {
         return;
@@ -2020,6 +2334,11 @@ void RobotViewport::mouseMoveEvent(QMouseEvent* event)
     }
 
     if(button >= 0) {
+        // A move that changes the camera is navigation, even if the pointer
+        // returns to the press position before release. Do not pick a workpiece.
+        if(!delta.isNull()) {
+            m_cameraDraggedSincePress = true;
+        }
         m_cameraDragFramePending = true;
         if(m_surfaceScalarProbeEnabled) {
             emit surfaceScalarHovered(
@@ -2041,6 +2360,7 @@ void RobotViewport::mouseMoveEvent(QMouseEvent* event)
                     m_surfaceScalarProbeObjectId.toStdString(),
                     event->pos().x(),
                     event->pos().y());
+            emit coatingSurfaceScalarHovered(m_surfaceScalarProbeObjectId,result.value,result.worldPosition.x(),result.worldPosition.y(),result.worldPosition.z(),event->pos(),result.hit);
             emit surfaceScalarHovered(
                 m_surfaceScalarProbeObjectId,
                 result.value,
@@ -2096,3 +2416,195 @@ void RobotViewport::keyPressEvent(QKeyEvent* event)
 
     QOpenGLWidget::keyPressEvent(event);
 }
+
+bool RobotViewport::applySurfaceScalarOverlayModel(
+    const smrobot::visualization::SurfaceScalarOverlay& overlay,
+    const assetcore::ModelDesc& model,
+    QString* errorMessage,
+    bool blackOutsideRange)
+{
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        if(errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("Viewport OpenGL context is not available.");
+        }
+        return false;
+    }
+    std::string error;
+    bool ok = false;
+    makeCurrent();
+    try {
+        ok = m_scene->applySurfaceScalarOverlayModel(
+            overlay, model, &error, blackOutsideRange);
+    } catch(const std::exception& exception) {
+        error = exception.what();
+    } catch(...) {
+        error = "Unknown surface scalar overlay error.";
+    }
+    doneCurrent();
+    if(errorMessage != nullptr) {
+        *errorMessage = QString::fromStdString(error);
+    }
+    if(ok) {
+        update();
+    }
+    return ok;
+}
+
+bool RobotViewport::setCoatingPredictionModel(
+    const QString& objectId,
+    const assetcore::ModelDesc& model,
+    QString* errorMessage)
+{
+    if(m_scene == nullptr || context() == nullptr || !isValid()) {
+        if(errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("Viewport OpenGL context is not available.");
+        }
+        return false;
+    }
+    std::string error;
+    makeCurrent();
+    const bool ok = m_scene->setCoatingPredictionModel(objectId.toStdString(), model, &error);
+    doneCurrent();
+    if(errorMessage != nullptr) {
+        *errorMessage = QString::fromStdString(error);
+    }
+    if(ok) {
+        update();
+    }
+    return ok;
+}
+
+bool RobotViewport::clearCoatingPredictionModel(const QString& objectId)
+{
+    if(m_scene == nullptr) {
+        return false;
+    }
+    const bool ok = m_scene->clearCoatingPredictionModel(objectId.toStdString());
+    if(ok) {
+        update();
+    }
+    return ok;
+}
+
+void RobotViewport::setCoatingTrajectoryPreview(
+    const std::vector<ProjectScene::CoatingTrajectoryPreviewPoint>& points,
+    bool visible,
+    bool showTrajectoryLines,
+    bool showSprayPointFrames)
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->setCoatingTrajectoryPreview(
+        points,
+        visible,
+        showTrajectoryLines,
+        showSprayPointFrames);
+    update();
+}
+
+bool RobotViewport::setCoatingTrajectoryPreviewVisible(
+    bool visible,
+    bool showTrajectoryLines,
+    bool showSprayPointFrames)
+{
+    if(m_scene == nullptr) {
+        return false;
+    }
+    const bool ok = m_scene->setCoatingTrajectoryPreviewVisible(
+        visible,
+        showTrajectoryLines,
+        showSprayPointFrames);
+    update();
+    return ok;
+}
+
+void RobotViewport::setCoatingPredictionDebugState(
+    const ProjectScene::CoatingPredictionDebugState& state)
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->setCoatingPredictionDebugState(state);
+    update();
+}
+
+void RobotViewport::setCoatingPredictionDebugVisibility(
+    const ProjectScene::CoatingPredictionDebugVisibility& visibility)
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->setCoatingPredictionDebugVisibility(visibility);
+    update();
+}
+
+void RobotViewport::clearCoatingPredictionDebugState()
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->clearCoatingPredictionDebugState();
+    update();
+}
+
+bool RobotViewport::setCoatingModelVisible(const QString& objectId, bool visible)
+{
+    if(m_scene == nullptr) {
+        return false;
+    }
+    const bool ok = m_scene->setCoatingModelVisible(objectId.toStdString(), visible);
+    if(ok) {
+        update();
+    }
+    return ok;
+}
+
+void RobotViewport::setCoatingModelVisibilities(
+    const std::unordered_map<std::string, bool>& visibility)
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->setCoatingModelVisibilities(visibility);
+    update();
+}
+
+void RobotViewport::clearCoatingModelVisibility(const QString& objectId)
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->clearCoatingModelVisibility(objectId.toStdString());
+    update();
+}
+
+void RobotViewport::setCoatingAnalysisView(bool active)
+{
+    if(!active) { m_coatingSurfacePick=false; unsetCursor(); }
+
+
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->setCoatingAnalysisView(active);
+    update();
+}
+
+void RobotViewport::focusCoatingObject(const QString& objectId, double duration)
+{
+    if(m_scene == nullptr) {
+        return;
+    }
+    m_scene->focusCoatingObject(objectId.toStdString(), duration);
+    update();
+}
+
+void RobotViewport::beginCoatingSurfacePick() { m_coatingSurfacePick=true; setCursor(Qt::CrossCursor); }
+void RobotViewport::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this); emit coatingContextMenuRequested(&menu);
+    if(!menu.isEmpty()) menu.exec(event->globalPos());
+}
+
+void RobotViewport::setTrajectoryHighlightRange(int first,int last) { if(m_scene) m_scene->setTrajectoryHighlightRange(first,last); update(); }

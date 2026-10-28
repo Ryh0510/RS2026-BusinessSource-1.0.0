@@ -1,6 +1,8 @@
 #include <SprayTrajectoryCore/SprayTrajectory.h>
 
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
 namespace spraytrajectory
 {
@@ -42,6 +44,22 @@ namespace spraytrajectory
                 value[i] = a[i] * (1.0 - t) + b[i] * t;
             return value;
         }
+        SprayTrajectorySample makeSample(const SprayPathPoint& point)
+        {
+            SprayTrajectorySample sample;
+            sample.time = point.time;
+            sample.tcpPose = point.tcpPose;
+            sample.jointValues = point.jointValues;
+            sample.sprayEnabled = point.sprayEnabled;
+            sample.processId = point.processId;
+            sample.targetDistance = point.targetDistance;
+            sample.targetNormal = point.targetNormal;
+            sample.workpieceRegionId = point.workpieceRegionId;
+            sample.velocity = point.velocity;
+            sample.acceleration = point.acceleration;
+            sample.pointType = point.pointType;
+            return sample;
+        }
     }
 
     bool SprayTrajectory::empty() const
@@ -71,7 +89,8 @@ namespace spraytrajectory
             }
         }
 
-        std::sort(points.begin(), points.end(),
+        // Equal-time process transitions must retain their producer order.
+        std::stable_sort(points.begin(), points.end(),
             [](const SprayPathPoint& a, const SprayPathPoint& b)
             {
                 return a.time < b.time;
@@ -89,16 +108,12 @@ namespace spraytrajectory
 
         if (time <= points.front().time)
         {
-            const auto& point = points.front();
-            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
+            return makeSample(points.front());
         }
 
         if (time >= points.back().time)
         {
-            const auto& point = points.back();
-            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
+            return makeSample(points.back());
         }
 
         auto next = std::lower_bound(
@@ -110,11 +125,17 @@ namespace spraytrajectory
                 return point.time < value;
             });
 
+        // Preserve source points exactly, in particular at process on/off and
+        // process-id boundaries.  Interpolating their discrete state would
+        // otherwise change the state at the boundary itself.
+        if (next != points.end() && next->time == time)
+        {
+            return makeSample(*next);
+        }
+
         if (next == points.begin())
         {
-            const auto& point = *next;
-            return { point.time, point.tcpPose, point.jointValues, point.sprayEnabled,
-                point.processId, point.targetDistance, point.targetNormal, point.workpieceRegionId };
+            return makeSample(*next);
         }
 
         const auto prev = next - 1;
@@ -125,12 +146,18 @@ namespace spraytrajectory
         sample.time = time;
         sample.tcpPose = interpolatePose(prev->tcpPose, next->tcpPose, alpha);
         sample.jointValues = interpolateJoints(prev->jointValues, next->jointValues, alpha);
-        sample.sprayEnabled = alpha < 0.5 ? prev->sprayEnabled : next->sprayEnabled;
-        sample.processId = alpha < 0.5 ? prev->processId : next->processId;
+        // Process state is piecewise constant over [prev.time, next.time).
+        // Position-like values are interpolated, while this state belongs to
+        // the interval's left endpoint and must not be blended away.
+        sample.sprayEnabled = prev->sprayEnabled;
+        sample.processId = prev->processId;
         sample.targetDistance = prev->targetDistance * (1.0 - alpha) + next->targetDistance * alpha;
         Eigen::Vector3d targetNormal = prev->targetNormal * (1.0 - alpha) + next->targetNormal * alpha;
         sample.targetNormal = targetNormal.norm() > 1.0e-12 ? targetNormal.normalized() : Eigen::Vector3d::UnitZ();
-        sample.workpieceRegionId = alpha < 0.5 ? prev->workpieceRegionId : next->workpieceRegionId;
+        sample.workpieceRegionId = prev->workpieceRegionId;
+        sample.velocity = prev->velocity * (1.0 - alpha) + next->velocity * alpha;
+        sample.acceleration = prev->acceleration * (1.0 - alpha) + next->acceleration * alpha;
+        sample.pointType = alpha < 0.5 ? prev->pointType : next->pointType;
         return sample;
     }
 
@@ -145,10 +172,37 @@ namespace spraytrajectory
 
         const double begin = points.front().time;
         const double end = points.back().time;
-        for (double t = begin; t < end; t += timeStep)
-            samples.push_back(evaluate(trajectory, t));
+        if (end <= begin)
+        {
+            samples.push_back(makeSample(points.front()));
+            return samples;
+        }
+
+        // Derive every time from the integer sample index.  Repeated floating
+        // point addition drifts over long paths and can skip a requested grid
+        // boundary or add an almost-duplicate final sample.
+        for (std::size_t index = 0;; ++index)
+        {
+            const double time = begin + static_cast<double>(index) * timeStep;
+            if (time >= end)
+            {
+                break;
+            }
+            samples.push_back(evaluate(trajectory, time));
+        }
 
         samples.push_back(evaluate(trajectory, end));
+        return samples;
+    }
+
+    std::vector<SprayTrajectorySample> SprayTrajectorySampler::originalSamples(
+        const SprayTrajectory& trajectory)
+    {
+        const auto points = trajectory.flattenedPoints();
+        std::vector<SprayTrajectorySample> samples;
+        samples.reserve(points.size());
+        for(const auto& point : points)
+            samples.push_back(makeSample(point));
         return samples;
     }
 }

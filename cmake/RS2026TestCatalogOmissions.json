@@ -1,0 +1,127 @@
+{
+  "schema": "RS2026BusinessTestCatalogProjection.v1",
+  "retainedDirectories": 19,
+  "omittedDirectories": [
+    {
+      "path": "Common/LicenseVerification/regression/LicenseVerificationCacheTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/Collision/regression/CoacdDecompositionTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/Collision/regression/CollisionExamplesTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/Collision/regression/CollisionInterfaceTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/RobotIO/regression/URDFResourcePathTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/RobotIO/regression/ModelLoadUrdfTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/RobotIO/regression/ModelLoadSimscapeTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/RobotIO/regression/ModelLoadStewartTests",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Facades/ProjectSimulationSDK/regression/RuntimeSessionTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Facades/VisualizationSDK/regression/CustomMeshTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Facades/VisualizationSDK/regression/ScalarColorMapTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Facades/VisualizationSDK/regression/SessionTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Foundation/AssetCore/regression/AssetManagerCacheTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Internal/RobotPlatformAuthorization/regression/LicenseAuthorizationQtSmokeTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Internal/RobotPlatformAuthorization/regression/LicenseAuthorizationSmokeTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Internal/RobotPlatformAuthorization/regression/ProtectedBusinessAuthorizationTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Presentation/RobotRenderBridge/regression/CollisionOverlayFilterTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Sensors/SensorCore/regression/PcdPointCloudLoaderTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Sensors/SensorCore/regression/PointCloudProcessingTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationProject/regression/ProjectAttachmentEditorSmokeTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationProject/regression/ProjectIoRepositorySmokeTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationProject/regression/ProjectTransactionSmokeTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationProject/regression/ProjectV3IoSmokeTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationRuntime/regression/MountedCameraTransformTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationRuntime/regression/ProjectCollisionQueryServiceTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationRuntime/regression/ProjectRuntimeConvergenceTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotPlatform/Simulation/SimulationRuntime/regression/ProjectRuntimeQueryContractTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "tests/cmake_build_revision",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "tests/test_governance/SelectorSelfTest",
+      "reason": "producer-source-not-distributed"
+    },
+    {
+      "path": "SMRobotCore/Collision/regression/CollisionQueryTests",
+      "reason": "producer-source-not-distributed"
+    }
+  ],
+  "verificationBoundary": "Producer regression sources are not distributed; obtain owner evidence separately."
+}

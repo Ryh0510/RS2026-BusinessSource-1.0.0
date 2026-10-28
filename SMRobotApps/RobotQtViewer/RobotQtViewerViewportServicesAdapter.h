@@ -37,6 +37,7 @@ namespace robot_qt_viewer
         SprayMeasurementResult sprayMeasurement(const QString& robotId) const override;
         void setTrajectoryControlPointOverlay(const QString& trajectoryId,
             const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true, bool showOrientations = false) override;
+        void setTrajectoryHighlightRange(int first, int last) override;
         void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) override;
     private:
         RobotViewport& m_viewport;
@@ -231,13 +232,47 @@ namespace robot_qt_viewer
     {
     public:
         explicit RobotQtViewerVisualizationViewportAdapter(RobotViewport& viewport);
+        void beginRotationSurfacePick() override;
+        void focusCoatingObject(const QString& objectId, double duration = 0.3) override;
+        void setGpuPredictionBusy(bool busy) override;
+        void setCoatingAnalysisView(bool active) override;
+        void clearCoatingModelVisibility(const QString& objectId) override;
+        void setCoatingModelVisibilities(const QHash<QString, bool>& visibility) override;
+        bool setCoatingModelVisible(const QString& objectId, bool visible) override;
+        void clearCoatingPredictionDebugState() override;
+        void setCoatingPredictionDebugVisibility(
+            const CoatingPredictionDebugVisibility& visibility) override;
+        void setCoatingPredictionDebugState(
+            const CoatingPredictionDebugState& state) override;
+        bool setCoatingTrajectoryPreviewVisible(
+            bool visible,
+            bool showTrajectoryLines = true,
+            bool showSprayPointFrames = true) override;
+        void setCoatingTrajectoryPreview(
+            const std::vector<CoatingTrajectoryPreviewPoint>& points,
+            bool visible,
+            bool showTrajectoryLines = true,
+            bool showSprayPointFrames = true) override;
+        bool clearCoatingPredictionModel(const QString& objectId) override;
+        bool setCoatingPredictionModel(
+            const QString& objectId,
+            const assetcore::ModelDesc& model,
+            QString* errorMessage) override;
+        bool applySurfaceScalarOverlayModel(
+            const smrobot::visualization::SurfaceScalarOverlay& overlay,
+            const assetcore::ModelDesc& model,
+            QString* errorMessage,
+            bool blackOutsideRange = false) override;
 
         bool applySurfaceScalarOverlay(
             const smrobot::visualization::SurfaceScalarOverlay& overlay,
-            QString* errorMessage) override;
+            QString* errorMessage,
+            bool blackOutsideRange = false) override;
         bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible) override;
         bool clearSurfaceScalarOverlay(const QString& objectId) override;
         void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId) override;
+        bool setSceneObjectVisibilityOverride(const QString& objectId, bool visible) override;
+        bool clearSceneObjectVisibilityOverride(const QString& objectId) override;
         smrobot::visualization::CustomMeshResult upsertCustomMesh(
             const smrobot::visualization::CustomMeshDesc& desc,
             smrobot::visualization::CustomMeshHandle& handle) override;

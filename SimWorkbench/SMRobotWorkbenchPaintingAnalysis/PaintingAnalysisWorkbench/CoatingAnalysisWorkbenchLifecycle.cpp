@@ -2,6 +2,11 @@
 
 #include "CoatingAnalysisModuleController.h"
 #include "CoatingAnalysisPanel.h"
+#include "CoatingAnalysisTreePanel.h"
+#include "CoatingAnalysisInfoPanel.h"
+#include "CoatingAnalysisVisibilityBar.h"
+#include "PlanningDataSource.h"
+#include <QVBoxLayout>
 #include "ThicknessLegendWidget.h"
 
 #include "RobotQtViewerDocumentContext.h"
@@ -14,6 +19,15 @@
 
 namespace robot_qt_viewer
 {
+    class CoatingLanguage final : public IRobotQtViewerLanguageParticipant {
+    public:
+        explicit CoatingLanguage(CoatingAnalysisModuleController& controller, ThicknessLegendWidget& legend):m_controller(controller),m_legend(legend){}
+        void retranslateUi(const RobotQtViewerLocalizationService& localization) noexcept override {
+            m_controller.setLanguageCode(localization.currentLanguageId()); m_legend.setLanguageCode(localization.currentLanguageId());
+        }
+    private: CoatingAnalysisModuleController& m_controller; ThicknessLegendWidget& m_legend;
+    };
+
     RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
     makeOwnedPaintingAnalysisWorkbenchRuntimeContributionFactory(
         PaintingAnalysisWorkbenchComposition composition)
@@ -34,14 +48,43 @@ namespace robot_qt_viewer
                 panel->setWidgetResizable(true);
                 panel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
                 panel->setFrameShape(QFrame::NoFrame);
-                auto* analysisPanel = new CoatingAnalysisPanel(panel);
+                auto* container = new QWidget(panel);
+                auto* layout = new QVBoxLayout(container);
+                auto* analysisPanel = new CoatingAnalysisPanel(container);
+                auto* visibilityBar = new CoatingAnalysisVisibilityBar(container);
+                auto* left = new QWidget(panelParent);
+                auto* leftLayout = new QVBoxLayout(left);
+                auto* treePanel = new CoatingAnalysisTreePanel(left);
+                auto* infoPanel = new CoatingAnalysisInfoPanel(left);
+                leftLayout->addWidget(treePanel, 1);
+                leftLayout->addWidget(infoPanel, 2);
+                layout->addWidget(analysisPanel, 1);
+                layout->addWidget(visibilityBar);
+                if(composition.installLeftPanel) composition.installLeftPanel(left);
+
                 auto* controller = new CoatingAnalysisModuleController(
                     *analysisPanel,
+                    *treePanel,
+                    *infoPanel,
+                    *visibilityBar,
                     *composition.documentContext,
                     panel);
+                if(composition.bindViewportInteractions) composition.bindViewportInteractions(*controller);
                 auto* legend = new ThicknessLegendWidget(composition.overlayParent);
                 legend->hide();
-                panel->setWidget(analysisPanel);
+                panel->setWidget(container);
+                auto* source = qobject_cast<robot_qt_viewer::PlanningDataSource*>(composition.dataSource);
+                if(source) {
+                    auto synchronize = [controller](const robot_qt_viewer::PlanningDataSnapshot& snapshot) {
+                        controller->synchronizePlanningData(snapshot);
+                    };
+                    QObject::connect(source, &robot_qt_viewer::PlanningDataSource::analysisSnapshotChanged, controller, synchronize);
+                    synchronize(source->analysisSnapshot());
+                }
+                QObject::connect(legend, &ThicknessLegendWidget::rangeChangeRequested,
+                    controller, &CoatingAnalysisModuleController::setThicknessDisplayRange);
+                QObject::connect(legend, &ThicknessLegendWidget::automaticRangeRequested,
+                    controller, &CoatingAnalysisModuleController::resetThicknessDisplayRange);
                 if(composition.bindLegendOverlay) {
                     composition.bindLegendOverlay(legend);
                 }
@@ -61,8 +104,10 @@ namespace robot_qt_viewer
                     [legend, bindLegend = composition.bindLegendOverlay](
                         bool visible,
                         double minimumMicrometers,
-                        double maximumMicrometers) {
+                        double maximumMicrometers, bool relativeError, bool editingEnabled) {
                         legend->setRange(minimumMicrometers, maximumMicrometers);
+                        legend->setRelativeErrorMode(relativeError);
+                        legend->setEditingEnabled(editingEnabled);
                         legend->setVisible(visible);
                         if(visible && bindLegend) {
                             bindLegend(legend);
@@ -89,11 +134,13 @@ namespace robot_qt_viewer
                         [controller](
                             const QString& objectId,
                             double valueMeters,
+                            double x, double y, double z,
                             const QPoint& position,
                             bool hit) {
                             controller->handleSurfaceScalarHover(
                                 objectId,
                                 valueMeters,
+                                x, y, z,
                                 position,
                                 hit);
                         });
@@ -106,9 +153,7 @@ namespace robot_qt_viewer
                     [controller](const RobotQtViewerEvent& event) {
                         controller->handleEvent(event);
                     });
-                auto language = std::make_unique<RobotQtViewerWidgetLanguageParticipant>();
-                language->addRoot(*analysisPanel);
-                language->addRoot(*legend);
+                auto language = std::make_unique<CoatingLanguage>(*controller,*legend);
                 return std::unique_ptr<RobotQtViewerWorkbenchRuntimeContribution>(
                     std::make_unique<RobotQtViewerBasicWorkbenchRuntimeContribution>(
                         workbenchId,
@@ -123,12 +168,14 @@ namespace robot_qt_viewer
                         [registry,
                          controller,
                          panel,
+                         left,
                          legend,
                          bindLegend = composition.bindLegendOverlay]() {
                             registry->unregisterModule(controller);
                             if(bindLegend) {
                                 bindLegend(nullptr);
                             }
+                            delete left;
                             delete legend;
                             delete panel;
                         }));

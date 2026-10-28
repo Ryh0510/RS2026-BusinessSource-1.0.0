@@ -22,6 +22,7 @@ public:
     void setDetectors(const QVector<CollisionDetectorListItemView>& items, const QString& preferredId);
     void setProperties(const CollisionDetectorPropertiesView& view);
     void setPairs(const CollisionDetectorPairsViewModel& view);
+    void setRuntimeResultText(const QString& text);
     CollisionDetectorPropertiesView currentProperties() const;
     CollisionDetectorQueryContractView currentQueryContract() const;
     QString currentDetectorId() const;
@@ -85,6 +86,7 @@ private:
 
     QComboBox* m_detectorCombo = nullptr;
     QLabel* m_summaryLabel = nullptr;
+    QLabel* m_runtimeResultLabel = nullptr;
     QLabel* m_pairSummaryLabel = nullptr;
     QListWidget* m_pairList = nullptr;
     QListWidget* m_setAList = nullptr;

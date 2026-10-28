@@ -7,6 +7,8 @@ set(SOURCES
     ToolAssetEditorWidget.h
     ToolTransformEditorWidget.cpp
     ToolTransformEditorWidget.h
+    TcpDefinitionDialog.h
+    TcpDefinitionDialog.cpp
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES})

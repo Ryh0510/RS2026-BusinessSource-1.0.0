@@ -15,12 +15,11 @@
 
 
 include( CMakePackageConfigHelpers )
+include("${CMAKE_CURRENT_LIST_DIR}/PrebuiltPackageValidation.cmake")
 # include( CMakeMessageColorSetting )
 
-option(SMROBOT_SDK_INSTALL_PDB
-    "Install MSVC PDB files for shared SDK targets when they are generated."
-    ON
-)
+rs2026_named_cache_option(InstallSdk_Pdb SMROBOT_SDK_INSTALL_PDB
+    "Install MSVC PDB files for shared SDK targets when they are generated." ON)
 set(SMROBOT_SDK_PDB_CONFIGURATIONS "Debug;RelWithDebInfo;Release" CACHE STRING
     "CMake configurations whose generated MSVC PDB files are installed into the SDK.")
 
@@ -172,8 +171,17 @@ function(find_prebuilt_package)
         list(APPEND CMAKE_PREFIX_PATH "${CMAKE_INSTALL_PREFIX}")
         list(APPEND CMAKE_PREFIX_PATH "${search_path}")
         
-        # Find the package
-        find_package(${packagename} 
+        set(_selected_package_root "${prebuilt_package_root}/${packagename}")
+        if(DEFINED ${packagename}_DIR AND IS_DIRECTORY "${${packagename}_DIR}")
+            rs_check_path_within("${_selected_package_root}" "${${packagename}_DIR}"
+                "cached ${packagename}_DIR; clear the stale cache or use a new build directory")
+        endif()
+        if(NOT SMROBOT_PREBUILT_EXPECTED_VERSION MATCHES "^[0-9]+([.][0-9]+)*$")
+            message(FATAL_ERROR "SMROBOT_PREBUILT_EXPECTED_VERSION must be a numeric exact version")
+        endif()
+        rs_validate_package_build_info("${packagename}" "${_selected_package_root}")
+        # Find the package, including legacy packages with broad Version policies.
+        find_package(${packagename} ${SMROBOT_PREBUILT_EXPECTED_VERSION} EXACT
             CONFIG 
             COMPONENTS ${components_list}
             REQUIRED 
@@ -182,6 +190,9 @@ function(find_prebuilt_package)
         )
         
         if(${packagename}_FOUND)
+            rs_check_path_within("${_selected_package_root}" "${${packagename}_CONFIG}"
+                "resolved ${packagename} Config")
+            rs_validate_imported_package_targets("${packagename}" "${_selected_package_root}" ${components_list})
             message(STATUS "[OK]${packagename} found!")
             
             # Initialize found components list
@@ -524,6 +535,22 @@ function(function_InstallTarget)
                 endif()
             endif()
             
+            if(UNIX AND NOT APPLE)
+                # Each ELF object needs its own sibling-package RUNPATH for
+                # direct private dependencies; executable RUNPATH is not transitive.
+                get_target_property(_installed_link_deps "${TARGET_NAME}" LINK_LIBRARIES)
+                foreach(_installed_dep IN LISTS _installed_link_deps)
+                    string(REGEX REPLACE "^[$]<LINK_ONLY:([^>]+)>$" "\\1" _installed_dep "${_installed_dep}")
+                    if(_installed_dep MATCHES "^([^:]+)::")
+                        set(_installed_dep_package "${CMAKE_MATCH_1}")
+                        if(_installed_dep_package IN_LIST AllBuildPackages)
+                            set_property(TARGET "${TARGET_NAME}" APPEND PROPERTY INSTALL_RPATH
+                                "$ORIGIN/../../${_installed_dep_package}/lib")
+                        endif()
+                    endif()
+                endforeach()
+            endif()
+
             # Install target files
             install(TARGETS ${TARGET_NAME}
                 EXPORT ${TARGET_NAME}Targets
@@ -536,6 +563,39 @@ function(function_InstallTarget)
                 INCLUDES DESTINATION ${PACKAGE_NAME}/include
             )
             
+            if(UNIX AND NOT APPLE AND ARG_PRIVATE_RUNTIME_DEPENDENCIES)
+                set(_smrobot_unix_private_roots)
+                foreach(_private_target IN LISTS ARG_PRIVATE_RUNTIME_DEPENDENCIES)
+                    if(TARGET "${_private_target}")
+                        get_target_property(_private_type "${_private_target}" TYPE)
+                        if(_private_type STREQUAL "SHARED_LIBRARY" OR _private_type STREQUAL "MODULE_LIBRARY")
+                            string(APPEND _smrobot_unix_private_roots "\"$<TARGET_FILE:${_private_target}>\" ")
+                            if(_private_type STREQUAL "SHARED_LIBRARY")
+                                string(APPEND _smrobot_unix_private_roots "\"$<$<BOOL:$<TARGET_SONAME_FILE_NAME:${_private_target}>>:$<TARGET_SONAME_FILE:${_private_target}>>\" ")
+                            endif()
+                        endif()
+                    endif()
+                endforeach()
+                if(_smrobot_unix_private_roots)
+                    install(CODE "
+                        set(_private_roots ${_smrobot_unix_private_roots})
+                        list(REMOVE_DUPLICATES _private_roots)
+                        list(FILTER _private_roots EXCLUDE REGEX \"^$\")
+                        file(GET_RUNTIME_DEPENDENCIES LIBRARIES \${_private_roots}
+                            RESOLVED_DEPENDENCIES_VAR _private_resolved
+                            UNRESOLVED_DEPENDENCIES_VAR _private_unresolved
+                            PRE_EXCLUDE_REGEXES
+                                \"^ld-linux\" \"^lib(c|m|pthread|dl|rt|gcc_s|stdc[+][+])[.]so\")
+                        if(_private_unresolved)
+                            message(FATAL_ERROR \"Unresolved private runtimes: \${_private_unresolved}\")
+                        endif()
+                        file(INSTALL DESTINATION \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${PACKAGE_NAME}/lib\"
+                            TYPE SHARED_LIBRARY FOLLOW_SYMLINK_CHAIN
+                            FILES \${_private_roots} \${_private_resolved})
+                    " COMPONENT ${SDK_TARGET_INSTALL_COMPONENT})
+                endif()
+            endif()
+
             # Fix: Use correct header file source path
             # set(HEADER_SOURCE_DIR "${PROJECT_SOURCE_DIR}/include/${PACKAGE_NAME}/${TARGET_NAME}")
             set(HEADER_SOURCE_DIR "${INTERFACE_HEADERS}")            

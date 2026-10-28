@@ -11,6 +11,7 @@
 #include <RobotIO/IRobotLoader.h>
 #include <SensorCore/PointCloudProcessing.h>
 #include <SensorCore/PcdPointCloudLoader.h>
+#include <SceneCore/MaterialRenderState.h>
 #include <SceneCore/SceneGraph.h>
 #include <SimulationProject/CollisionModelSelectionIds.h>
 #include <SimulationProject/RuntimePaths.h>
@@ -1182,10 +1183,27 @@ RuntimeSceneObject ProjectRuntimeBuilder::buildSceneObject(
     }
 
     const auto visualSetupStart = std::chrono::steady_clock::now();
-    ensureModelMaterial(renderModel, makeSceneObjectMaterial());
+    if(objectDesc.objectType == "workpiece") {
+        // Freeform workpieces can be open surfaces or contain mixed winding.
+        // Give them an isolated two-sided material instead of changing global culling.
+        auto workpieceMaterial = makeSceneObjectMaterial();
+        scenecore::MaterialRenderState renderState;
+        renderState.cull = scenecore::MaterialCullMode::None;
+        scenecore::setMaterialRenderState(workpieceMaterial.get(), renderState);
+        for(size_t i = 0; i < renderModel->subMeshCount(); ++i) {
+            renderModel->subMesh(static_cast<unsigned int>(i)).material = workpieceMaterial;
+        }
+    } else {
+        ensureModelMaterial(renderModel, makeSceneObjectMaterial());
+    }
     runtime.visualModel = renderModel;
     runtime.originalMaterials = captureModelMaterials(renderModel);
     runtime.highlightMaterial = makeSceneObjectHighlightMaterial();
+    if(objectDesc.objectType == "workpiece") {
+        scenecore::MaterialRenderState highlightRenderState;
+        highlightRenderState.cull = scenecore::MaterialCullMode::None;
+        scenecore::setMaterialRenderState(runtime.highlightMaterial.get(), highlightRenderState);
+    }
     runtime.visualNode = std::make_shared<VisibleModelNode>(renderModel);
     runtime.visualNode->setName(objectDesc.id);
     runtime.visualNode->setVisible(objectDesc.visible);

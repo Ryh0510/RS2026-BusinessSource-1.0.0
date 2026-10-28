@@ -14,3 +14,6 @@ build
 
 # Third-party dependencies and binaries
 /thirdparty/
+
+# Embedded third-party CGAL dependency
+/SMRobotSpray/SprayFreeformTrajPlan/UVTrajPlan/optcut/ext/libigl/external/cgal/

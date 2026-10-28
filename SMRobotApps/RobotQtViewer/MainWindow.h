@@ -1,5 +1,7 @@
 #pragma once
 
+namespace robot_qt_viewer { class RobotQtViewerEnvironmentController; }
+
 #include <QMainWindow>
 #include <QHash>
 #include <QString>
@@ -47,6 +49,13 @@ class QStackedWidget;
 class QWidget;
 class RobotViewport;
 class StatusPanelWidget;
+class QDockWidget;
+class QWidget;
+
+namespace robot_qt_viewer
+{
+    class PlanningDataSource;
+}
 
 namespace robot_qt_viewer
 {
@@ -69,6 +78,7 @@ namespace robot_qt_viewer
     struct RobotQtViewerViewportProjectState;
     class SceneExplorerWorkbenchShellPort;
     class ToolSetupWorkbenchShellPort;
+
 }
 
 namespace smrobotgen2
@@ -96,6 +106,8 @@ public:
         const QString& startupLanguageId = QString(),
         QWidget* parent = nullptr);
     ~MainWindow() override;
+    bool setUserCoordinateFrame(const simulation_project::TransformDesc& pose, QString& error);
+    bool commitSdkSceneChanges(QString& error);
     bool openProjectPathForProfiling(
         const std::filesystem::path& path,
         int exitDelayMs = -1,
@@ -233,7 +245,7 @@ private:
     QHash<QString, QAction*> m_themeActions;
     QHash<QString, QAction*> m_languageActions;
     QHash<QString, QAction*> m_cameraViewActions;
-    QHash<QString, QAction*> m_environmentActions;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerEnvironmentController> m_environmentController;
     QWidget* m_cameraViewOverlay = nullptr;
     QWidget* m_thicknessLegendOverlay = nullptr;
     QAction* m_loadRobotAction = nullptr;
@@ -311,4 +323,8 @@ private:
         m_workbenchTransitionCoordinator;
     std::filesystem::path& m_projectPath;
     bool m_robotRunDetailsRequested = false;
+    QDockWidget* m_freeformTrajPlanDock = nullptr;
+    QWidget* m_freeformTrajPlanWorkflowPanel = nullptr;
+    std::unique_ptr<robot_qt_viewer::PlanningDataSource>
+        m_freeformTrajPlanDataSource;
 };

@@ -35,6 +35,8 @@ namespace spraycore
         std::string mountLink;
         Eigen::Isometry3d T_link_tool = Eigen::Isometry3d::Identity();
         Eigen::Vector3d sprayDirectionLocal = -Eigen::Vector3d::UnitZ();
+        // Preferred major axis of the elliptical deposition pattern in tool coordinates.
+        Eigen::Vector3d powderFeedDirectionLocal = Eigen::Vector3d::UnitX();
         double effectiveDistanceMin{ 0.05 };
         double effectiveDistanceMax{ 0.5 };
         SprayNozzle nozzle;

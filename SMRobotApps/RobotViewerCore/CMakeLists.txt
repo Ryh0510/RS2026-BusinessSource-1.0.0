@@ -40,6 +40,8 @@ add_library(${TARGET_NAME} STATIC
     ProjectSceneCollisionPresentationSystem.h
     ProjectSceneDocumentProjectionSystem.cpp
     ProjectSceneDocumentProjectionSystem.h
+    ProjectSceneModelEnvironment.cpp
+    ProjectSceneModelEnvironment.h
     ProjectSceneEnvironment.cpp
     ProjectSceneEnvironment.h
     ProjectSceneEnvironmentSystem.cpp

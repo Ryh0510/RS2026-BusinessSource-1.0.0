@@ -246,6 +246,7 @@ ToolAssetEditorWidget::ToolAssetEditorWidget(QWidget* parent)
 
     m_visualTransformEditor = new ToolTransformEditorWidget("Model/world -> Tool flange {F}", appearancePage);
     m_tcpTransformEditor = new ToolTransformEditorWidget("Model/world -> TCP {TCP}", definitionPage);
+    m_tcpTransformEditor->setTcpConventionEnabled(true);
     m_visualTransformEditor->setMatrixVisible(false);
     m_tcpTransformEditor->setMatrixVisible(false);
     appearanceLayout->addWidget(m_visualTransformEditor);

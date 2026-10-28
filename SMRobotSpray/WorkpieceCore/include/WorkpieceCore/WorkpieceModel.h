@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,9 @@ namespace sprayworkpiece
         std::string name;
         std::string sourceMeshPath;
         std::vector<SurfaceSample> samples;
+        // Optional indexed surface topology used by BVH and surface fitting.
+        // Indices refer to entries in samples and are grouped by triangle.
+        std::vector<std::uint32_t> triangleIndices;
         std::vector<SurfaceRegion> regions;
 
         bool empty() const;

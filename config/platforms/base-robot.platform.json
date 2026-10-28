@@ -10,7 +10,9 @@
     "smrobot.mode.collision-config",
     "smrobot.mode.motion-planning",
     "smrobot.mode.spray-process",
+    "smrobot.mode.freeform-trajectory-planning",
     "smrobot.mode.coating-analysis",
+    "smrobot.mode.calibration-translation",
     "smrobot.mode.digital-twin"
   ],
   "defaultWorkbench": "smrobot.mode.project-assembly"

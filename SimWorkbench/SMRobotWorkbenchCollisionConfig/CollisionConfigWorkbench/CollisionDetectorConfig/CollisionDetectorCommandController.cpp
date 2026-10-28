@@ -598,7 +598,9 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::bindDetectorP
             newGenerators.push_back(generator);
         }
     }
-    if(newGenerators.empty()) {
+    const bool hadSceneAll = std::any_of(detector->pairGenerators.begin(), detector->pairGenerators.end(),
+        [](const auto& generator) { return generator.type == "SceneAll"; });
+    if(newGenerators.empty() && !hadSceneAll) {
         return makeFailure("Generated model-pair rules already exist on this detector.");
     }
 
@@ -608,6 +610,10 @@ CollisionDetectorCommandResult CollisionDetectorCommandController::bindDetectorP
     detector->selectionSetAId.clear();
     detector->selectionSetBId.clear();
     detector->targets.clear();
+    // Explicit pairs narrow the default all-scene scope. Keep other explicit
+    // rules for incremental additions, but never retain the SceneAll fallback.
+    detector->pairGenerators.erase(std::remove_if(detector->pairGenerators.begin(), detector->pairGenerators.end(),
+        [](const auto& generator) { return generator.type == "SceneAll"; }),detector->pairGenerators.end());
     for(const simulation_project::CollisionPairGeneratorDesc& generator : newGenerators) {
         detector->pairGenerators.push_back(generator);
     }

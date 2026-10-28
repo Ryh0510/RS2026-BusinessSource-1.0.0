@@ -44,6 +44,11 @@ namespace
 }
 #include "CollisionLinkModelSetupModuleController.h"
 #include "RobotQtViewerDocumentContext.h"
+#include "RobotQtViewerViewportPorts.h"
+
+#include <QTimer>
+#include <algorithm>
+#include <cmath>
 
 #include <utility>
 
@@ -131,6 +136,13 @@ namespace robot_qt_viewer
     {
         m_linkModelSetupController->connectPanelSignals(*this);
         m_detectorConfigController->connectPanelSignals(*this);
+        m_resultsTimer = new QTimer(this);
+        m_resultsTimer->setInterval(200);
+        connect(m_resultsTimer, &QTimer::timeout, this, [this]() {
+            if(!m_collisionModelConfigurationActive) {
+                refreshCollisionDetectorDetails();
+            }
+        });
     }
 
     CollisionWorkbenchModuleController::~CollisionWorkbenchModuleController() = default;
@@ -138,6 +150,12 @@ namespace robot_qt_viewer
     void CollisionWorkbenchModuleController::setWorkbenchActive(bool active)
     {
         m_workbenchActive = active;
+        if(active) {
+            refreshCollisionDetectorDetails();
+            m_resultsTimer->start();
+        } else {
+            m_resultsTimer->stop();
+        }
     }
 
     bool CollisionWorkbenchModuleController::isWorkbenchActive() const
@@ -215,7 +233,43 @@ namespace robot_qt_viewer
 
     void CollisionWorkbenchModuleController::refreshCollisionDetectorDetails()
     {
-        // Runtime result details are shown by run/analysis modules, not CollisionConfigMode.
+        auto* viewport = m_context.collisionViewport();
+        const QString detectorId = currentCollisionDetectorId();
+        QString text;
+        if(detectorId.isEmpty()) {
+            text = QStringLiteral("Nearest distance: select a collision detector.");
+        } else if(viewport == nullptr) {
+            text = QStringLiteral("Nearest distance: viewport unavailable.");
+        } else if(!viewport->collisionQueriesEnabled()) {
+            text = QStringLiteral("Nearest distance: collision detection paused. Start collision detection or click Refresh Nearest.");
+        } else {
+            const auto detectors = viewport->collisionRuntimeDetectors();
+            const auto it = std::find_if(detectors.begin(), detectors.end(), [&](const auto& item) {
+                return QString::fromStdString(item.id) == detectorId;
+            });
+            if(it == detectors.end()) {
+                text = QStringLiteral("Nearest distance: waiting for detector initialization.");
+            } else if(!it->enabled) {
+                text = QStringLiteral("Nearest distance: detector disabled.");
+            } else if(!it->valid) {
+                text = QStringLiteral("Nearest distance: invalid detector. %1").arg(QString::fromStdString(it->errorMessage));
+            } else if(it->hasResult && it->nearest.valid && std::isfinite(it->nearest.distance)) {
+                text = QStringLiteral("Nearest distance: %1 mm\n%2 <-> %3\nCollision: %4")
+                    .arg(it->nearest.distance * 1000.0, 0, 'f', 3)
+                    .arg(QString::fromStdString(it->nearest.bodyA), QString::fromStdString(it->nearest.bodyB))
+                    .arg(it->inCollision ? QStringLiteral("Yes") : QStringLiteral("No"));
+            } else if(it->hasResult && it->inCollision) {
+                // The SDK can suppress nearest-point coordinates during contact.
+                // Report zero geometric clearance without inventing endpoint positions.
+                text = QStringLiteral("Nearest distance: 0.000 mm (collision)\nCollision: Yes\nNearest points: %1")
+                    .arg(QString::fromStdString(it->nearest.state));
+            } else {
+                text = QStringLiteral("Nearest distance: %1%2")
+                    .arg(it->hasResult ? QString::fromStdString(it->nearest.state) : QStringLiteral("waiting for first query"))
+                    .arg(it->nearest.reason.empty() ? QString() : QStringLiteral(" - ") + QString::fromStdString(it->nearest.reason));
+            }
+        }
+        m_panel.setDetectorRuntimeResultText(text);
     }
 
     void CollisionWorkbenchModuleController::refreshCollisionElementList(const QString& qualityMessage)

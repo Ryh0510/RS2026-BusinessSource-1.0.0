@@ -52,6 +52,7 @@ public:
     bool configureNewDetector(CollisionDetectorQueryContractView& contract);
     void setDetectorProperties(const CollisionDetectorPropertiesView& view);
     void setDetectorPairs(const CollisionDetectorPairsViewModel& view);
+    void setDetectorRuntimeResultText(const QString& text);
     CollisionDetectorPropertiesView currentDetectorProperties() const;
     CollisionDetectorQueryContractView currentDetectorQueryContract() const;
     QString currentDetectorId() const;

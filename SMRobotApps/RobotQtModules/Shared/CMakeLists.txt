@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.20)
 set(TARGET_NAME RobotQtModulesShared)
 
 set(SOURCES
+    UserCoordinateFrame.cpp
+    UserCoordinateFrame.h
+    PlanningDataSource.h
+    PlanningDataSource.cpp
     CollisionRuntimeViewModel.h
     InspectorContext.cpp
     InspectorContext.h
@@ -51,6 +55,8 @@ set(SOURCES
     RobotQtViewerWindowConfig.h
     SceneEntityWorkflowController.cpp
     SceneEntityWorkflowController.h
+    SceneEntitySemantics.h
+    SceneEntitySemantics.cpp
     ViewportReloadWorkflowController.cpp
     ViewportReloadWorkflowController.h
 )
@@ -69,6 +75,7 @@ target_include_directories(${TARGET_NAME}
 
 target_link_libraries(${TARGET_NAME}
     PUBLIC
+        SMRobotSpray::SprayTrajectoryCore
         Qt5::Widgets
         Common::Utility
         SMRobotCore::RobotIO
@@ -97,25 +104,16 @@ set_target_properties(${TARGET_NAME}
 )
 
 if(BuildTests)
-    add_subdirectory(
-        regression/WorkbenchLifecycleTest
-        ${PROJECT_BINARY_DIR}/tests/robot_qt_workbench_lifecycle)
-    add_subdirectory(
-        regression/LocalizationTest
-        ${PROJECT_BINARY_DIR}/tests/robot_qt_localization)
-    add_subdirectory(
-        regression/FileDialogTest
-        ${PROJECT_BINARY_DIR}/tests/robot_qt_file_dialog)
-    add_subdirectory(
-        regression/OperationStatusTest
-        ${PROJECT_BINARY_DIR}/tests/robot_qt_operation_status)
-    add_subdirectory(
-        regression/DocumentTransactionTest
-        ${PROJECT_BINARY_DIR}/tests/robot_qt_document_transaction)
+    rs2026_add_test_unit(regression/WorkbenchLifecycleTest)
+    rs2026_add_test_unit(regression/LocalizationTest)
+    rs2026_add_test_unit(regression/FileDialogTest)
+    rs2026_add_test_unit(regression/OperationStatusTest)
+    rs2026_add_test_unit(regression/DocumentTransactionTest)
 endif()
 
 if(ExportPacakgeSMRobotWorkbenchCommon)
     set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
+        SMRobotSpray::SprayTrajectoryCore
         Qt5::Widgets
         Common::Utility
         SMRobotCore::RobotIO

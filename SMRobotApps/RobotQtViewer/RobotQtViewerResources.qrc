@@ -28,6 +28,8 @@
         <file alias="icons/ribbon/motion_planning_workbench.png">resources/icons/ribbon/motion_planning_workbench.png</file>
         <file alias="icons/ribbon/spray_process_workbench.png">resources/icons/ribbon/spray_process_workbench.png</file>
         <file alias="icons/ribbon/coating_analysis_workbench.png">resources/icons/ribbon/coating_analysis_workbench.png</file>
+        <file alias="icons/ribbon/FreeformTrajPlan.png">resources/icons/ribbon/FreeformTrajPlan.png</file>
+        <file alias="icons/ribbon/Translation.png">resources/icons/ribbon/Translation.png</file>
         <file alias="icons/ribbon/digital_twin_workbench.png">resources/icons/ribbon/digital_twin_workbench.png</file>
         <file alias="icons/theme/arrow-dark.xpm">resources/icons/theme/arrow-dark.xpm</file>
         <file alias="icons/theme/arrow-light.xpm">resources/icons/theme/arrow-light.xpm</file>

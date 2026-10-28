@@ -1,6 +1,8 @@
 #include "ToolTransformEditorWidget.h"
 
 #include "RobotQtWidgetUtils.h"
+#include "TcpDefinitionDialog.h"
+#include <QComboBox>
 
 #include <QDoubleSpinBox>
 #include <QFont>
@@ -139,6 +141,14 @@ ToolTransformEditorWidget::ToolTransformEditorWidget(const QString& title, QWidg
     }
     layout->addWidget(m_matrixGroup);
 
+    m_convention = new QComboBox(this);
+    m_convention->setObjectName("tcpConvention");
+    m_convention->addItem("Generic - XYZ / RPY (mm, deg)", "generic");
+    m_convention->addItem("FANUC - XYZ / WPR (mm, deg)", "fanuc");
+    m_convention->addItem("ABB - XYZ / quaternion (w, x, y, z)", "abb");
+    m_convention->hide();
+    layout->addWidget(m_convention);
+
     auto* parameterGroup = new QGroupBox(QStringLiteral("Local Transform"), this);
     auto* grid = new QGridLayout(parameterGroup);
     grid->setContentsMargins(8, 24, 2, 8);
@@ -151,6 +161,13 @@ ToolTransformEditorWidget::ToolTransformEditorWidget(const QString& title, QWidg
     m_pitchSpin = makeAngleSpin(this);
     m_yawSpin = makeAngleSpin(this);
     addTransformRows(grid, parameterGroup, m_xSpin, m_ySpin, m_zSpin, m_rollSpin, m_pitchSpin, m_yawSpin);
+    for(int i = 0; i < 3; ++i) m_rotationLabels[i] = qobject_cast<QLabel*>(grid->itemAtPosition(i + 3, 0)->widget());
+    m_rotationLabels[3] = new QLabel("q4 (z)", parameterGroup);
+    m_qzSpin = makeAngleSpin(this);
+    m_qzSpin->setObjectName("tcpQuaternionZ");
+    grid->addWidget(m_rotationLabels[3], 6, 0);
+    grid->addWidget(m_qzSpin, 6, 1);
+    m_rotationLabels[3]->hide(); m_qzSpin->hide();
     layout->addWidget(parameterGroup);
 
     const QList<QDoubleSpinBox*> spins = {
@@ -159,7 +176,8 @@ ToolTransformEditorWidget::ToolTransformEditorWidget(const QString& title, QWidg
         m_zSpin,
         m_rollSpin,
         m_pitchSpin,
-        m_yawSpin
+        m_yawSpin,
+        m_qzSpin
     };
     for(QDoubleSpinBox* spin : spins) {
         connect(
@@ -170,6 +188,35 @@ ToolTransformEditorWidget::ToolTransformEditorWidget(const QString& title, QWidg
                 emitTransformChanged();
             });
     }
+    connect(m_convention, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int) {
+        simulation_project::TransformDesc pose;
+        if(!readTcpTransform(pose)) {
+            QSignalBlocker blocker(m_convention);
+            m_convention->setCurrentIndex(m_convention->findData(m_displayConvention));
+            return;
+        }
+        m_displayConvention = m_convention->currentData().toString();
+        setTransform(pose);
+    });
+}
+
+void ToolTransformEditorWidget::setTcpConventionEnabled(bool enabled)
+{
+    const auto pose = transform();
+    m_displayConvention = enabled ? m_convention->currentData().toString() : QString();
+    m_convention->setVisible(enabled);
+    setTransform(pose);
+}
+
+bool ToolTransformEditorWidget::readTcpTransform(simulation_project::TransformDesc& pose) const
+{
+    Eigen::Isometry3d matrix;
+    const bool valid = ::tcpPoseFromValues(m_displayConvention.toStdString(),
+        {m_xSpin->value(), m_ySpin->value(), m_zSpin->value(), m_rollSpin->value(),
+         m_pitchSpin->value(), m_yawSpin->value(), m_qzSpin->value()}, matrix);
+    m_convention->setToolTip(valid ? QString() : QStringLiteral("Invalid TCP: quaternion must be nonzero."));
+    if(valid) pose = ::tcpTransformDesc(matrix);
+    return valid;
 }
 
 void ToolTransformEditorWidget::setTitle(const QString& title)
@@ -188,13 +235,15 @@ void ToolTransformEditorWidget::setMatrixVisible(bool visible)
 
 void ToolTransformEditorWidget::setTransform(const simulation_project::TransformDesc& transform)
 {
+    m_lastValidTransform = transform;
     const QList<QDoubleSpinBox*> spins = {
         m_xSpin,
         m_ySpin,
         m_zSpin,
         m_rollSpin,
         m_pitchSpin,
-        m_yawSpin
+        m_yawSpin,
+        m_qzSpin
     };
     std::vector<std::unique_ptr<QSignalBlocker>> blockers;
     blockers.reserve(static_cast<std::size_t>(spins.size()));
@@ -204,6 +253,29 @@ void ToolTransformEditorWidget::setTransform(const simulation_project::Transform
         }
     }
 
+    if(!m_displayConvention.isEmpty()) {
+        const bool abb = m_displayConvention == "abb";
+        const bool fanuc = m_displayConvention == "fanuc";
+        for(auto* spin : {m_xSpin, m_ySpin, m_zSpin}) {
+            spin->setRange(-1e8, 1e8); spin->setDecimals(8); spin->setSuffix(" mm");
+        }
+        for(auto* spin : {m_rollSpin, m_pitchSpin, m_yawSpin, m_qzSpin}) {
+            spin->setRange(abb ? -1.0 : -360.0, abb ? 1.0 : 360.0);
+            spin->setDecimals(8); spin->setSuffix(abb ? "" : " deg");
+            spin->setSingleStep(abb ? .01 : 1.0);
+        }
+        m_rotationLabels[0]->setText(abb ? "q1 (w)" : fanuc ? "W" : "Roll");
+        m_rotationLabels[1]->setText(abb ? "q2 (x)" : fanuc ? "P" : "Pitch");
+        m_rotationLabels[2]->setText(abb ? "q3 (y)" : fanuc ? "R" : "Yaw");
+        m_rotationLabels[3]->setVisible(abb); m_qzSpin->setVisible(abb);
+        const auto values = ::tcpPoseToValues(m_displayConvention.toStdString(), ::tcpTransformMatrix(transform));
+        const std::array<QDoubleSpinBox*, 7> fields = {m_xSpin,m_ySpin,m_zSpin,m_rollSpin,m_pitchSpin,m_yawSpin,m_qzSpin};
+        for(std::size_t i=0;i<fields.size();++i) fields[i]->setValue(values[i]);
+        updateMatrix(transform);
+        return;
+    }
+    for(auto* spin : {m_xSpin, m_ySpin, m_zSpin}) { spin->setSuffix(" m"); spin->setDecimals(4); }
+    m_rotationLabels[3]->hide(); m_qzSpin->hide();
     m_xSpin->setValue(transform.x);
     m_ySpin->setValue(transform.y);
     m_zSpin->setValue(transform.z);
@@ -215,6 +287,11 @@ void ToolTransformEditorWidget::setTransform(const simulation_project::Transform
 
 simulation_project::TransformDesc ToolTransformEditorWidget::transform() const
 {
+    if(!m_displayConvention.isEmpty()) {
+        auto pose = m_lastValidTransform;
+        readTcpTransform(pose);
+        return pose;
+    }
     simulation_project::TransformDesc value;
     value.x = m_xSpin->value();
     value.y = m_ySpin->value();
@@ -227,7 +304,12 @@ simulation_project::TransformDesc ToolTransformEditorWidget::transform() const
 
 void ToolTransformEditorWidget::emitTransformChanged()
 {
+    if(!m_displayConvention.isEmpty()) {
+        simulation_project::TransformDesc pose;
+        if(!readTcpTransform(pose)) return;
+    }
     const simulation_project::TransformDesc value = transform();
+    m_lastValidTransform = value;
     updateMatrix(value);
     emit transformChanged(value);
 }

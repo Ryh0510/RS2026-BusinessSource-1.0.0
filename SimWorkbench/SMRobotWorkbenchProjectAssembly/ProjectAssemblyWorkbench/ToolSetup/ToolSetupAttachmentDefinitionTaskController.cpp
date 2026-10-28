@@ -426,8 +426,7 @@ namespace robot_qt_viewer
             object->name.empty() ? object->id : object->name;
         simulation_project::AttachmentAssetDesc asset;
         asset.assetKind = "tool";
-        asset.assetType =
-            object->objectType.empty() ? std::string("tool") : object->objectType;
+        asset.assetType = "tool";
         asset.visualPath = object->sourcePath;
         asset.visualScale = object->visualScale > 0.0 ? object->visualScale : 1.0;
         asset.visible = object->visible;

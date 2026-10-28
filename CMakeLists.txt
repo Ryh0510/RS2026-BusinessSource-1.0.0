@@ -4,31 +4,46 @@
 #   Rewrittern by Tang Qing in Feb, 2026
 ######################################################################################
 cmake_minimum_required( VERSION 3.20 )
+# Visual Studio can launch per-project regeneration checks concurrently after
+# source updates. Serialize all configure-time writes within this build tree.
+# Acquire before dependency preparation, project(), and header staging.
+file(LOCK "${CMAKE_BINARY_DIR}/.rs2026-configure.lock"
+    GUARD PROCESS TIMEOUT 180)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PrepareFreeformDependencies.cmake")
 
 ######################################################################################
 #	Project Setting
 ######################################################################################
 #   Define the project
 project( RobotSimulator2026
-    VERSION 1.0.5
+    VERSION 1.0.6
     LANGUAGES CXX C
     DESCRIPTION "Robot Simulator!"
 )
 
+# Register before third-party subdirectories so the default INSTALL can
+# dispatch selected packages before any unrestricted install rule runs.
+install(SCRIPT "${CMAKE_BINARY_DIR}/RS2026DefaultInstallDispatcher.cmake"
+    COMPONENT rs2026_local_default_install)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/RS2026CacheOptionNames.cmake)
 set(_smrobot_build_testing_default OFF)
 if(DEFINED CACHE{BuildTests} AND NOT DEFINED CACHE{BUILD_TESTING})
     set(_smrobot_build_testing_default "$CACHE{BuildTests}")
 endif()
-option(BUILD_TESTING "Build project tests" ${_smrobot_build_testing_default})
-if(DEFINED CACHE{BuildTests}
-   AND DEFINED CACHE{BUILD_TESTING}
-   AND NOT "$CACHE{BuildTests}" STREQUAL "$CACHE{BUILD_TESTING}")
-    message(WARNING
-        "BuildTests and BUILD_TESTING differ; BUILD_TESTING is authoritative. "
-        "BuildTests is a compatibility seed for build trees created before this migration.")
+rs2026_named_cache_option(Test_Enabled BUILD_TESTING
+    "Configure and register project tests" ${_smrobot_build_testing_default})
+set(BuildTests "${Test_Enabled}")
+if(DEFINED CACHE{BuildTests})
+    set(BuildTests "${Test_Enabled}" CACHE INTERNAL
+        "Compatibility alias for Test_Enabled" FORCE)
 endif()
-set(BuildTests "${BUILD_TESTING}")
 include(CTest)
+# CMake leaves this generated file behind when an existing build tree turns tests off.
+if(NOT BUILD_TESTING)
+    file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake")
+endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/RS2026TestGovernance.cmake)
 unset(_smrobot_build_testing_default)
 
 if(BUILD_TESTING)
@@ -96,6 +111,15 @@ include( PackageSourceLayout )
 #   From the 
 
 include( ProjectPackagesConfigSetting )
+rs2026_finalize_test_options()
+if(BUILD_TESTING)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake_build_revision/CMakeLists.txt")
+        rs2026_add_test_unit(tests/cmake_build_revision)
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_governance/SelectorSelfTest/CMakeLists.txt")
+        rs2026_add_test_unit(tests/test_governance/SelectorSelfTest)
+    endif()
+endif()
 list( REMOVE_DUPLICATES _all_pkgs )
 
 # message( STATUS "[RS2025] Package Common's Components include: ${Common_Components}" )
@@ -110,19 +134,11 @@ include( CMakePrintHelpers )
 #	User Configuration
 ######################################################################################
 #   Define the current user.
-option( DisplayTargetProperties "Whether display the targets' properties" OFF )
+rs2026_named_cache_option(Display_TargetProperties DisplayTargetProperties
+    "Whether display the targets' properties" OFF)
 
 #   Define user and find third-party packages
 include( UserConfig )
-
-if(BUILD_TESTING AND WIN32)
-    # Thin Business Source SDKs do not ship the source-only GTest helper.
-    if(EXISTS "${SMROBOT_THIRDPARTY_ROOT}/Windows/FindGTest_3rdParty.cmake")
-        include("${SMROBOT_THIRDPARTY_ROOT}/Windows/FindGTest_3rdParty.cmake")
-    else()
-        find_package(GTest QUIET)
-    endif()
-endif()
 
 # OpenGL is a direct source-build dependency of Common targets. Some user
 # profiles used to obtain OpenGL::GL indirectly through PCL/VTK, so ensure the
@@ -131,7 +147,15 @@ if("OpenGL" IN_LIST RS2026_REQUIRED_PACKAGES AND NOT TARGET OpenGL::GL)
     find_package( OpenGL REQUIRED )
 endif()
 
-if(NOT UsingPrebuilt_Common)
+if(BUILD_TESTING AND WIN32 AND NOT TARGET GTest::gtest)
+    if(EXISTS "${SMROBOT_THIRDPARTY_ROOT}/Windows/FindGTest_3rdParty.cmake")
+        include("${SMROBOT_THIRDPARTY_ROOT}/Windows/FindGTest_3rdParty.cmake")
+    else()
+        find_package(GTest QUIET)
+    endif()
+endif()
+
+if(NOT UsingPrebuilt_Common AND "LicenseSystem" IN_LIST RS2026_REQUIRED_PACKAGES)
     include(SourceLicenseFacadeProvider)
 endif()
 
@@ -493,6 +517,8 @@ set( SeqPackages Common Verification Algorithm
     SMRobotWorkbenchCollisionConfig
     SMRobotWorkbenchRobotRun
     SMRobotWorkbenchMotionPlanning
+    SMRobotWorkbenchFreeformTrajPlan
+    SMRobotWorkbenchCalibrationTranslation
     SMRobotWorkbenchPaintingAnalysis
     SMRobotWorkbenchSprayProcess
     SMRobotWorkbenchDigitalTwin
@@ -525,6 +551,10 @@ foreach( PACKAGE_NAME ${SeqPackages} )
         message( STATUS "\tSkip package : ${PACKAGE_NAME}" )
         message( STATUS "--------------------------------------------------------\n" )
     endif()
+    if(BuildPackage_${PACKAGE_NAME} AND NOT UsingPrebuilt_${PACKAGE_NAME}
+       AND ExportPacakge${PACKAGE_NAME})
+        rs_register_package_build_info(${PACKAGE_NAME})
+    endif()
     unset(_package_source_dir)
 endforeach()
 
@@ -536,6 +566,10 @@ foreach( PACKAGE_NAME ${PrebuiltPackagesOptions} )
 endforeach()
 
 rs_create_logical_package_alias_targets()
+rs_group_optional_program_targets("${CMAKE_SOURCE_DIR}")
+rs2026_finalize_test_targets()
+include(RS2026LocalPrebuiltInstall)
+rs2026_add_local_prebuilt_install_target()
 
 
 
@@ -593,13 +627,11 @@ endif()
 
 
 
-# An independent prebuilt SDK cannot embed this consumer's local data root.
-# Give regressions the explicitly configured root without changing user/global env.
+message( STATUS "==================== End of RobotSimulator ${PROJECT_VERSION} CMake ====================\n" )
+
 if(BUILD_TESTING)
-    configure_file(cmake/TestAssetEnvironment.cmake.in
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestAssetEnvironment.cmake.in"
         "${CMAKE_CURRENT_BINARY_DIR}/TestAssetEnvironment.cmake" @ONLY)
     set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
         "${CMAKE_CURRENT_BINARY_DIR}/TestAssetEnvironment.cmake")
 endif()
-
-message( STATUS "==================== End of RobotSimulator ${PROJECT_VERSION} CMake ====================\n" )

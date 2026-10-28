@@ -68,6 +68,7 @@ namespace robot_qt_viewer
             const QString& preferredFrameId = QString());
         void unbindMountedAttachment(const QString& attachmentId);
         void updateToolFrameVisibility();
+        void setMountFrameVisible(const QString& mountId, bool visible) override;
         QString currentMountId() const override;
         QString currentAttachmentId() const override;
         bool hasPendingTaskChanges() const;

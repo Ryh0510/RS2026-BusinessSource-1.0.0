@@ -6,6 +6,8 @@
 #   1. Get all package names
 ############################################################
 set( ExcludeBuildPackages
+    .vs
+    out
     cmake data build .git .idea Prune doc .codex .planning
     PrebuiltPackages PackagesInstallation cmake_bk
     cmake_upgrade config include license thirdparty
@@ -15,8 +17,6 @@ set( ExcludeBuildPackages
     tutorials
     scripts
     Reference
-    .vs
-    out
     SimWorkbench
     # Algorithm
     Applications
@@ -45,6 +45,8 @@ collect_subdirs(
     AllPackageNames
     EXCLUDE ${ExcludeBuildPackages}
 )
+# Local prebuilt install backups and staging directories are not source packages.
+list(FILTER AllPackageNames EXCLUDE REGEX "^PrebuiltPackages\\.(previous|stage)-")
 
 set( AllBuildPackages ${AllPackageNames} )
 list( APPEND AllBuildPackages ${AdditionalBuildPackages} )
@@ -52,6 +54,19 @@ list( REMOVE_DUPLICATES AllBuildPackages )
 message( STATUS "------------------------------------------------------------------" )
 message( STATUS "All Build Packages: ${AllBuildPackages}" )
 message( STATUS "------------------------------------------------------------------\n" )
+
+unset(InstallPrebuilt_Root CACHE)
+foreach(PACKAGE_NAME IN LISTS AllBuildPackages)
+    if(PACKAGE_NAME MATCHES "^(Common|SMRobotCore|SMRobotPlatform)$")
+        set(_local_prebuilt_default ON)
+    else()
+        set(_local_prebuilt_default OFF)
+    endif()
+    option(InstallPrebuilt_${PACKAGE_NAME}
+        "Include first-party package ${PACKAGE_NAME} in the local prebuilt install"
+        ${_local_prebuilt_default})
+endforeach()
+unset(_local_prebuilt_default)
 
 ############################################################
 #   2. Get all prebuilt package names
@@ -65,7 +80,7 @@ if(NOT SMROBOT_PREBUILT_PACKAGE_SELECTION_MODE MATCHES "^(Explicit|LegacyAuto)$"
 endif()
 
 set(SMROBOT_PREBUILT_PACKAGE_ROOT "" CACHE PATH
-    "Explicit SDK install prefix used when resolving UsingPrebuilt_<Package>=ON.")
+    "Optional SDK prefix override; installed local packages at CMAKE_INSTALL_PREFIX are used by default.")
 
 set(_smrobot_default_legacy_prebuilt_root "${CMAKE_CURRENT_SOURCE_DIR}/PrebuiltPackages")
 set(_smrobot_prebuilt_package_root "")
@@ -79,9 +94,19 @@ else()
         "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
     get_filename_component(_smrobot_default_install_prefix
         "${_smrobot_default_legacy_prebuilt_root}" ABSOLUTE)
-    if(NOT _smrobot_current_install_prefix STREQUAL _smrobot_default_install_prefix)
+    set(_smrobot_local_prebuilt_available OFF)
+    foreach(_package IN LISTS AllBuildPackages)
+        if(EXISTS "${_smrobot_default_install_prefix}/${_package}/manifest.json" AND
+           EXISTS "${_smrobot_default_install_prefix}/${_package}/lib/cmake/${_package}/${_package}Config.cmake")
+            set(_smrobot_local_prebuilt_available ON)
+            break()
+        endif()
+    endforeach()
+    if(NOT _smrobot_current_install_prefix STREQUAL _smrobot_default_install_prefix OR
+       _smrobot_local_prebuilt_available)
         set(_smrobot_prebuilt_package_root "${_smrobot_current_install_prefix}")
     endif()
+    unset(_smrobot_local_prebuilt_available)
     unset(_smrobot_current_install_prefix)
     unset(_smrobot_default_install_prefix)
 endif()
@@ -281,6 +306,7 @@ message( STATUS "Handle all packages for the whole project" )
 message( STATUS "ProjectRequiredLibs: ${ProjectRequiredLibs}" )
 list( REMOVE_DUPLICATES ProjectRequiredLibs )
 resolve_dependencies( ProjectRequiredLibs )
+rs_validate_source_component_dependencies()
 
 #   4. Display the required libs for this package
 
@@ -296,19 +322,40 @@ message( STATUS "***************************************************************
 ############################################################
 option( BuildExample "Build examples!" ON )
 option( BuildSdkExamples "Build installed SDK QuickStart examples in the main project" ON )
-option( BuildDiagnostics "Build diagnostic programs" OFF )
-option( BuildFeatureProbes "Build feature probe programs" OFF )
-option( BuildRegression "Build regression executables" OFF )
-option( BuildExternalValidation "Build external validation programs" OFF )
+# Migrate both historical names without exposing them as Test options.
+rs2026_named_cache_option_with_legacy_alias(
+    DevTools_Diagnostics TestDiagnostics BuildDiagnostics
+    "Build diagnostic programs for manual inspection" OFF)
+rs2026_named_cache_option_with_legacy_alias(
+    DevTools_FeatureProbes TestFeatureProbes BuildFeatureProbes
+    "Build feature probe programs for manual exploration" OFF)
+rs2026_named_cache_option_with_legacy_alias(
+    DevTools_PackageConsumers TestExternalValidation BuildExternalValidation
+    "Build package consumer programs for manual inspection" OFF)
+# Retired regression switches are no longer inputs to test selection.
+unset(TestRegression CACHE)
+unset(BuildRegression CACHE)
+unset(RS2026_CACHE_LAST_BuildRegression CACHE)
 option( BuildTutorials "Build tutorial programs" OFF )
 
 foreach( PACKAGE_NAME ${AllBuildPackages} )
     option( BuildExample_${PACKAGE_NAME} "Build examples of package ${PACKAGE_NAME}" OFF )
     option( BuildSdkExamples_${PACKAGE_NAME} "Build installed SDK QuickStart examples of package ${PACKAGE_NAME}" OFF )
-    option( BuildDiagnostics_${PACKAGE_NAME} "Build diagnostic programs of package ${PACKAGE_NAME}" OFF )
-    option( BuildFeatureProbes_${PACKAGE_NAME} "Build feature probe programs of package ${PACKAGE_NAME}" OFF )
-    option( BuildRegression_${PACKAGE_NAME} "Build regression executables of package ${PACKAGE_NAME}" OFF )
-    option( BuildExternalValidation_${PACKAGE_NAME} "Build external validation programs of package ${PACKAGE_NAME}" OFF )
+    rs2026_named_cache_option_with_legacy_alias(
+        DevTools_Diagnostics_${PACKAGE_NAME} TestDiagnostics_${PACKAGE_NAME}
+        BuildDiagnostics_${PACKAGE_NAME}
+        "Build diagnostic programs of package ${PACKAGE_NAME}" OFF)
+    rs2026_named_cache_option_with_legacy_alias(
+        DevTools_FeatureProbes_${PACKAGE_NAME} TestFeatureProbes_${PACKAGE_NAME}
+        BuildFeatureProbes_${PACKAGE_NAME}
+        "Build feature probe programs of package ${PACKAGE_NAME}" OFF)
+    rs2026_named_cache_option_with_legacy_alias(
+        DevTools_PackageConsumers_${PACKAGE_NAME} TestExternalValidation_${PACKAGE_NAME}
+        BuildExternalValidation_${PACKAGE_NAME}
+        "Build package consumer programs of package ${PACKAGE_NAME}" OFF)
+    unset(TestRegression_${PACKAGE_NAME} CACHE)
+    unset(BuildRegression_${PACKAGE_NAME} CACHE)
+    unset(RS2026_CACHE_LAST_BuildRegression_${PACKAGE_NAME} CACHE)
     option( BuildTutorials_${PACKAGE_NAME} "Build tutorial programs of package ${PACKAGE_NAME}" OFF )
 endforeach()
 

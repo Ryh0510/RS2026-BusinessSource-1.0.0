@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
-add_subdirectory(RibbonPointCloudActionSmokeTest)
-add_subdirectory(ThemeStateSmokeTest)
-add_subdirectory(ViewportPresentationSmokeTest)
-add_subdirectory(SprayMeasurementSmokeTest)
-add_subdirectory(WorkbenchPluginTest)
+rs2026_add_test_unit(RibbonPointCloudActionSmokeTest)
+rs2026_add_test_unit(ThemeStateSmokeTest)
+rs2026_add_test_unit(ViewportPresentationSmokeTest)
+rs2026_add_test_unit(SprayMeasurementSmokeTest)
+rs2026_add_test_unit(TrajectoryTransferSmokeTest)
+rs2026_add_test_unit(WorkbenchPluginTest)
+
+rs2026_add_test_unit(ImportedFeatureRegression)
+
+rs2026_add_test_unit(ModelEnvironmentTest)

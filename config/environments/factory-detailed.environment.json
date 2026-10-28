@@ -1,0 +1,19 @@
+{
+  "schema": "smrobot.presentation-environment",
+  "version": 1,
+  "id": "factory-detailed",
+  "units": "meters",
+  "scale": 1.0,
+  "hasGround": true,
+  "groundHeight": 0.0,
+  "showGrid": false,
+  "parts": [
+    {"id": "floor", "role": "floor", "source": "data://environments/factory-detailed/runtime/floor.gltf"},
+    {"id": "interior", "role": "solid", "source": "data://environments/factory-detailed/runtime/interior.gltf"},
+    {"id": "wall-n", "role": "wall", "source": "data://environments/factory-detailed/runtime/wall-n.gltf", "normal": [0, 1, 0], "offset": 7.9},
+    {"id": "wall-s", "role": "wall", "source": "data://environments/factory-detailed/runtime/wall-s.gltf", "normal": [0, -1, 0], "offset": 7.9},
+    {"id": "wall-e", "role": "wall", "source": "data://environments/factory-detailed/runtime/wall-e.gltf", "normal": [1, 0, 0], "offset": 7.9},
+    {"id": "wall-w", "role": "wall", "source": "data://environments/factory-detailed/runtime/wall-w.gltf", "normal": [-1, 0, 0], "offset": 7.9},
+    {"id": "roof", "role": "roof", "source": "data://environments/factory-detailed/runtime/roof.gltf"}
+  ]
+}

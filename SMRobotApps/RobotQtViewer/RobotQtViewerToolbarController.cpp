@@ -109,6 +109,12 @@ namespace
         if(actionId == QStringLiteral("sprayProcessWorkbench")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/spray_process_workbench.png");
         }
+        if(actionId == QStringLiteral("freeformTrajPlanWorkbench")) {
+            return QStringLiteral(":/RobotQtViewer/icons/ribbon/FreeformTrajPlan.png");
+        }
+        if(actionId == QStringLiteral("calibrationTranslationWorkbench")) {
+            return QStringLiteral(":/RobotQtViewer/icons/ribbon/Translation.png");
+        }
         if(actionId == QStringLiteral("coatingAnalysisWorkbench")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/coating_analysis_workbench.png");
         }

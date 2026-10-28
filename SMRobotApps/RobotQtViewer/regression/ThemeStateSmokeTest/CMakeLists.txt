@@ -5,6 +5,8 @@ set(ROBOT_QT_VIEWER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
 add_executable(${TEST_TARGET_NAME}
     main.cpp
+    ToolSetupMountTaskTest.cpp
+    ToolRoleTcpTest.cpp
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerPlatformConfigurationDialog.cpp"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerPlatformConfigurationDialog.h"
     "${ROBOT_QT_VIEWER_SOURCE_DIR}/RobotQtViewerTheme.cpp"
@@ -26,6 +28,9 @@ target_link_libraries(${TEST_TARGET_NAME}
         SMRobotWorkbenchCommon::RobotQtModulesCoreWidgets
         SMRobotWorkbenchCommon::RobotQtModulesShared
         ProjectAssemblyToolSetup
+        ProjectAssemblySceneExplorer
+        ProjectAssemblyEditors
+        SMRobotApps::RobotViewerCore
         RobotRunMotionControl
 )
 if(WIN32)

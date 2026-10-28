@@ -1,8 +1,14 @@
+#include <QRegularExpression>
+#include "CoatingAnalysisModuleController.h"
 #include "MainWindow.h"
+#include "RobotQtViewerEnvironmentController.h"
+#include <QWheelEvent>
+#include "UserCoordinateFrame.h"
 
 #include "CollisionConfigWorkbenchShellPort.h"
 #include "CollisionConfigWorkbenchLifecycle.h"
 #include "CoatingAnalysisWorkbenchLifecycle.h"
+#include "CalibrationTranslationWorkbenchContribution.h"
 #include "DigitalTwinWorkbenchContribution.h"
 #include "MotionPlanningWorkbenchLifecycle.h"
 #include "RobotRunWorkbenchLifecycle.h"
@@ -30,6 +36,11 @@
 #include "StatusPanelWidget.h"
 #include "ToolSetupWorkbenchShellPort.h"
 #include "ToolSetupWorkbenchLifecycle.h"
+#include "TcpDefinitionDialog.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QFileDialog>
+#include <QSaveFile>
 
 #include <SimulationProject/ProjectDocumentService.h>
 #include <SimulationProject/ProjectIo.h>
@@ -101,9 +112,10 @@
 #include <system_error>
 #include <unordered_set>
 #include <vector>
-
+#include <FreeformTrajPlanWorkbenchContribution.h>
+#include <QDockWidget>
 #ifndef ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH
-#define ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH "projects/420.v3.scene.json"
+#define ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH "projects/ABB4600-Aburnner.sys.json"
 #endif
 
 namespace
@@ -528,6 +540,12 @@ MainWindow::MainWindow(
         throw std::runtime_error(localizationError.toStdString());
     }
     m_languageId = m_localization->currentLanguageId();
+    m_freeformTrajPlanDataSource =
+        std::make_unique<robot_qt_viewer::PlanningDataSource>(this);
+    m_eventHub.subscribe(robot_qt_viewer::RobotQtViewerEventKind::ProjectOpened,
+        m_freeformTrajPlanDataSource.get(), [this](const auto&) {
+            m_freeformTrajPlanDataSource->clear();
+        }, QStringLiteral("sharedTrajectoryProjectReset"));
     setWindowTitle(QStringLiteral("%1 - %2")
         .arg(uiText("window.title"), m_platformComposition.displayName));
     applyIndustrialStyle();
@@ -983,9 +1001,7 @@ void MainWindow::retranslateUi(
     for(auto it = m_cameraViewActions.begin(); it != m_cameraViewActions.end(); ++it) {
         setAction(it.value(), uiText(QString("action.cameraView.%1").arg(it.key())));
     }
-    for(auto it = m_environmentActions.begin(); it != m_environmentActions.end(); ++it) {
-        setAction(it.value(), uiText(QString("action.environment.%1").arg(it.key())));
-    }
+    if(m_environmentController) m_environmentController->retranslateUi();
     if(m_collisionGeometryAction != nullptr) {
         setAction(m_collisionGeometryAction, uiText("action.collisionGeometry"));
     }
@@ -1163,33 +1179,8 @@ void MainWindow::createActions()
     addCameraViewAction(QStringLiteral("top"), ProjectSceneCameraView::Top);
     addCameraViewAction(QStringLiteral("bottom"), ProjectSceneCameraView::Bottom);
 
-    auto* environmentGroup = new QActionGroup(this);
-    environmentGroup->setExclusive(true);
-    ProjectSceneEnvironmentPreset savedEnvironment = ProjectSceneEnvironmentPreset::Factory;
-    const QString savedEnvironmentId = QSettings().value(
-        QStringLiteral("view/environmentPreset"),
-        QStringLiteral("factory")).toString();
-    parseProjectSceneEnvironmentPreset(savedEnvironmentId.toStdString(), savedEnvironment);
-    auto addEnvironmentAction = [this, environmentGroup, savedEnvironment](
-        const QString& id,
-        ProjectSceneEnvironmentPreset preset) {
-        QAction* action = m_environmentMenu->addAction(QString());
-        action->setCheckable(true);
-        action->setActionGroup(environmentGroup);
-        action->setChecked(savedEnvironment == preset);
-        connect(action, &QAction::triggered, this, [this, id, preset]() {
-            m_viewport->setEnvironmentPreset(preset);
-            QSettings().setValue(QStringLiteral("view/environmentPreset"), id);
-        });
-        m_environmentActions.insert(id, action);
-    };
-    addEnvironmentAction(QStringLiteral("studio"), ProjectSceneEnvironmentPreset::Studio);
-    addEnvironmentAction(QStringLiteral("factory"), ProjectSceneEnvironmentPreset::Factory);
-    addEnvironmentAction(QStringLiteral("workshop"), ProjectSceneEnvironmentPreset::Workshop);
-    addEnvironmentAction(QStringLiteral("home"), ProjectSceneEnvironmentPreset::Home);
-    m_environmentMenu->addSeparator();
-    addEnvironmentAction(QStringLiteral("none"), ProjectSceneEnvironmentPreset::None);
-    m_viewport->setEnvironmentPreset(savedEnvironment);
+    m_environmentController = std::make_unique<robot_qt_viewer::RobotQtViewerEnvironmentController>(
+        *m_viewport, *m_environmentMenu, *m_localization, m_operationStatusStore, *this);
 
     m_collisionGeometryAction = new QAction(this);
     m_collisionGeometryAction->setCheckable(true);
@@ -1314,24 +1305,34 @@ void MainWindow::createActions()
             QStringLiteral("digitalTwinAction"));
     });
 
-    if(m_workbenchPluginLoader != nullptr) {
-        for(const QString& workbenchId : m_workbenchPluginLoader->loadedWorkbenchIds()) {
-            const robot_qt_viewer::RobotQtViewerWorkbenchDesc* workbench =
-                m_workbenchPackageRegistry.workbench(workbenchId);
-            if(workbench == nullptr) {
-                continue;
-            }
-            auto* action = new QAction(workbench->descriptor.displayName, this);
-            action->setObjectName(workbench->toolbarActionId.isEmpty()
-                ? workbenchId
-                : workbench->toolbarActionId);
-            action->setCheckable(true);
-            action->setActionGroup(workbenchGroup);
-            connect(action, &QAction::triggered, this, [this, workbenchId]() {
-                enterWorkbench(workbenchId, QStringLiteral("pluginWorkbenchAction"));
-            });
-            m_dynamicWorkbenchActions.insert(workbenchId, action);
+    const QStringList builtInToolbarActionIds{
+        QStringLiteral("projectAssemblyWorkbench"),
+        QStringLiteral("robotRunWorkbench"),
+        QStringLiteral("toolSetupWorkbench"),
+        QStringLiteral("collisionConfigWorkbench"),
+        QStringLiteral("motionPlanningWorkbench"),
+        QStringLiteral("sprayProcessWorkbench"),
+        QStringLiteral("coatingAnalysisWorkbench"),
+        QStringLiteral("digitalTwinWorkbench")
+    };
+
+    for(const QString& workbenchId : m_platformComposition.enabledWorkbenchIds) {
+        const robot_qt_viewer::RobotQtViewerWorkbenchDesc* workbench =
+            m_workbenchPackageRegistry.registeredWorkbench(workbenchId);
+        if(workbench == nullptr ||
+            workbench->toolbarActionId.isEmpty() ||
+            builtInToolbarActionIds.contains(workbench->toolbarActionId)) {
+            continue;
         }
+
+        auto* action = new QAction(workbench->descriptor.displayName, this);
+        action->setObjectName(workbench->toolbarActionId);
+        action->setCheckable(true);
+        action->setActionGroup(workbenchGroup);
+        connect(action, &QAction::triggered, this, [this, workbenchId]() {
+            enterWorkbench(workbenchId, QStringLiteral("customWorkbenchAction"));
+        });
+        m_dynamicWorkbenchActions.insert(workbenchId, action);
     }
 
     m_fileMenu->addAction(m_newProjectAction);
@@ -1793,11 +1794,11 @@ void MainWindow::showWorkbenchTransitionResult(
 
 void MainWindow::updateWorkbenchActions()
 {
-    const robot_qt_viewer::RobotQtViewerWorkbenchKind kind = m_workbenchManager.activeWorkbench();
     const QString activeWorkbenchId = m_workbenchManager.activeWorkbenchId();
+    const robot_qt_viewer::RobotQtViewerWorkbenchKind kind = m_workbenchManager.activeWorkbench();
     const bool transitionAvailable = m_workbenchTransitionCoordinator == nullptr ||
         (!m_workbenchTransitionCoordinator->transitionInProgress() &&
-            m_workbenchTransitionCoordinator->lifecycleState(kind) ==
+            m_workbenchTransitionCoordinator->lifecycleState(activeWorkbenchId) ==
                 robot_qt_viewer::RobotQtViewerWorkbenchLifecycleState::Active);
     const auto modeAvailable = [this, transitionAvailable](
                                    robot_qt_viewer::RobotQtViewerWorkbenchKind candidate) {
@@ -1910,6 +1911,21 @@ void MainWindow::updateTaskPanel()
     }
 
     const QString activeWorkbenchId = m_workbenchManager.activeWorkbenchId();
+
+    const bool isFreeformTrajPlan =
+        activeWorkbenchId ==
+        QStringLiteral("smrobot.mode.freeform-trajectory-planning");
+
+    if(m_sceneExplorerDock != nullptr) {
+        m_sceneExplorerDock->setVisible(!isFreeformTrajPlan);
+    }
+    const bool isCoating = m_workbenchManager.activeWorkbenchId() == robot_qt_viewer::robotQtViewerWorkbenchId(robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis);
+    if(auto* dock=findChild<QDockWidget*>(QStringLiteral("coatingAnalysisDetailsDock"))) dock->setVisible(isCoating);
+    if(m_sceneExplorerDock) m_sceneExplorerDock->setVisible(!isFreeformTrajPlan && !isCoating);
+    if(m_freeformTrajPlanDock != nullptr) {
+        m_freeformTrajPlanDock->setVisible(isFreeformTrajPlan);
+    }
+
     const robot_qt_viewer::RobotQtViewerWorkbenchDescriptor& descriptor =
         m_workbenchManager.activeDescriptor();
     QWidget* panel = m_workbenchContributionHost != nullptr
@@ -2243,21 +2259,40 @@ bool MainWindow::openProjectPathForProfiling(
         }
     }
     if(!profileEnvironmentPresetId.isEmpty()) {
-        ProjectSceneEnvironmentPreset preset = ProjectSceneEnvironmentPreset::Factory;
-        if(!parseProjectSceneEnvironmentPreset(
-               profileEnvironmentPresetId.toStdString(), preset)) {
-            std::cout << "| Profile environment          | FAILED - unknown preset: "
-                << profileEnvironmentPresetId.toStdString() << "\n";
+        QString environmentError;
+        if(!m_environmentController->selectSource(profileEnvironmentPresetId, false, &environmentError)) {
+            std::cerr << "Profile environment FAILED: " << environmentError.toStdString() << "\n";
             return false;
         }
-        m_viewport->setEnvironmentPreset(preset);
-        const auto action = m_environmentActions.constFind(profileEnvironmentPresetId.toLower());
-        if(action != m_environmentActions.constEnd()) {
-            QSignalBlocker blocker(*action);
-            (*action)->setChecked(true);
-        }
-        std::cout << "| Profile environment          | "
-            << projectSceneEnvironmentPresetId(preset) << "\n";
+        std::cout << "Profile environment ready: " << profileEnvironmentPresetId.toStdString() << "\n";
+    }
+    const QStringList profileArguments = QCoreApplication::arguments();
+    const int cameraIndex = profileArguments.indexOf("--profile-camera");
+    if(cameraIndex >= 0) {
+        const QHash<QString, ProjectSceneCameraView> views{
+            {"home", ProjectSceneCameraView::Home}, {"isometric", ProjectSceneCameraView::Isometric},
+            {"front", ProjectSceneCameraView::Front}, {"back", ProjectSceneCameraView::Back},
+            {"left", ProjectSceneCameraView::Left}, {"right", ProjectSceneCameraView::Right},
+            {"top", ProjectSceneCameraView::Top}, {"bottom", ProjectSceneCameraView::Bottom}};
+        if(cameraIndex + 1 >= profileArguments.size() || !views.contains(profileArguments[cameraIndex+1])) return false;
+        m_viewport->setCameraView(views.value(profileArguments[cameraIndex+1]));
+    }
+    const int zoomIndex = profileArguments.indexOf("--profile-zoom-out-steps");
+    if(zoomIndex >= 0) {
+        bool valid = false;
+        const int steps = zoomIndex + 1 < profileArguments.size()
+            ? profileArguments[zoomIndex+1].toInt(&valid) : 0;
+        if(!valid || steps < 0 || steps > 200) return false;
+        const QPointF center = m_viewport->rect().center();
+        QWheelEvent wheel(center, m_viewport->mapToGlobal(center.toPoint()), QPoint(),
+            QPoint(0, -120 * steps), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_viewport, &wheel);
+    }
+    if(profileArguments.contains("--profile-complete-environment")) {
+        auto environment = m_viewport->environmentSelection();
+        environment.cutaway = false;
+        std::string error;
+        if(!m_viewport->setEnvironmentSelection(environment, &error)) return false;
     }
     statusBar()->showMessage(result.message, 5000);
 
@@ -2621,6 +2656,10 @@ void MainWindow::deleteSelectedRobot()
         entityKind = robot_qt_viewer::SceneEntityKind::Object;
     } else if(node.kind == robot_qt_viewer::SceneExplorerNodeKind::PointCloud) {
         entityKind = robot_qt_viewer::SceneEntityKind::PointCloud;
+    } else if(node.kind == robot_qt_viewer::SceneExplorerNodeKind::ToolAsset) {
+        entityKind = robot_qt_viewer::SceneEntityKind::AttachmentAsset;
+    } else if(node.kind == robot_qt_viewer::SceneExplorerNodeKind::ToolAttachment) {
+        entityKind = robot_qt_viewer::SceneEntityKind::MountedAttachment;
     } else {
         statusBar()->showMessage("Select a robot, object, or point cloud to delete.", 3000);
         return;
@@ -2637,13 +2676,10 @@ void MainWindow::deleteSelectedRobot()
         return;
     }
 
-    if(entityKind == robot_qt_viewer::SceneEntityKind::Robot) {
-        reloadViewportProject();
-    } else if(m_assemblyViewport != nullptr && m_collisionViewport != nullptr) {
-        if(m_assemblyViewport->removeSceneObject(node.id)) {
-            m_collisionViewport->rebuildCollisionDetectorsFromDocument(m_appController.document());
-        }
-    }
+    // Rebuild from the committed document, including attachment and asset catalogs.
+    // Removing only the render object leaves the assembly projection out of sync.
+    reloadViewportProject();
+    m_documentController.publishDocumentChanged(QStringLiteral("deleteSceneEntity"), false);
     statusBar()->showMessage(deleteResult.message, 4000);
 }
 
@@ -2680,6 +2716,243 @@ void MainWindow::renamePointCloud(
 void MainWindow::handleSceneTreeContextMenuAction(
     const robot_qt_viewer::SceneTreeIntentController::ContextMenuAction& action)
 {
+    using NodeKind = robot_qt_viewer::SceneExplorerNodeKind;
+    using ActionKind = robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind;
+    if(action.node.kind==NodeKind::Trajectory) {
+        QString error;
+        if(action.kind==ActionKind::ShowTrajectory) {
+            if(!m_viewport->showStoredTrajectory(action.node.id,error) || !commitSdkSceneChanges(error))
+                statusBar()->showMessage(error,5000);
+        } else if(action.kind==ActionKind::DeleteTrajectory) {
+            if(!m_viewport->deleteStoredTrajectory(action.node.id,error) || !commitSdkSceneChanges(error))
+                statusBar()->showMessage(error,5000);
+            else statusBar()->showMessage(QStringLiteral("\u8f68\u8ff9\u5df2\u5220\u9664"),3000);
+        } else if(action.kind==ActionKind::ExportTrajectory) {
+            QJsonObject record;
+            for(const auto& ext:m_viewport->runtimeDocumentSnapshot().extensions)
+                if(ext.key=="rws.trajectory."+action.node.id.toStdString())
+                    record=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object();
+            const auto exports=record.value("exports").toObject();
+            if(exports.isEmpty()) {statusBar()->showMessage(QStringLiteral("No trajectory export payload available"),5000);return;}
+            QString filter=QStringLiteral("PAQ (*.paq)");
+            const auto path=QFileDialog::getSaveFileName(this,QStringLiteral("\u4fdd\u5b58\u8f68\u8ff9"),
+                record.value("display_name").toString(),QStringLiteral("PAQ (*.paq);;ABB MOD (*.mod);;FANUC LS (*.ls)"),&filter);
+            if(path.isEmpty()) return;
+            const QString kind=filter.startsWith("ABB")?"mod":filter.startsWith("FANUC")?"ls":"paq";
+            const QString target=path.endsWith("."+kind,Qt::CaseInsensitive)?path:path+"."+kind;
+            QSaveFile output(target);
+            // Normalize only motion termination on export; retain historical poses and status.
+            QString payload=exports.value(kind).toString();
+            if(kind=="ls")payload.replace(QRegularExpression(QStringLiteral("(^[ \t]*[0-9]+:[ \t]*[LJ][ \t]+P\\[[0-9]+\\][^;\\r\\n]*?)[ \t]+(?:FINE|CNT[0-9]+)([ \t]*;)"),QRegularExpression::MultilineOption|QRegularExpression::CaseInsensitiveOption),QStringLiteral("\\1 CNT100\\2"));
+            if(kind=="mod")payload.replace(QRegularExpression(QStringLiteral("(^[ \t]*Move[JL][ \t]+[^,\\r\\n]+,[^,\\r\\n]+,)[ \t]*(?:fine|z[0-9]+)[ \t]*,"),QRegularExpression::MultilineOption|QRegularExpression::CaseInsensitiveOption),QStringLiteral("\\1z100,"));
+            const auto bytes=payload.toUtf8();
+            if(bytes.isEmpty() || !output.open(QIODevice::WriteOnly) || output.write(bytes)!=bytes.size() || !output.commit()) {
+                statusBar()->showMessage(QStringLiteral("Trajectory export failed"),5000);return;
+            }
+            QSaveFile metadata(target+QStringLiteral(".status.json"));
+            record.remove("points");record.remove("exports");
+            record["export_motion"]="CNT100/z100";record["controller_cnt_verified"]=false;
+            const auto info=QJsonDocument(record).toJson();
+            if(!metadata.open(QIODevice::WriteOnly) || metadata.write(info)!=info.size() || !metadata.commit())
+                statusBar()->showMessage(QStringLiteral("Trajectory saved; status sidecar failed"),7000);
+            else statusBar()->showMessage(QStringLiteral("Trajectory and validation status saved: ")+target,5000);
+        }
+        return;
+    }
+    if((action.node.kind==NodeKind::UserFrame || action.node.kind==NodeKind::CoordinateFrame) &&
+       (action.kind==ActionKind::ShowItem || action.kind==ActionKind::HideItem || action.kind==ActionKind::DeleteCoordinateFrame)) {
+        const bool deleting=action.kind==ActionKind::DeleteCoordinateFrame;
+        const std::string id=action.node.kind==NodeKind::UserFrame?"user":
+            action.node.id==QStringLiteral("world")?"world":"tcp:"+action.node.id.toStdString();
+        if(deleting && id=="world") return;
+        if(!prepareEditSessionTransition(robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::TaskHandoff,
+            QStringLiteral("coordinateFrameState"),false)) return;
+        if(deleting && QMessageBox::question(this,QStringLiteral("\u5220\u9664\u5750\u6807\u7cfb"),
+            QStringLiteral("\u5220\u9664\u6b64\u5750\u6807\u5b9a\u4e49\uff1f\u6a21\u578b\u4fdd\u6301\u539f\u4f4d\u3002\u5220\u9664 TCP \u540e\u9700\u91cd\u65b0\u8bbe\u7f6e\u624d\u80fd\u89c4\u5212\u3002"))!=QMessageBox::Yes) return;
+        auto candidate=m_viewport->runtimeDocumentSnapshot();
+        robot_qt_viewer::setCoordinateFrameState(candidate,id,action.kind==ActionKind::ShowItem,deleting);
+        if(deleting && id=="user") {
+            candidate.extensions.erase(std::remove_if(candidate.extensions.begin(),candidate.extensions.end(),
+                [](const auto& ext){return ext.key=="rws.user_frame";}),candidate.extensions.end());
+        } else if(deleting) {
+            simulation_project::ProjectDocumentService service(candidate);
+            auto* attachment=service.findMountedAttachment(action.node.id.toStdString());
+            if(!attachment) return;
+            auto* asset=service.findAttachmentAsset(attachment->assetId);
+            if(!asset) return;
+            const auto count=std::count_if(candidate.mountedAttachments.begin(),candidate.mountedAttachments.end(),
+                [&](const auto& a){return a.assetId==attachment->assetId;});
+            if(count>1) {
+                auto copy=*asset; const std::string base=copy.id+"_tcp_removed";
+                copy.id=base;
+                for(int suffix=1;service.findAttachmentAsset(copy.id);++suffix) copy.id=base+std::to_string(suffix);
+                attachment->assetId=copy.id;
+                candidate.attachmentAssets.push_back(copy);
+                asset=&candidate.attachmentAssets.back();
+            }
+            asset->functionalFrames.erase(std::remove_if(asset->functionalFrames.begin(),asset->functionalFrames.end(),
+                [](const auto& f){return f.frameType=="tcp";}),asset->functionalFrames.end());
+        }
+        if(!m_viewport->applyUserCoordinateFrameDocument(candidate)) return;
+        const auto result=m_documentController.mutateProject(QStringLiteral("coordinateFrameState"),
+            robot_qt_viewer::ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string&) {
+                service.document()=candidate; changed=true; return true;
+            });
+        if(result.success) {
+            if(deleting) m_freeformTrajPlanDataSource->rebaseUserFrame(Eigen::Isometry3d::Identity());
+            m_documentController.publishDocumentChanged(QStringLiteral("coordinateFrameState"),false);
+        }
+        return;
+    }
+    if(action.kind == ActionKind::EditUserFrame) {
+        if(!prepareEditSessionTransition(robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::TaskHandoff,
+            QStringLiteral("editUserFrame"),false)) return;
+        const auto pose=robot_qt_viewer::userCoordinateFrame(m_viewport->runtimeDocumentSnapshot());
+        TcpDefinitionDialog dialog(pose,{{"WORLD",Eigen::Isometry3d::Identity()}},"generic","WORLD",this);
+        dialog.setWindowTitle(QStringLiteral("\u7528\u6237\u5750\u6807\u7cfb - WORLD"));
+        dialog.setUserFrameApplyHandler([&](const simulation_project::TransformDesc& value) {
+            QString error;
+            if(setUserCoordinateFrame(value,error)) return true;
+            QMessageBox::warning(&dialog,QStringLiteral("\u7528\u6237\u5750\u6807\u7cfb"),error);
+            return false;
+        });
+        dialog.exec();
+        return;
+    }
+    if(action.kind == ActionKind::SetAsTool || action.kind == ActionKind::SetAsWorkpiece || action.kind == ActionKind::EditTcp) {
+        if(!prepareEditSessionTransition(
+               robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::TaskHandoff,
+               QStringLiteral("sceneEntityDefinition"), false)) return;
+        robot_qt_viewer::SceneEntityMutationResult result;
+        if(action.kind == ActionKind::EditTcp) {
+            const auto& doc = m_appController.document();
+            const simulation_project::ProjectDocumentService service(doc);
+            const auto* attachment = service.findMountedAttachment(action.node.id.toStdString());
+            const auto* asset = attachment ? service.findAttachmentAsset(attachment->assetId) : nullptr;
+            const auto* mount = attachment ? service.findRobotMount(attachment->mountFrameId) : nullptr;
+            if(!attachment || !asset || !mount || !m_viewport) {
+                statusBar()->showMessage("Installed tool or mount not found.", 5000);
+                return;
+            }
+            simulation_project::TransformDesc worldParent;
+            if(!m_viewport->robotLinkTransform(mount->robotId, mount->linkName, worldParent)) {
+                statusBar()->showMessage("Unable to resolve the tool reference link.", 5000);
+                return;
+            }
+            const Eigen::Isometry3d worldAsset = tcpTransformMatrix(worldParent) *
+                tcpTransformMatrix(mount->linkToMount) * tcpTransformMatrix(attachment->mountToAssetMount);
+            std::map<std::string, Eigen::Isometry3d> references;
+            for(const auto& link : {mount->linkName, std::string("fanuc_flange"), std::string("flange"), std::string("tool0")}) {
+                simulation_project::TransformDesc worldReference;
+                if(m_viewport->robotLinkTransform(mount->robotId, link, worldReference))
+                    references[link] = tcpTransformMatrix(worldReference).inverse() * worldAsset;
+            }
+            simulation_project::TransformDesc tcp;
+            for(const auto& frame : asset->functionalFrames) {
+                if(frame.frameType == "tcp") { tcp = frame.assetMountToFrame; break; }
+            }
+            QString mode = references.count("fanuc_flange") ? "fanuc" : "generic";
+            QString reference = references.count("fanuc_flange") ? "fanuc_flange" : QString::fromStdString(mount->linkName);
+            for(const auto& extension : doc.extensions) {
+                if(extension.key != "rws.tcp." + attachment->id) continue;
+                const auto pref = QJsonDocument::fromJson(QByteArray::fromStdString(extension.serializedPayload)).object();
+                mode = pref.value("convention").toString(mode);
+                reference = pref.value("reference_link").toString(reference);
+            }
+            TcpDefinitionDialog dialog(tcp, references, mode, reference, this);
+            if(dialog.exec() != QDialog::Accepted) return;
+            result = m_appController.sceneEntityWorkflow().setMountedTcp(action.node.id,
+                dialog.assetToTcp(), dialog.convention(), dialog.referenceLink());
+        } else {
+            const auto kind = action.node.kind == NodeKind::Object ? robot_qt_viewer::SceneEntityKind::Object :
+                action.node.kind == NodeKind::ToolAsset ? robot_qt_viewer::SceneEntityKind::AttachmentAsset :
+                robot_qt_viewer::SceneEntityKind::MountedAttachment;
+            result = m_appController.sceneEntityWorkflow().setEntityRole(kind, action.node.id,
+                action.kind == ActionKind::SetAsTool ? QStringLiteral("tool") : QStringLiteral("workpiece"));
+        }
+        if(result.success) {
+            reloadViewportProject();
+            m_documentController.publishDocumentChanged(QStringLiteral("sceneEntityDefinition"), false);
+        }
+        statusBar()->showMessage(result.message, 5000);
+        return;
+    }
+    if(action.kind == ActionKind::ShowItem || action.kind == ActionKind::HideItem) {
+        const bool visible = action.kind == ActionKind::ShowItem;
+        if(action.node.kind == NodeKind::RobotMount) {
+            if(m_toolSetupWorkbenchPort) {
+                m_toolSetupWorkbenchPort->setMountFrameVisible(action.node.id, visible);
+            }
+            return;
+        }
+        if(action.node.kind == NodeKind::Link) {
+            if(m_sceneExplorerWorkbenchPort &&
+                m_sceneExplorerWorkbenchPort->linkFrameVisible(action.node.id, action.node.linkName) != visible) {
+                m_sceneExplorerWorkbenchPort->toggleLinkFrameVisible(action.node.id, action.node.linkName);
+            }
+            selectRobotContext(action.node.id, action.node.linkName);
+            robot_qt_viewer::RobotQtViewerViewportPreviewPayload preview;
+            preview.setRobotMountFrameVisibility = true;
+            preview.selectedLinkFrameVisible = visible;
+            preview.mountFrameVisible = false;
+            m_viewportPreviewState.mutate(preview, QStringLiteral("sceneExplorerLinkVisibility"));
+            return;
+        }
+        if(!prepareEditSessionTransition(
+               robot_qt_viewer::RobotQtViewerWorkbenchTransitionCause::TaskHandoff,
+               QStringLiteral("sceneExplorerVisibility"), false)) {
+            return;
+        }
+        const auto result = m_documentController.mutateProject(
+            QStringLiteral("sceneExplorerVisibility"), robot_qt_viewer::ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                const std::string id = action.node.id.toStdString();
+                auto update = [&](auto& entries, auto visibility) {
+                    for(auto& entry : entries) {
+                        if(entry.id == id) {
+                            bool& current = visibility(entry);
+                            changed = current != visible;
+                            current = visible;
+                            return true;
+                        }
+                    }
+                    error = "Scene item not found: " + id;
+                    return false;
+                };
+                auto& document = service.document();
+                switch(action.node.kind) {
+                case NodeKind::Robot:
+                    return update(document.robots, [](auto& value) -> bool& { return value.visible; });
+                case NodeKind::Object:
+                    return update(document.objects, [](auto& value) -> bool& { return value.visible; });
+                case NodeKind::PointCloud:
+                    return update(document.pointClouds, [](auto& value) -> bool& { return value.visualization.visible; });
+                case NodeKind::ToolAsset:
+                    return update(document.attachmentAssets, [](auto& value) -> bool& { return value.visible; });
+                case NodeKind::ToolAttachment:
+                    return update(document.mountedAttachments, [](auto& value) -> bool& { return value.visible; });
+                case NodeKind::ObjectFrame:
+                    if(!service.setObjectFrameVisibility(id, action.node.linkName.toStdString(), visible, &error)) {
+                        return false;
+                    }
+                    changed = true;
+                    return true;
+                default:
+                    error = "This item has no display geometry.";
+                    return false;
+                }
+            });
+        if(!result.success) {
+            statusBar()->showMessage(result.message, 5000);
+            return;
+        }
+        if(result.changed) {
+            reloadViewportProject();
+            m_documentController.publishDocumentChanged(QStringLiteral("sceneExplorerVisibility"), false);
+        }
+        return;
+    }
     if(m_sceneExplorerWorkbenchPort != nullptr &&
         !m_sceneExplorerWorkbenchPort->resolvePendingTransformPreviewIfTargetChanges(action.node, this)) {
         refreshSceneExplorerViewModel();
@@ -3108,6 +3381,7 @@ void MainWindow::initializeWorkbenchContributions()
         robot_qt_viewer::MotionPlanningWorkbenchComposition composition;
         composition.documentContext = &m_documentContext;
         composition.documentViewRegistry = &m_documentViewRegistry;
+        composition.dataSource = m_freeformTrajPlanDataSource.get();
         composition.showStatus = [this](const QString& message, int timeoutMs) {
             statusBar()->showMessage(message, timeoutMs);
         };
@@ -3123,24 +3397,37 @@ void MainWindow::initializeWorkbenchContributions()
         robot_qt_viewer::PaintingAnalysisWorkbenchComposition composition;
         composition.documentContext = &m_documentContext;
         composition.documentViewRegistry = &m_documentViewRegistry;
+        composition.dataSource = m_freeformTrajPlanDataSource.get();
+        composition.installLeftPanel = [this](QWidget* panel) {
+            auto* dock = new QDockWidget(QStringLiteral("Coating Analysis"), this);
+            dock->setObjectName(QStringLiteral("coatingAnalysisDetailsDock"));
+            dock->setWidget(panel);
+            addDockWidget(Qt::LeftDockWidgetArea, dock);
+            dock->hide();
+        };
         composition.overlayParent = this;
         composition.tooltipViewport = m_viewport;
         composition.showStatus = [this](const QString& message, int timeoutMs) {
             statusBar()->showMessage(message, timeoutMs);
+        };
+        composition.bindViewportInteractions = [this](robot_qt_viewer::CoatingAnalysisModuleController& controller) {
+            connect(m_viewport,&RobotViewport::coatingSurfacePicked,&controller,&robot_qt_viewer::CoatingAnalysisModuleController::handleRotationSurfacePicked);
+            connect(m_viewport,&RobotViewport::coatingContextMenuRequested,&controller,&robot_qt_viewer::CoatingAnalysisModuleController::populateViewportContextMenu);
         };
         composition.connectSurfaceHover =
             [this](QObject& owner,
                 robot_qt_viewer::PaintingAnalysisWorkbenchComposition::SurfaceHoverHandler handler) {
                 connect(
                     m_viewport,
-                    &RobotViewport::surfaceScalarHovered,
+                    &RobotViewport::coatingSurfaceScalarHovered,
                     &owner,
                     [handler = std::move(handler)](
                         const QString& objectId,
                         double valueMeters,
+                        double x, double y, double z,
                         const QPoint& position,
                         bool hit) {
-                        handler(objectId, valueMeters, position, hit);
+                        handler(objectId, valueMeters, x, y, z, position, hit);
                     });
             };
         composition.bindLegendOverlay = [this](QWidget* overlay) {
@@ -3153,10 +3440,54 @@ void MainWindow::initializeWorkbenchContributions()
             robot_qt_viewer::makeOwnedPaintingAnalysisWorkbenchRuntimeContributionFactory(
                 std::move(composition)));
     }
+    const QString calibrationTranslationWorkbenchId =
+        QStringLiteral("smrobot.mode.calibration-translation");
+    if(m_workbenchPackageRegistry.hasWorkbench(calibrationTranslationWorkbenchId)) {
+        robot_qt_viewer::CalibrationTranslationWorkbenchComposition composition;
+        composition.documentContext = &m_documentContext;
+        composition.documentViewRegistry = &m_documentViewRegistry;
+        composition.freeformDataSource = m_freeformTrajPlanDataSource.get();
+        composition.showStatus = [this](const QString& message, int timeoutMs) {
+            statusBar()->showMessage(message, timeoutMs);
+        };
+        registerFactory(
+            robot_qt_viewer::makeOwnedCalibrationTranslationWorkbenchRuntimeContributionFactory(
+                std::move(composition)));
+    }
     if(m_workbenchPackageRegistry.hasWorkbench(Kind::DigitalTwin)) {
         registerFactory(robot_qt_viewer::makeDigitalTwinWorkbenchRuntimeContributionFactory(
             *m_statusPanelWidget));
     }
+    const QString freeformWorkbenchId =
+    QStringLiteral("smrobot.mode.freeform-trajectory-planning");
+
+    if(m_workbenchPackageRegistry.hasWorkbench(freeformWorkbenchId)) {
+        robot_qt_viewer::FreeformTrajPlanWorkbenchComposition composition;
+        composition.documentViewRegistry = &m_documentViewRegistry;
+        composition.documentContext = &m_documentContext;
+        composition.dataSource = m_freeformTrajPlanDataSource.get();
+        composition.showStatus = [this](const QString& message, int timeoutMs) {
+            statusBar()->showMessage(message, timeoutMs);
+        };
+        composition.installLeftPanel = [this](QWidget* panel) {
+            m_freeformTrajPlanWorkflowPanel = panel;
+
+            m_freeformTrajPlanDock = new QDockWidget(
+                QStringLiteral("Freeform Trajectory Planning"), this);
+            m_freeformTrajPlanDock->setObjectName(
+                QStringLiteral("freeformTrajPlanWorkflowDock"));
+            m_freeformTrajPlanDock->setWidget(panel);
+            m_freeformTrajPlanDock->setMinimumWidth(300);
+
+            addDockWidget(Qt::LeftDockWidgetArea, m_freeformTrajPlanDock);
+            m_freeformTrajPlanDock->hide();
+        };
+
+        registerFactory(
+            robot_qt_viewer::makeOwnedFreeformTrajPlanWorkbenchRuntimeContributionFactory(
+                    std::move(composition)));
+    }
+
     if(m_workbenchPluginLoader != nullptr) {
         for(const auto& factory : m_workbenchPluginLoader->runtimeContributionFactories()) {
             registerFactory(factory);
@@ -3793,6 +4124,48 @@ void MainWindow::saveViewportImage()
     } else {
         statusBar()->showMessage(QString("Failed to save %1").arg(outputPath), 3000);
     }
+}
+
+bool MainWindow::setUserCoordinateFrame(const simulation_project::TransformDesc& pose, QString& error)
+{
+    auto candidate=m_viewport->runtimeDocumentSnapshot();
+    const auto previous=candidate;
+    Eigen::Isometry3d delta;
+    try {
+        delta=robot_qt_viewer::coordinateTransform(pose)*
+            robot_qt_viewer::coordinateTransform(robot_qt_viewer::userCoordinateFrame(candidate)).inverse();
+        robot_qt_viewer::changeUserCoordinateFrame(candidate,pose);
+    } catch(const std::exception& e) { error=QString::fromUtf8(e.what()); return false; }
+    const auto result=m_documentController.mutateProject(QStringLiteral("userFrame"),
+        robot_qt_viewer::ProjectDirtyPolicy::UserEdit,
+        [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string&) {
+            service.document()=candidate; changed=true; return true;
+        });
+    if(!result.success) { error=result.message; return false; }
+    if(!m_viewport->applyUserCoordinateFrameDocument(candidate)) {
+        m_documentController.mutateProject(QStringLiteral("userFrameRollback"),
+            robot_qt_viewer::ProjectDirtyPolicy::RuntimeOnly,
+            [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string&) {
+                service.document()=previous; changed=true; return true;
+            });
+        error=QStringLiteral("User frame update failed; previous scene retained"); return false;
+    }
+    m_freeformTrajPlanDataSource->rebaseUserFrame(delta);
+    m_documentController.publishDocumentChanged(QStringLiteral("userFrame"),false);
+    return true;
+}
+
+bool MainWindow::commitSdkSceneChanges(QString& error)
+{
+    const auto candidate=m_viewport->runtimeDocumentSnapshot();
+    const auto result=m_documentController.mutateProject(QStringLiteral("sdkTrajectory"),
+        robot_qt_viewer::ProjectDirtyPolicy::UserEdit,
+        [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string&) {
+            service.document()=candidate;changed=true;return true;
+        });
+    if(!result.success) {error=result.message;return false;}
+    m_documentController.publishDocumentChanged(QStringLiteral("sdkTrajectory"),false);
+    return true;
 }
 
 bool MainWindow::reloadViewportProject(const QString& operationId)

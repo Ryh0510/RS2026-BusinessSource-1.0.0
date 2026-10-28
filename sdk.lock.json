@@ -1,60 +1,65 @@
 {
-    "businessPackage":  "RS2026-BusinessSource",
-    "businessVersion":  "1.0.5",
-    "platform":  "win64-vs2019",
-    "sourceCommit":  "1a2056d4d18e1b2173f646e992a29ac84fadca93",
-    "sourceBranch":  "branch-codex-dev",
-    "sourceDirty":  false,
-    "generatedAtUtc":  "2026-09-30T10:01:32Z",
-    "sourceAllowlist":  [
-                            "cmake",
-                            "config",
-                            "include",
-                            "SimWorkbench",
-                            "SMRobotApps",
-                            "SMRobotMotionPlanning",
-                            "SMRobotSpray",
-                            "tutorials\\prebuilt"
-                        ],
-    "omittedSourcePackages":  [
-                                  "Common",
-                                  "SMRobotCore",
-                                  "SMRobotPlatform"
-                              ],
-    "sdk":  {
-                "name":  "SMRobotSDK",
-                "pathHint":  "PrebuiltPackages",
-                "manifestSha256":  "b5b98d8b6c6146e1c49f3004803cf5dd808f5b4e269e08f52f938f742b1fca32",
-                "copiedThirdParty":  true
-            },
-    "thirdparty":  {
-                       "name":  "SMRobotWindowsThirdParty",
-                       "mode":  "sdk-curated-windows-external-fcl",
-                       "pathHint":  "PrebuiltPackages\\thirdparty",
-                       "gitCommit":  "56a5287ff45211f90ec20e4ec67c957e66de4903"
-                   },
-    "data":  {
-                 "name":  "SMRobotData",
-                 "mode":  "external",
-                 "pathHint":  "data",
-                 "gitCommit":  "34044d253c26ebe0ef18e2a53e389ad8940e9d44"
-             },
-    "cmake":  {
-                  "prebuiltPackageRoot":  "PrebuiltPackages",
-                  "prebuiltThirdPartyRoot":  "PrebuiltPackages\\thirdparty",
-                  "thirdPartyRoot":  "PrebuiltPackages\\thirdparty",
-                  "dataRoot":  "data",
-                  "usingPrebuilt":  [
-                                        "Common",
-                                        "SMRobotCore",
-                                        "SMRobotPlatform"
-                                    ]
-              },
-    "runtimeDeployment":  {
-                              "ktxExternalDevelopmentPackageRequired":  false,
-                              "ktxOwner":  "SMRobotPlatform::RenderCore (private static dependency)",
-                              "licenseMode":  "package",
-                              "licenseFile":  "license-420-prod.LIC",
-                              "licenseOutputDirectory":  "\u003cbuild\u003e/\u003cConfig\u003e/bin/license"
-                          }
+  "businessPackage": "RS2026-BusinessSource",
+  "businessVersion": "1.0.6",
+  "platform": "win64-vs2019",
+  "sourceCommit": "4af7ff9c5f3c08d8fe5a24b4e7c8a9b2399fe3c1",
+  "sourceBranch": "branch-codex-dev",
+  "sourceDirty": false,
+  "generatedAtUtc": "2026-10-26T06:24:44Z",
+  "sourceAllowlist": [
+    "cmake",
+    "config",
+    "include",
+    "SimWorkbench",
+    "SMRobotApps",
+    "SMRobotMotionPlanning",
+    "SMRobotSpray",
+    "tutorials\\prebuilt"
+  ],
+  "omittedSourcePackages": [
+    "Common",
+    "SMRobotCore",
+    "SMRobotPlatform"
+  ],
+  "sdk": {
+    "name": "SMRobotSDK",
+    "pathHint": "PrebuiltPackages",
+    "manifestSha256": "02603294630a360d139f7abbbca69253115999880e2ed62c9c18b53a739ff71c",
+    "copiedThirdParty": true
+  },
+  "thirdparty": {
+    "name": "SMRobotWindowsThirdParty",
+    "mode": "sdk-curated-windows-external-fcl",
+    "pathHint": "PrebuiltPackages\\thirdparty",
+    "gitCommit": "56a5287ff45211f90ec20e4ec67c957e66de4903"
+  },
+  "data": {
+    "name": "SMRobotData",
+    "mode": "external",
+    "pathHint": "data",
+    "gitCommit": "5e397c2fd99476382996ca4ab2a561e13df8c646"
+  },
+  "cmake": {
+    "prebuiltPackageRoot": "PrebuiltPackages",
+    "prebuiltThirdPartyRoot": "PrebuiltPackages\\thirdparty",
+    "thirdPartyRoot": "PrebuiltPackages\\thirdparty",
+    "dataRoot": "data",
+    "usingPrebuilt": [
+      "Common",
+      "SMRobotCore",
+      "SMRobotPlatform"
+    ]
+  },
+  "runtimeDeployment": {
+    "ktxExternalDevelopmentPackageRequired": false,
+    "ktxOwner": "SMRobotPlatform::RenderCore (private static dependency)",
+    "licenseMode": "package",
+    "licenseFile": "license-420-prod.LIC",
+    "licenseOutputDirectory": "<build>/<Config>/bin/license"
+  },
+  "maintenanceIntegration": {
+    "from": "1.0.5 + RSW business extensions",
+    "date": "2026-10-28",
+    "businessExtensionsPreserved": true
+  }
 }

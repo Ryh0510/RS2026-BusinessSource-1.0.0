@@ -34,6 +34,9 @@
 #include <iostream>
 #include <stdexcept>
 
+void verifyToolSetupMountTasks();
+void verifyToolRolesAndTcp();
+
 namespace
 {
     void require(bool condition, const char* message)
@@ -754,6 +757,8 @@ int main(int argc, char** argv)
         verifyTheme(application, robot_qt_viewer::ThemeKind::Dark);
         verifyTheme(application, robot_qt_viewer::ThemeKind::Light);
         verifyToolSetupCommandBar(application);
+        verifyToolSetupMountTasks();
+        verifyToolRolesAndTcp();
         verifyRobotRunCollisionResults(application);
         verifyCameraPreviewLocalResize(application);
         verifyPlatformConfigurationDialog(application);

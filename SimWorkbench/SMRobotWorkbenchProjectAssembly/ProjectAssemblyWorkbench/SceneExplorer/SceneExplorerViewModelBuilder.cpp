@@ -1,7 +1,12 @@
 #include "SceneExplorerViewModelBuilder.h"
+#include "SceneEntitySemantics.h"
+#include "UserCoordinateFrame.h"
 
 #include <QHash>
 #include <QStringList>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 #include <array>
 #include <cmath>
@@ -685,6 +690,9 @@ namespace robot_qt_viewer
                 const QString attachmentId = QString::fromStdString(attachment->id);
                         QString attachmentName = QString::fromStdString(
                             attachment->name.empty() ? attachment->id : attachment->name);
+                        if(const auto* asset = findAttachmentAsset(document, attachment->assetId)) {
+                            attachmentName += QString(" [%1]").arg(QString::fromStdString(robot_qt_viewer::attachmentRole(*asset)));
+                        }
                         if(!attachment->enabled) {
                             attachmentName += " [disabled]";
                         }
@@ -901,10 +909,50 @@ namespace robot_qt_viewer
             }
         }
 
+        const QString trajectoriesGroup=QStringLiteral("group:trajectories");
+        view.nodes.push_back(makeNode(trajectoriesGroup,QString(),SceneExplorerNodeKind::Group,
+            QStringLiteral("\u8f68\u8ff9"),QString(),QStringLiteral("Trajectories"),QString(),QString(),true));
+        for(const auto& ext:document.extensions) if(ext.key.rfind("rws.trajectory.",0)==0) {
+            const auto record=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object();
+            const auto id=record.value("library_id").toString();
+            const auto name=record.value("display_name").toString(id);
+            const auto status=record.value("validation_status").toString("input");
+            const auto label=name+QStringLiteral(" [")+status+QStringLiteral("]");
+            view.nodes.push_back(makeNode(QStringLiteral("trajectory:")+id,trajectoriesGroup,SceneExplorerNodeKind::Trajectory,
+                label,id,name,QString(),QString::fromUtf8(QJsonDocument(record.value("diagnostics").toObject()).toJson(QJsonDocument::Compact)),false));
+        }
         const QString objectsGroupId = QStringLiteral("group:objects");
+        const QString framesGroupId=QStringLiteral("group:coordinateFrames");
+        view.nodes.push_back(makeNode(framesGroupId,QString(),SceneExplorerNodeKind::Group,
+            QStringLiteral("\u5750\u6807\u7cfb"),QString(),QStringLiteral("Coordinate Frames"),QString(),QString(),true));
+        const auto frameLabel=[&](const QString& label,const std::string& id) {
+            return label+(robot_qt_viewer::coordinateFrameVisible(document,id)?QString():QStringLiteral(" [hidden]"));
+        };
+        view.nodes.push_back(makeNode(QStringLiteral("frame:world"),framesGroupId,SceneExplorerNodeKind::CoordinateFrame,
+            frameLabel(QStringLiteral("\u4e16\u754c\u5750\u6807\u7cfb [WORLD]"),"world"),QStringLiteral("world"),QStringLiteral("WORLD"),QString(),QString(),true));
+        for(const auto& attachment:document.mountedAttachments) {
+            const auto* asset=findAttachmentAsset(document,attachment.assetId);
+            if(!asset) continue;
+            for(const auto& frame:asset->functionalFrames) if(frame.frameType=="tcp") {
+                view.nodes.push_back(makeNode(QString::fromStdString("frame:tcp:"+attachment.id),framesGroupId,SceneExplorerNodeKind::CoordinateFrame,
+                    frameLabel(QString::fromStdString("TCP - "+(attachment.name.empty()?attachment.id:attachment.name)),"tcp:"+attachment.id),
+                    QString::fromStdString(attachment.id),QStringLiteral("TCP"),QString(),QString(),true));
+                break;
+            }
+        }
+        const bool hasUserFrame=!robot_qt_viewer::coordinateFrameDeleted(document,"user");
+        const QString userFrameNodeId=hasUserFrame?QStringLiteral("frame:user"):QString();
+        const auto userPose=robot_qt_viewer::userCoordinateFrame(document);
+        if(hasUserFrame) view.nodes.push_back(makeNode(userFrameNodeId,framesGroupId,SceneExplorerNodeKind::UserFrame,
+            frameLabel(QStringLiteral("\u7528\u6237\u5750\u6807\u7cfb [User Frame]"),"user"),QStringLiteral("user"),
+            QStringLiteral("User Frame"),QString(),
+            QString("WORLD XYZ (mm): %1, %2, %3; RPY (deg): %4, %5, %6")
+                .arg(userPose.x*1000).arg(userPose.y*1000).arg(userPose.z*1000)
+                .arg(userPose.roll*180/3.141592653589793).arg(userPose.pitch*180/3.141592653589793)
+                .arg(userPose.yaw*180/3.141592653589793),true));
         view.nodes.push_back(makeNode(
             objectsGroupId,
-            QString(),
+            userFrameNodeId,
             SceneExplorerNodeKind::Group,
             QStringLiteral("Objects"),
             QString(),
@@ -912,6 +960,11 @@ namespace robot_qt_viewer
             QString(),
             QString(),
             !objects.empty()));
+        const QString worldObjectsGroupId=QStringLiteral("group:worldObjects");
+        bool hasWorldObjects=false;
+        for(const auto& o:document.objects) if(!robot_qt_viewer::belongsToUserFrame(document,o) && !hiddenObjectMountedAsAttachment(document,o)) hasWorldObjects=true;
+        if(hasWorldObjects) view.nodes.push_back(makeNode(worldObjectsGroupId,QString(),SceneExplorerNodeKind::Group,
+            QStringLiteral("WORLD Objects"),QString(),QStringLiteral("WORLD Objects"),QString(),QString(),true));
         for(const SceneExplorerObjectRuntimeView& object : objects) {
             const simulation_project::SceneObjectDesc* objectDesc =
                 findSceneObject(document, object.id.toStdString());
@@ -924,12 +977,13 @@ namespace robot_qt_viewer
                 showAssemblyRelations && objectDesc != nullptr && !objectDesc->objectFrames.empty();
             const QString objectNodeId = objectsGroupId + QStringLiteral(":") + object.id;
             QString objectText = displayNameWithId(object.name, object.id);
+            if(objectDesc != nullptr) objectText += QString(" [%1]").arg(QString::fromStdString(robot_qt_viewer::sceneObjectRole(document, *objectDesc)));
             if(objectDesc != nullptr && !objectDesc->visible) {
                 objectText += QStringLiteral(" [hidden]");
             }
             view.nodes.push_back(makeNode(
                 objectNodeId,
-                objectsGroupId,
+                objectDesc && !robot_qt_viewer::belongsToUserFrame(document,*objectDesc)?worldObjectsGroupId:objectsGroupId,
                 SceneExplorerNodeKind::Object,
                 hasFrames
                     ? QString("%1 (%2 frames)").arg(objectText).arg(objectDesc->objectFrames.size())
@@ -1017,7 +1071,7 @@ namespace robot_qt_viewer
                 const QString assetName = QString::fromStdString(asset.name.empty() ? asset.id : asset.name);
                 const QString typeName = asset.assetType == "camera"
                     ? QStringLiteral("Camera")
-                    : QString::fromStdString(asset.assetType.empty() ? asset.assetKind : asset.assetType);
+                    : QString::fromStdString(robot_qt_viewer::attachmentRole(asset));
                 view.nodes.push_back(makeNode(
                     assetsGroupId + QStringLiteral(":") + assetId,
                     assetsGroupId,

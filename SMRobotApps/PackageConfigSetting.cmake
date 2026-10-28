@@ -54,11 +54,11 @@ message( STATUS "===============================================================
 ##########################################################################
 
 #   2. Get all targets' required libs
-foreach( TARGET_NAME ${${PACKAGE_NAME}_ExportComponents} )
+rs_begin_package_requirements(${PACKAGE_NAME})
+set(_apps_metadata_components ${${PACKAGE_NAME}_ExportComponents} RobotQtModules)
+foreach( TARGET_NAME ${_apps_metadata_components} )
     include( ${PACKAGE_NAME}/${TARGET_NAME}/TargetConfigSetting )
-
-    list( APPEND ${PACKAGE_NAME}_RequiredLibsPublic ${${TARGET_NAME}_RequiredLibsPublic} )
-    list( APPEND ${PACKAGE_NAME}_RequiredLibsPrivate ${${TARGET_NAME}_RequiredLibsPrivate} ) 
+    rs_collect_component_requirements(${PACKAGE_NAME} ${TARGET_NAME}) 
     set( ${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPublic ${${TARGET_NAME}_RequiredLibsPublic} )
     set( ${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPrivate ${${TARGET_NAME}_RequiredLibsPrivate} )
 endforeach()

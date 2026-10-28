@@ -175,6 +175,8 @@ namespace
         QPointer<QPushButton> play;
         QPointer<QWidget> editor;
         bool started = false;
+        std::vector<double> firstJoints;
+        double maxJointTravel = 0.0;
         bool profileDistance = false;
         int nearestFrames = 0;
         int overlayFrames = 0;
@@ -388,11 +390,15 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         fail("readable trajectory and report paths are required");
         return;
     }
-    const int sourcePoints = QJsonDocument::fromJson(trajectory.readAll()).object()
+    const bool basicIk=qApp->arguments().contains(QStringLiteral("--profile-basic-ik")) ||
+        qApp->arguments().contains(QStringLiteral("--profile-ga-apf"));
+    const int matrixPoints=basicIk ? int(readProfilePoses(trajectoryFile).size()) : 0;
+    const int sourcePoints=matrixPoints>0 ? matrixPoints : QJsonDocument::fromJson(trajectory.readAll()).object()
         .value(QStringLiteral("trajectory")).toObject()
         .value(QStringLiteral("points")).toArray().size();
     if(sourcePoints == 0 && !qApp->arguments().contains(QStringLiteral("--profile-cartesian-import")) &&
         !qApp->arguments().contains(QStringLiteral("--profile-cdf-top1")) &&
+        !qApp->arguments().contains(QStringLiteral("--profile-transform-program-export")) &&
         !qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform")) &&
         !qApp->arguments().contains(QStringLiteral("--profile-trajectory-orientations"))) {
         fail("trajectory JSON has no source points");
@@ -412,6 +418,9 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             return;
         }
         const auto now = state->clock.elapsed();
+        for(std::size_t i=0;i<state->firstJoints.size();++i)
+            state->maxJointTravel=std::max(state->maxJointTravel,std::abs(viewport->robotJointValue(
+                QStringLiteral("m710ic_50_drake"),QStringLiteral("J%1").arg(i+1))-state->firstJoints[i]));
         if(state->lastFrame >= 0) {
             state->frameGaps.push_back(now - state->lastFrame);
         }
@@ -448,7 +457,7 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
     auto* heartbeat = new QTimer(&window);
     heartbeat->setInterval(10);
     QObject::connect(heartbeat, &QTimer::timeout, &window,
-        [&window, state, heartbeat, reportFile, sourcePoints]() {
+        [&window, state, heartbeat, reportFile, sourcePoints, trajectoryFile, viewport]() {
         if(!state->started) {
             return;
         }
@@ -481,7 +490,7 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             {"frameMaxMs", double(percentile(state->frameGaps, 100))},
             {"heartbeatP95Ms", double(percentile(state->heartbeatGaps, 95))},
             {"heartbeatMaxMs", double(percentile(state->heartbeatGaps, 100))},
-            {"summary", summary}};
+            {"summary", summary}, {"maxJointTravelRadians",state->maxJointTravel}};
         const bool distancePassed = !state->profileDistance ||
             (state->nearestFrames > 10 && state->overlayFrames == state->nearestFrames &&
              state->missingNearestFrames == 0 && state->maxDistance - state->minDistance > 1e-6);
@@ -528,18 +537,57 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             }
             result["distancePlotPassed"] = plotPassed;
         }
+        bool workpiecePassed = true;
+        if(qApp->arguments().contains(QStringLiteral("--profile-workpiece-measurement"))) {
+            QFile fixture(trajectoryFile);
+            workpiecePassed = fixture.open(QIODevice::ReadOnly);
+            const auto source = QJsonDocument::fromJson(fixture.readAll()).object();
+            const auto robotId = source.value(QStringLiteral("robotId")).toString();
+            const auto measurement = viewport->sprayMeasurement(robotId);
+            result["sprayValid"] = measurement.valid;
+            result["sprayDistanceMeters"] = measurement.distanceMeters;
+            result["sprayAngleDegrees"] = measurement.angleDegrees;
+            result["sprayError"] = QString::fromStdString(measurement.errorMessage);
+            std::vector<std::string> names;
+            for(const auto& name : source.value(QStringLiteral("jointNames")).toArray()) names.push_back(name.toString().toStdString());
+            const auto rows = source.value(QStringLiteral("trajectory")).toObject().value(QStringLiteral("points")).toArray();
+            std::vector<double> q;
+            if(!rows.isEmpty()) for(const auto& value : rows.last().toObject().value(QStringLiteral("q")).toArray()) q.push_back(value.toDouble());
+            const auto fk = viewport->robotForwardKinematics(robotId, names, true);
+            workpiecePassed = workpiecePassed && measurement.valid && fk && q.size()==6;
+            if(workpiecePassed) {
+                for(const int axis : {0,3,4,5}) q[axis] = -q[axis];
+                const auto pose = fk(q);QJsonArray matrix;
+                for(int r=0;r<4;++r) { QJsonArray row;for(int c=0;c<4;++c) row.append(pose.matrix()(r,c));matrix.append(row); }
+                result["tcpWorld"] = matrix;
+                auto* plot = state->editor->findChild<QPushButton*>(QStringLiteral("plotSprayMeasurements"));
+                workpiecePassed = plot && plot->isEnabled();
+                if(workpiecePassed) {
+                    plot->click();bool captured=false;
+                    for(auto* dialog : state->editor->findChildren<QDialog*>()) {
+                        if(dialog->windowTitle().startsWith(QStringLiteral("Spray measurements on A.STL"))) {
+                            captured = dialog->grab().save(reportFile + QStringLiteral(".spray.png"));dialog->close();break;
+                        }
+                    }
+                    workpiecePassed = captured;
+                }
+            }
+            result["workpiecePassed"] = workpiecePassed;
+        }
         const auto json = QJsonDocument(result).toJson();
         QFile report(reportFile);
         const bool reportSaved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
         const bool screenshotSaved = window.grab().save(reportFile + QStringLiteral(".png"));
         std::cout << "Main-window playback profile: "
             << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
-        qApp->exit(finished && allPointsChecked && distancePassed && plotPassed && reportSaved && screenshotSaved ? 0 : 2);
+        const bool moved=state->firstJoints.empty() || state->maxJointTravel>1e-4;
+        qApp->exit(finished && moved && allPointsChecked && distancePassed && plotPassed && workpiecePassed && reportSaved && screenshotSaved ? 0 : 2);
     });
     // Let the original project's deferred startup activation finish before the
     // export diagnostic opens nested file dialogs and captures the CDF page.
     const int setupDelay = (qApp->arguments().contains(QStringLiteral("--profile-fanuc-export")) ||
         qApp->arguments().contains(QStringLiteral("--profile-trajectory-orientations")) ||
+        qApp->arguments().contains(QStringLiteral("--profile-transform-program-export")) ||
         qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform"))) ? 3000 : 500;
     QTimer::singleShot(setupDelay, &window, [&window, state, heartbeat, setupTimeout, trajectoryFile, reportFile, sourcePoints, viewport]() {
         for(auto* action : window.findChildren<QAction*>()) {
@@ -562,7 +610,8 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             fail("original Motion Planning editor is unavailable; run with --language en-US");
             return;
         }
-        const bool transformProfile = qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform"));
+        const bool transformProfile = qApp->arguments().contains(QStringLiteral("--profile-trajectory-transform")) ||
+            qApp->arguments().contains(QStringLiteral("--profile-transform-program-export"));
         if(transformProfile) {
             for(auto* tabs : state->editor->findChildren<QTabWidget*>()) {
                 if(tabs->count() == 3 && tabs->tabText(2) == QStringLiteral("Trajectory Transform")) tabs->setCurrentIndex(2);
@@ -579,6 +628,118 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         import->click();
         qApp->removeEventFilter(&responder);
         const auto arguments = qApp->arguments();
+        if(arguments.contains(QStringLiteral("--profile-ga-apf"))) {
+            setupTimeout->stop();
+            auto* useCurrent=state->editor->findChild<QPushButton*>(QStringLiteral("useCurrentTrajectoryForCdf"));
+            if(useCurrent && useCurrent->isEnabled())useCurrent->click();
+            auto* run=state->editor->findChild<QPushButton*>(QStringLiteral("runGaApfCdf"));
+            auto* optional=state->editor->findChild<QCheckBox*>(QStringLiteral("cdfOptionalOptimization"));
+            auto* table=state->editor->findChild<QTableWidget*>(QStringLiteral("trajectoryCartesianControlPoints"));
+            const bool qpDefaultOff=optional && !optional->isChecked();
+            if(!qpDefaultOff){fail("CDF/QP must be disabled by default");return;}
+            if(optional)optional->setChecked(arguments.contains(QStringLiteral("--profile-with-cdf")));
+            auto* sprayDistance=state->editor->findChild<QDoubleSpinBox*>(QStringLiteral("gaSprayDistance"));
+            const int sprayOption=arguments.indexOf(QStringLiteral("--profile-spray-distance-mm"));
+            if(sprayDistance && sprayOption>=0 && sprayOption+1<arguments.size())
+                sprayDistance->setValue(arguments[sprayOption+1].toDouble());
+            const bool enabled=run && run->isEnabled();
+            QElapsedTimer planningClock;planningClock.start();
+            if(enabled)run->click();
+            const double planningSeconds=planningClock.elapsed()/1000.;
+            auto* stages=state->editor->findChild<QComboBox*>(QStringLiteral("cdfStageSelection"));
+            QJsonArray names;if(stages)for(int i=0;i<stages->count();++i)names.append(stages->itemText(i));
+            auto* distance=state->editor->findChild<QPushButton*>(QStringLiteral("plotNearestDistances"));
+            bool distanceValid=false;
+            if(distance && distance->isEnabled()) {
+                distance->click();
+                auto* plot=state->editor->findChild<QDialog*>(QStringLiteral("nearestDistancePlot"));
+                auto* exporter=plot?plot->findChild<QPushButton*>(QStringLiteral("exportNearestDistances")):nullptr;
+                if(exporter) {
+                    ImportFileResponder save(reportFile+QStringLiteral(".distances.txt"));
+                    qApp->installEventFilter(&save);exporter->click();qApp->removeEventFilter(&save);
+                    QFile data(reportFile+QStringLiteral(".distances.txt"));
+                    if(data.open(QIODevice::ReadOnly)) {
+                        int rows=0,invalid=0;
+                        for(const auto& row:QString::fromUtf8(data.readAll()).split('\n',Qt::SkipEmptyParts)) {
+                            if(row.startsWith('#') || row.startsWith(QStringLiteral("index")))continue;
+                            const auto values=row.split('\t');++rows;
+                            if(values.size()<7 || values[3]!=QStringLiteral("1"))++invalid;
+                        }
+                        distanceValid=rows>0 && invalid==0;
+                    }
+                    plot->grab().save(reportFile+QStringLiteral(".distances.png"));
+                }
+                if(plot)plot->close();
+            }
+            bool exportEnabled=false;
+            for(auto* candidate:state->editor->findChildren<QPushButton*>())
+                if(candidate->text()==QStringLiteral("Export APF + CDF/QP trajectory..."))exportEnabled=candidate->isEnabled();
+            const bool passed=enabled && stages && stages->count()>=2 && exportEnabled && distanceValid;
+            QJsonObject result{{"success",passed},{"sourcePoints",sourcePoints},{"runButtonEnabled",enabled},
+                {"sprayDistanceMm",sprayDistance?sprayDistance->value():-1},
+                {"qpDefaultOff",qpDefaultOff},{"planningSeconds",planningSeconds},
+                {"stages",names},{"finalExportEnabled",exportEnabled},{"distanceWithoutPlayback",distanceValid}};
+            QFile output(reportFile);output.open(QIODevice::WriteOnly);output.write(QJsonDocument(result).toJson());
+            window.grab().save(reportFile+QStringLiteral(".png"));
+            std::cout<<QJsonDocument(result).toJson(QJsonDocument::Compact).constData()<<std::endl;
+            qApp->exit(passed?0:2);return;
+        }
+        if(arguments.contains(QStringLiteral("--profile-transform-program-export"))) {
+            setupTimeout->stop();
+            const bool transformed = arguments.contains(QStringLiteral("--profile-local-rotation")) ||
+                arguments.contains(QStringLiteral("--profile-apply-transform"));
+            if(transformed) {
+                auto* apply = state->editor->findChild<QPushButton*>(QStringLiteral("transformTrajectory"));
+                if(!apply || !apply->isEnabled()) { fail("transform before program export unavailable"); return; }
+                TransformSettingsResponder transformResponder;
+                qApp->installEventFilter(&transformResponder); apply->click(); qApp->removeEventFilter(&transformResponder);
+            }
+            const auto exportMatrix = [&](const QString& path) {
+                auto* button = state->editor->findChild<QPushButton*>(QStringLiteral("exportTransformTrajectory"));
+                if(!button || !button->isEnabled()) return false;
+                ImportFileResponder responder(path);
+                qApp->installEventFilter(&responder); button->click(); qApp->removeEventFilter(&responder);
+                return QFileInfo::exists(path);
+            };
+            const QString before = reportFile + QStringLiteral(".trajectory.txt");
+            const QString after = reportFile + QStringLiteral(".after.txt");
+            bool valid = exportMatrix(before);
+            QJsonArray exports;
+            const auto source = readProfilePoses(trajectoryFile);
+            for(bool fanuc : {false, true}) {
+                auto* control = state->editor->findChild<QPushButton*>(fanuc ? QStringLiteral("exportTransformFanuc") : QStringLiteral("exportTransformRapid"));
+                if(!control || !control->isEnabled()) { fail("direct Cartesian robot program export unavailable"); return; }
+                for(QWidget* parent = control->parentWidget(); parent; parent = parent->parentWidget())
+                    if(auto* scroll = qobject_cast<QScrollArea*>(parent)) scroll->ensureWidgetVisible(control);
+                const QString path = QFileInfo(reportFile).absolutePath() +
+                    (fanuc ? QStringLiteral("/XPORT.LS") : QStringLiteral("/MainModule.mod"));
+                ImportFileResponder saveResponder(path);
+                qApp->installEventFilter(&saveResponder); control->click(); qApp->removeEventFilter(&saveResponder);
+                QFile file(path);
+                const bool saved = file.open(QIODevice::ReadOnly);
+                const auto content = saved ? file.readAll() : QByteArray();
+                const bool format = fanuc ? (content.startsWith("/PROG  XPORT\r\n") &&
+                    content.count("400mm/sec CNT100") == int(source.size())) :
+                    (content.startsWith("MODULE MainModule\r\n") &&
+                    content.count(", v50, z10, tool0\\WObj:=wobj0;") == int(source.size()));
+                valid = valid && saved && format;
+                exports.append(QJsonObject{{"fanuc",fanuc},{"path",path},{"saved",saved},{"formatPassed",format}});
+            }
+            valid = exportMatrix(after) && valid;
+            QFile a(before), b(after);
+            valid = valid && a.open(QIODevice::ReadOnly) && b.open(QIODevice::ReadOnly) && a.readAll() == b.readAll();
+            const QJsonObject result{{"success",valid},{"sourcePoints",int(source.size())},
+                {"transformed",transformed},{"exports",exports},{"exportDidNotChangeCartesianPlan",valid}};
+            QFile report(reportFile);
+            const auto json = QJsonDocument(result).toJson();
+            const bool saved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
+            QTimer::singleShot(300, &window, [&window, reportFile, result, valid, saved]() {
+                const bool screenshot = window.grab().save(reportFile + QStringLiteral(".png"));
+                std::cout << "Main-window Cartesian program export: " << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
+                qApp->exit(valid && saved && screenshot ? 0 : 2);
+            });
+            return;
+        }
         if(transformProfile) {
             setupTimeout->stop();
             auto* apply = state->editor->findChild<QPushButton*>(QStringLiteral("transformTrajectory"));
@@ -681,7 +842,7 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
                 use->click();
                 auto* input = state->editor->findChild<QTableWidget*>(QStringLiteral("cdfInitialJointAngles"));
                 auto* margin = state->editor->findChild<QDoubleSpinBox*>(QStringLiteral("cdfSafetyMargin"));
-                auto* repair = button(*state->editor, QStringLiteral("Repair imported trajectory with APF + CDF/QP"));
+                auto* repair = state->editor->findChild<QPushButton*>(QStringLiteral("runGaApfCdf"));
                 if(!input || input->rowCount()==0 || !margin || margin->value()!=0.01 || !repair || !repair->isEnabled()) {
                     fail("original CDF input / restored 10 mm margin is unavailable"); return;
                 }
@@ -695,6 +856,11 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
                     seed.write(values.join('\t').toUtf8()); seed.write("\n");
                 }
                 seed.close();
+                auto* sprayMode=state->editor->findChild<QCheckBox*>(QStringLiteral("cdfSprayGuidance"));
+                const bool guided=sprayMode && sprayMode->isEnabled() && sprayMode->isChecked();
+                if(qApp->arguments().contains(QStringLiteral("--profile-spray-guidance")) && !guided) {
+                    fail("calibrated spray guidance is not enabled on original CDF page"); return;
+                }
                 const int inputCount=input->rowCount();
                 std::cout << "Main-window CDF profile: original repair button, Top-1="
                     << topRow.join(QStringLiteral(" | ")).toStdString() << std::endl;
@@ -721,14 +887,14 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
                 QMetaObject::invokeMethod(state->editor,"exportCdfQualityRequested",Qt::DirectConnection);
                 qApp->removeEventFilter(&save);
                 const QJsonObject result{{"outputAvailable",outputAvailable},{"inputPoints",inputCount},
-                    {"safetyMarginMeters",margin->value()},{"repairElapsedMs",double(repairMs)},
+                    {"safetyMarginMeters",margin->value()},{"sprayGuidanceEnabled",guided},{"repairElapsedMs",double(repairMs)},
                     {"top1",topRow.join(QStringLiteral(" | "))},{"labels",labels},{"exports",exports}};
                 QFile report(reportFile); const auto json=QJsonDocument(result).toJson();
                 const bool saved=report.open(QIODevice::WriteOnly) && report.write(json)==json.size();
                 const bool screenshot=window.grab().save(reportFile+QStringLiteral(".png"));
                 std::cout << "Main-window CDF profile: output=" << outputAvailable
                     << ", repair ms=" << repairMs << ", report=" << reportFile.toStdString() << std::endl;
-                qApp->exit(outputAvailable && exports.size()==3 && saved && screenshot ? 0 : 2);
+                qApp->exit(outputAvailable && exports.size()==(guided?4:3) && saved && screenshot ? 0 : 2);
             });
             IkSettingsResponder settingsResponder;
             qApp->installEventFilter(&settingsResponder);
@@ -818,7 +984,20 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             }
             valid = valid && maxPositionError < 1.0e-6 && maxTimeError < 1.0e-6;
             if(points) { points->setChecked(true); }
-            const QJsonObject result{{"success", valid}, {"sourcePoints", lines.size()},
+            bool sprayControls = true;
+            if(arguments.contains(QStringLiteral("--profile-spray-controls"))) {
+                auto* spray = state->editor->findChild<QCheckBox*>(QStringLiteral("cdfSprayGuidance"));
+                auto* profile = state->editor->findChild<QLabel*>(QStringLiteral("cdfSprayProfileLabel"));
+                sprayControls = spray && profile && spray->isEnabled() && spray->isChecked() && !margin->isEnabled();
+                if(sprayControls) {
+                    spray->setChecked(false); sprayControls = margin->isEnabled() && margin->value() == 0.01;
+                    spray->setChecked(true); sprayControls = sprayControls && !margin->isEnabled() && margin->value() == 0.01;
+                    for(auto* tabs : state->editor->findChildren<QTabWidget*>())
+                        for(int i=0;i<tabs->count();++i) if(tabs->tabText(i)==QStringLiteral("CDF")) tabs->setCurrentIndex(i);
+                }
+                valid = valid && sprayControls;
+            }
+            const QJsonObject result{{"success", valid}, {"sprayControlsPassed", sprayControls}, {"sourcePoints", lines.size()},
                 {"displayedPoints", table ? table->rowCount() : 0}, {"maxDisplayedPositionErrorMeters", maxPositionError},
                 {"maxDisplayedTimeErrorSeconds", maxTimeError}, {"safetyMarginMeters", margin ? margin->value() : -1}};
             QFile report(reportFile);
@@ -833,11 +1012,13 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
         }
         const int rapidOption = arguments.indexOf(QStringLiteral("--profile-rapid-export"));
         const int fanucOption = arguments.indexOf(QStringLiteral("--profile-fanuc-export"));
+        const int tcpOption = arguments.indexOf(QStringLiteral("--profile-tcp-export"));
+        const bool tcp = tcpOption >= 0;
         const bool fanuc = fanucOption >= 0;
-        const int exportOption = fanuc ? fanucOption : rapidOption;
+        const int exportOption = tcp ? tcpOption : (fanuc ? fanucOption : rapidOption);
         if(exportOption >= 0 && exportOption + 1 < arguments.size()) {
             const QString outputPath = arguments[exportOption + 1];
-            auto* exportButton = state->editor->findChild<QPushButton*>(fanuc ? QStringLiteral("exportCdfFanuc") : QStringLiteral("exportCdfRapid"));
+            auto* exportButton = state->editor->findChild<QPushButton*>(tcp ? QStringLiteral("exportCdfTcpTrajectory") : (fanuc ? QStringLiteral("exportCdfFanuc") : QStringLiteral("exportCdfRapid")));
             if(!exportButton || !exportButton->isEnabled()) {
                 fail("CDF robot-program export button was not enabled for the imported CDF result");
                 return;
@@ -892,7 +1073,17 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
                 (program.startsWith(QStringLiteral("MODULE MainModule")) &&
                 !program.contains(QStringLiteral("tooldata")) &&
                 program.count(QStringLiteral(", v50, z10, tool0\\WObj:=wobj0;")) == sourcePoints);
-            while(targets.hasNext()) {
+            std::vector<ProfilePose> tcpPoints;
+            if(tcp) {
+                tcpPoints = readProfilePoses(outputPath);
+                parsed = !tcpPoints.empty();
+                for(const auto& point : tcpPoints) {
+                    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+                    pose.matrix() = point.pose;
+                    poses.push_back(pose);
+                }
+            }
+            while(!tcp && targets.hasNext()) {
                 const auto match = targets.next();
                 if(fanuc) {
                     if(match.captured(1).toInt() != poses.size() + 1) { parsed = false; break; }
@@ -928,13 +1119,15 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
             }
             const auto fk = viewport->robotForwardKinematics(source.value(QStringLiteral("robotId")).toString(), names, true);
             bool valid = parsed && fk && poses.size() == sourcePoints;
-            double positionError = 0.0, orientationError = 0.0;
+            double positionError = 0.0, orientationError = 0.0, timeError = 0.0;
             for(int i = 0; valid && i < sourcePoints; ++i) {
                 std::vector<double> q;
                 for(const auto& value : sourceRows[i].toObject().value(QStringLiteral("q")).toArray()) { q.push_back(value.toDouble()); }
                 // This diagnostic fixture is an ABB4600 CDF plan in stored IK convention.
                 if(q.size() != 6) { valid = false; break; }
                 for(const int axis : {0, 3, 4, 5}) { q[axis] = -q[axis]; }
+                if(tcp) timeError = std::max(timeError,
+                    std::abs(tcpPoints[i].time - sourceRows[i].toObject().value(QStringLiteral("time")).toDouble()));
                 const auto expected = fk(q);
                 const auto& actual = poses[i];
                 if(!actual.matrix().allFinite()) { valid = false; break; }
@@ -942,20 +1135,27 @@ void startPlaybackWindowProfile(QWidget& window, const QString& trajectoryFile,
                 orientationError = std::max(orientationError,
                     Eigen::AngleAxisd(expected.linear().transpose() * actual.linear()).angle());
             }
-            valid = valid && positionError < (fanuc ? 9e-7 : 1e-8) && orientationError < (fanuc ? 3e-5 : 1e-8);
+            valid = valid && positionError < (fanuc ? 9e-7 : 1e-8) && orientationError < (fanuc ? 3e-5 : 1e-8) && timeError < 1e-12;
             const QJsonObject result{{"success", valid}, {"sourcePoints", sourcePoints},
                 {"exportedPoints", int(poses.size())},
-                {"maxPositionErrorMeters", positionError}, {"maxOrientationErrorRadians", orientationError}};
+                {"maxPositionErrorMeters", positionError}, {"maxOrientationErrorRadians", orientationError}, {"maxTimeErrorSeconds", timeError}};
             QFile report(reportFile);
             const auto json = QJsonDocument(result).toJson();
             const bool saved = report.open(QIODevice::WriteOnly) && report.write(json) == json.size();
-            QTimer::singleShot(150, &window, [&window, reportFile, result, valid, saved, fanuc]() {
+            QTimer::singleShot(150, &window, [&window, reportFile, result, valid, saved, fanuc, tcp]() {
                 const bool screenshot = window.grab().save(reportFile + QStringLiteral(".png"));
-                std::cout << (fanuc ? "Main-window FANUC export: " : "Main-window RAPID export: ")
+                std::cout << (tcp ? "Main-window TCP matrix export: " : (fanuc ? "Main-window FANUC export: " : "Main-window RAPID export: "))
                     << QJsonDocument(result).toJson(QJsonDocument::Compact).constData() << std::endl;
                 qApp->exit(valid && saved && screenshot ? 0 : 2);
             });
             return;
+        }
+        if(arguments.contains(QStringLiteral("--profile-basic-ik"))) {
+            auto* solve=button(*state->editor,QStringLiteral("Solve IK and apply"));
+            if(!solve || !solve->isEnabled()){fail("basic IK solve button unavailable");return;}
+            solve->click();
+            for(int i=1;i<=6;++i)state->firstJoints.push_back(viewport->robotJointValue(
+                QStringLiteral("m710ic_50_drake"),QStringLiteral("J%1").arg(i)));
         }
         state->play = button(*state->editor, QStringLiteral("Play IK result"));
         if(!state->play || !state->play->isEnabled()) {

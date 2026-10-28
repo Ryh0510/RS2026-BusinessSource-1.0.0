@@ -1,0 +1,8 @@
+rs2026_add_test_unit(ModelPointLineSurfaceTest)
+rs2026_add_test_unit(ModelSurfacePreviewTest)
+rs2026_add_test_unit(BoundaryLinePreviewTest)
+rs2026_add_test_unit(SlicePlanePreviewTest)
+rs2026_add_test_unit(BoundarylessSlicePlanePreviewTest)
+rs2026_add_test_unit(TrajectoryFramePreviewTest)
+rs2026_add_test_unit(TrajectoryConnectionPreviewTest)
+rs2026_add_test_unit(TrajectoryExportSamplingTest)

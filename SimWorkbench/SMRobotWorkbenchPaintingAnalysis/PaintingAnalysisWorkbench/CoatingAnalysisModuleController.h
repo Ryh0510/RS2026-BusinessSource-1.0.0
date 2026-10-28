@@ -1,16 +1,39 @@
 #pragma once
 
 #include "CoatingAnalysisSession.h"
+#include "PaintingAnalysisMeshAdapter.h"
+#include "SimulationExperiment.h"
 
+#include <QHash>
 #include <QObject>
 #include <QPoint>
 #include <QString>
 
+#include <Eigen/Core>
+
+#include <cstdint>
+#include <chrono>
+#include <memory>
+#include <vector>
+
+class QMenu;
+
+namespace spraytrajectory
+{
+    struct SprayPathPoint;
+}
+
 namespace robot_qt_viewer
 {
     class CoatingAnalysisPanel;
+    class CoatingAnalysisTreePanel;
+    class CoatingAnalysisInfoPanel;
+    class CoatingAnalysisVisibilityBar;
     class RobotQtViewerDocumentContext;
+    class ThicknessPredictionJobController;
+    class AlgorithmReproductionJobController;
     struct RobotQtViewerEvent;
+    struct PlanningDataSnapshot;
 
     class CoatingAnalysisModuleController : public QObject
     {
@@ -19,18 +42,49 @@ namespace robot_qt_viewer
     public:
         CoatingAnalysisModuleController(
             CoatingAnalysisPanel& panel,
+            CoatingAnalysisTreePanel& treePanel,
+            CoatingAnalysisInfoPanel& infoPanel,
+            CoatingAnalysisVisibilityBar& visibilityBar,
             RobotQtViewerDocumentContext& context,
             QObject* parent = nullptr);
+        ~CoatingAnalysisModuleController() override;
 
+        void synchronizePlanningData(const QString& objectId, const spraytrajectory::SprayTrajectory& trajectory);
+        void synchronizePlanningData(const PlanningDataSnapshot& snapshot);
+        void releaseProjectSession();
         void activate();
         void deactivate();
-        void releaseProjectSession();
+        void setLanguageCode(const QString& languageCode);
+        void populateViewportContextMenu(QMenu* menu);
         void handleEvent(const RobotQtViewerEvent& event);
         void handleSurfaceScalarHover(
             const QString& objectId,
             double valueMeters,
+            double worldX,
+            double worldY,
+            double worldZ,
             const QPoint& viewportPosition,
             bool hit);
+        void handleRotationSurfacePicked(
+            const QString& objectId,
+            std::uint32_t triangleIndex,
+            double hitX,
+            double hitY,
+            double hitZ,
+            double normalX,
+            double normalY,
+            double normalZ);
+
+        // Waypoint inspection source for the virtualized tree and details dialog.
+        const std::vector<spraytrajectory::SprayPathPoint>& waypoints() const;
+        const spraytrajectory::SprayPathPoint& waypointAt(std::size_t index) const;
+        double waypointDurationAt(std::size_t index) const;
+
+    public slots:
+        void setThicknessDisplayRange(
+            double minimumMicrometers,
+            double maximumMicrometers);
+        void resetThicknessDisplayRange();
 
     signals:
         void statusMessageRequested(const QString& message, int timeoutMs);
@@ -41,23 +95,134 @@ namespace robot_qt_viewer
         void thicknessLegendChanged(
             bool visible,
             double minimumMicrometers,
-            double maximumMicrometers);
+            double maximumMicrometers,
+            bool relativeError,
+            bool editingEnabled);
 
     private:
-        void openModel();
+        struct AxisymmetricProfileState;
+        bool loadModel(const QString& path, double scaleToMeters);
+        void openModelFromDialog();
+        bool loadTrajectory(const QString& path, double scaleToMeters = 0.001);
+        void openTrajectoryFromDialog();
+        void selectModelFileFromDialog();
+        void selectTrajectoryFileFromDialog();
         void predictThickness();
+        void setCurrentResultAsReference();
+        void clearReferenceResult();
+        void checkCurrentResultAgainstReference();
+        void previewLocalInputs();
+        void selectAxisymmetricProfileRegion();
+        void cancelPrediction();
+        void handlePredictionProgress(double progress, const QString& message);
+        void handlePredictionFinished(const spraythickness::ThicknessPredictionResult& prediction);
+        void handlePredictionFailed(const QString& message);
+        void setShowModel(bool enabled);
+        void setShowTrajectory(bool enabled);
+        void setShowSprayPoints(bool enabled);
         void setShowThickness(bool enabled);
+        void setThicknessPickEnabled(bool enabled);
+        void setLocalDebugVisibility(
+            bool cylindricalSurface,
+            bool rotationAxis,
+            bool localSector,
+            bool sprayPoints);
+        void selectWorkpiece(const QString& objectId);
+        void selectWorkpieceFromTree(const QString& objectId);
+        void ensureWorkpieceSelection();
+        void updateSelectedModelInfo();
+        void clearModelVisibilityOverrides();
+        void applyModelVisibilityOverrides();
         void clearSession();
+        void applyVisualizationState();
+        void submitTrajectoryPreview();
+        void updateTrajectoryPreviewVisibility();
         void applyOverlayAfterReload();
+        bool applyCurrentSurfaceOverlay(QString* errorMessage);
+        void updateThicknessRangeAndStatistics();
         void refreshViewModel();
         void publishStateChanged();
+        bool ensurePreviewWorkpieceLoaded();
+        bool hasEffectiveRotationAxis() const;
+        Eigen::Vector3d effectiveRotationAxisOrigin() const;
+        Eigen::Vector3d effectiveRotationAxisDirection() const;
+        QString rotationAxisSource() const;
+        void applyLocalDebugVisibility();
+        bool ensureAxisymmetricProfileSlice();
+        void clearAxisymmetricProfileSelection();
+        bool rebuildAxisymmetricProfileReduction();
+        void updateAxisymmetricProfileDebugState();
+        void resetReferenceResult();
+        void enterSimulation();
+        void exitSimulation();
+        void rebuildSimulation(bool runAfterBuild = false, bool focusView = false);
+        void runSimulationPrediction();
+        void exportSimulationResult();
+        void enterReproduction();
+        void exitReproduction();
+        void runAlgorithmReproduction();
+        void createReproductionTemplate();
+        void cancelAlgorithmReproduction();
+        void exportAlgorithmReproduction();
+        void handleReproductionProgress(double progress, const QString& message);
+        void handleReproductionFinished(
+            const spraythickness::AlgorithmReproductionResult& result);
+        void handleReproductionFailed(const QString& message);
+        bool simulationActive() const;
+        bool reproductionActive() const;
+        bool anyPredictionRunning() const;
+
+        void handleWaypointInfoRequested(int index);
+        void handleModelVisibilityToggleRequested(const QString& objectId);
+        void handleModelSetAsWorkpiece(const QString& objectId);
+        void handleThicknessClearRequested();
 
         CoatingAnalysisPanel& m_panel;
+        CoatingAnalysisTreePanel& m_treePanel;
+        CoatingAnalysisInfoPanel& m_infoPanel;
+        CoatingAnalysisVisibilityBar& m_visibilityBar;
         RobotQtViewerDocumentContext& m_context;
         CoatingAnalysisSession m_session;
-        QString m_status = QStringLiteral("Open a mesh model to begin.");
+        std::unique_ptr<ThicknessPredictionJobController> m_predictionJob;
+        std::unique_ptr<AlgorithmReproductionJobController> m_reproductionJob;
+        QString m_status = QStringLiteral("Load a model and trajectory to begin.");
+        QString m_predictionObjectId;
+        double m_predictionProgress = 0.0;
         bool m_active = false;
+        bool m_hasSharedPlanningInput = false;
         bool m_hasCurrentThickness = false;
         double m_currentThicknessMeters = 0.0;
+        bool m_hasRotationAxis = false;
+        Eigen::Vector3d m_rotationAxisOrigin = Eigen::Vector3d::Zero();
+        Eigen::Vector3d m_rotationAxisDirection = Eigen::Vector3d::UnitZ();
+        sprayworkpiece::WorkpieceModel m_rotationPreviewWorkpiece;
+        std::vector<std::size_t> m_rotationSurfaceTriangleIndices;
+        std::size_t m_rotationSeedTriangleIndex = 0;
+        double m_rotationFitElapsedMilliseconds = 0.0;
+        bool m_hasLocalPreview = false;
+        QString m_localPreviewDetails;
+        std::unique_ptr<AxisymmetricProfileState> m_axisymmetricProfile;
+        bool m_showCylindricalSurface = true;
+        bool m_showRotationAxis = true;
+        bool m_showLocalSector = true;
+        bool m_showLocalSprayPoints = true;
+        std::chrono::steady_clock::time_point m_predictionStartedAt{};
+        bool m_predictionTimerActive = false;
+        spraythickness::ThicknessField m_referenceThickness;
+        std::size_t m_referenceActiveVertexCount = 0;
+        QString m_validationDetails = QStringLiteral("No reference result.");
+        std::vector<QString> m_modelVisibilityOverrideIds;
+        QHash<QString, bool> m_modelVisibility;
+        CoatingAnalysisMode m_mode{ CoatingAnalysisMode::Prediction };
+        bool m_reproductionGpuRun = false;
+        QString m_reproductionStatus = QStringLiteral("No reproduction result yet.");
+        sprayworkpiece::WorkpieceModel m_reproductionWorkpiece;
+        SimulationExperimentData m_simulation;
+        bool m_simulationReady = false;
+        QString m_simulationReadyStatus;
+        QString m_simulationStatus;
+        QString m_languageCode{ QStringLiteral("en") };
+        CoatingAnalysisSession m_savedSimulationSession;
+        QHash<QString, bool> m_savedSimulationModelVisibility;
     };
 }

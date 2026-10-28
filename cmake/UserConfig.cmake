@@ -9,16 +9,25 @@ message( STATUS "-------------------------------------------------------\n" )
 
 
 #   Define all possible users
-list( APPEND USER_GROUP
-    USER_LOCAL_14390_Windows
-
+foreach(_retired_user IN ITEMS
     USER_TANGTANG_3090_Ubuntu
     USER_TANGTANG_3090_Windows
+    USER_TANGTANG_14S_Ubuntu)
+    if(DEFINED CACHE{${_retired_user}})
+        if(${_retired_user})
+            message(WARNING "${_retired_user} has been removed; select a supported USER_* profile")
+        endif()
+        unset(${_retired_user} CACHE)
+    endif()
+endforeach()
 
+list( APPEND USER_GROUP
+    USER_LOCAL_14390_Windows
     USER_TANGTANG_4090_Windows
     USER_TANGTANG_4090_Ubuntu2204
+    USER_TANGTANG_4090_Ubuntu2604
+    USER_RS2026_UbuntuContainer
 
-    USER_TANGTANG_14S_Ubuntu
     USER_TANGTANG_14S_Windows
 
     USER_TANGTANG_p15v3_Windows
@@ -32,6 +41,7 @@ foreach(user ${USER_GROUP})
     option(${user} "Enable build config for ${user_desc}" OFF)
     list(APPEND User_Options ${user})
 endforeach()
+
 
 set(_rs2026_any_user_selected FALSE)
 foreach(opt IN LISTS User_Options)
@@ -78,16 +88,21 @@ foreach(each_user IN LISTS User_Options)
         string(REGEX REPLACE "USER_" "" user_config_filename ${each_user})
         message(STATUS "User's config filename is ${user_config_filename}")
 
+        include("${CMAKE_CURRENT_LIST_DIR}/DependencyProviders.cmake")
         include(UserConfigs/${user_config_filename})
         break()  # Since only one user can be enabled, we can break after finding it
     endif()
 endforeach()
 
 
-if(IS_DIRECTORY "${SMROBOT_THIRDPARTY_ROOT}/tinyxml2")
-    add_subdirectory("${SMROBOT_THIRDPARTY_ROOT}/tinyxml2" "${CMAKE_BINARY_DIR}/thirdparty/tinyxml2")
-else()
-    message(FATAL_ERROR
-        "tinyxml2 third-party source was not found under SMROBOT_THIRDPARTY_ROOT: "
-        "${SMROBOT_THIRDPARTY_ROOT}")
+rs_project_requires_package(tinyxml2 _rs_tinyxml2_required)
+if(_rs_tinyxml2_required AND NOT TARGET tinyxml2::tinyxml2)
+    if(IS_DIRECTORY "${SMROBOT_THIRDPARTY_ROOT}/tinyxml2")
+        add_subdirectory("${SMROBOT_THIRDPARTY_ROOT}/tinyxml2" "${CMAKE_BINARY_DIR}/thirdparty/tinyxml2")
+    else()
+        message(FATAL_ERROR
+            "tinyxml2 third-party source was not found under SMROBOT_THIRDPARTY_ROOT: "
+            "${SMROBOT_THIRDPARTY_ROOT}")
+    endif()
+
 endif()

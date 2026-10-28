@@ -24,6 +24,7 @@ namespace robot_qt_viewer
             const QString& preferredFrameId = QString()) = 0;
         virtual void unbindMountedAttachment(const QString& attachmentId) = 0;
         virtual void updateToolFrameVisibility() = 0;
+        virtual void setMountFrameVisible(const QString& mountId, bool visible) = 0;
         virtual QString currentMountId() const = 0;
         virtual QString currentAttachmentId() const = 0;
     };

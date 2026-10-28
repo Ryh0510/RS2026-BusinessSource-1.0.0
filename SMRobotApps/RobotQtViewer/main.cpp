@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "RobotViewport.h"
+#include <InterprocessCommunication/RwsPythonBridge.h>
 #include "regression/PlaybackWindowProfile.h"
 #include "RobotQtViewerBuiltWorkbenchCatalog.h"
 #include "RobotQtViewerTheme.h"
@@ -285,7 +287,9 @@ int main(int argc, char* argv[])
     // Preserve explicit/deployed data roots; use the configured source data only
     // when an externally built SDK still points at its original build machine.
     if(!qEnvironmentVariableIsSet("SMROBOT_DATA_ROOT") &&
-        !std::filesystem::is_directory(simulation_project::RuntimePaths::dataRoot()) &&
+        (!std::filesystem::is_directory(simulation_project::RuntimePaths::dataRoot()) ||
+         (!std::filesystem::is_directory(simulation_project::RuntimePaths::dataRoot() / "drake_models") &&
+          !std::filesystem::is_directory(simulation_project::RuntimePaths::dataRoot() / "fanuc_m710ic50"))) &&
         std::filesystem::is_directory(std::filesystem::u8path(DATA_PATH))) {
         qputenv("SMROBOT_DATA_ROOT", QByteArray(DATA_PATH));
     }
@@ -342,6 +346,16 @@ int main(int argc, char* argv[])
         window.resize(1760, 920);
         window.setWindowIcon(QApplication::windowIcon());
         window.show();
+        const auto sdkDirectory=argumentValue(argc,argv,"--rws-sdk-dir");
+        if(!sdkDirectory.empty()) {
+            auto* viewport=window.findChild<RobotViewport*>();
+            if(!viewport) throw std::runtime_error("RWS SDK viewport unavailable");
+            auto* bridge=new RwsPythonBridge(viewport,QString::fromStdString(sdkDirectory),&window);
+            bridge->setUserFrame=[&window](const simulation_project::TransformDesc& pose,QString& error) {
+                return window.setUserCoordinateFrame(pose,error);
+            };
+            bridge->commitSceneChanges=[&window](QString& error) {return window.commitSdkSceneChanges(error);};
+        }
 #ifdef Q_OS_WIN
         applyWindowsTaskbarIcon(window);
 #endif
@@ -382,7 +396,7 @@ int main(int argc, char* argv[])
                  profileSaveProject,
                  profileEnvironment,
                  profileScreenshot]() {
-                window.openProjectPathForProfiling(
+                const bool profileOk = window.openProjectPathForProfiling(
                     std::filesystem::path(profileProject),
                     exitDelayMs,
                     repeatCount,
@@ -392,6 +406,7 @@ int main(int argc, char* argv[])
                     std::filesystem::path(profileSaveProject),
                     QString::fromStdString(profileEnvironment),
                     std::filesystem::path(profileScreenshot));
+                if(!profileOk) QCoreApplication::exit(EXIT_FAILURE);
             });
         }
 

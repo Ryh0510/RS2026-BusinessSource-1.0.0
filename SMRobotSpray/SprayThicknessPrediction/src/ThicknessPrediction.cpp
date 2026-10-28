@@ -6,6 +6,15 @@
 
 namespace spraythickness
 {
+    const char* thicknessModelId(ThicknessModelKind model)
+    {
+        switch(model) {
+        case ThicknessModelKind::PaperGaussian:
+            return "paper_gaussian";
+        }
+        return "unknown";
+    }
+
     bool ThicknessField::empty() const
     {
         return results.empty();
@@ -101,16 +110,17 @@ namespace spraythickness
             return result;
         }
 
-        if (options.timeStep <= 0.0)
+        if (options.trajectorySamplingMode == TrajectorySamplingMode::ResampleByTimeStep
+            && options.timeStep <= 0.0)
         {
             result.warnings.push_back("Thickness prediction timeStep must be positive.");
             result.metrics = ThicknessMetricsCalculator::calculate(result.field, options);
             return result;
         }
 
-        const auto samples = spraytrajectory::SprayTrajectorySampler::sample(
-            trajectory,
-            options.timeStep);
+        const auto samples = options.trajectorySamplingMode == TrajectorySamplingMode::OriginalPoints
+            ? spraytrajectory::SprayTrajectorySampler::originalSamples(trajectory)
+            : spraytrajectory::SprayTrajectorySampler::sample(trajectory, options.timeStep);
 
         if (samples.empty())
         {
@@ -121,8 +131,9 @@ namespace spraythickness
 
         bool sawDifferentProcessId = false;
 
-        for (const auto& trajectorySample : samples)
+        for (size_t sampleIndex = 0; sampleIndex < samples.size(); ++sampleIndex)
         {
+            const auto& trajectorySample = samples[sampleIndex];
             if (!trajectorySample.sprayEnabled)
                 continue;
 
@@ -133,7 +144,15 @@ namespace spraythickness
                 continue;
             }
 
+            const double deltaTime = sampleIndex + 1 < samples.size()
+                ? std::max(0.0, samples[sampleIndex + 1].time - trajectorySample.time)
+                : (samples.size() == 1 ? 1.0 : 0.0);
+            if(deltaTime <= 0.0)
+                continue;
+
             const Eigen::Isometry3d toolPose = trajectorySample.tcpPose * tool.T_link_tool;
+            const Eigen::Vector3d worldSprayDirection =
+                tool.worldSprayDirection(toolPose);
 
             for (size_t i = 0; i < workpiece.samples.size(); ++i)
             {
@@ -141,18 +160,23 @@ namespace spraythickness
                 if (!surfaceSample.valid)
                     continue;
 
+                Eigen::Vector3d surfaceNormal = surfaceSample.normal;
+                if(options.autoFlipBackFacingNormals
+                    && surfaceNormal.dot(-worldSprayDirection) < 0.0) {
+                    surfaceNormal = -surfaceNormal;
+                }
                 const double depositRate = spraycore::SprayKernel::evaluateDepositRate(
                     tool,
                     process,
                     toolPose,
                     surfaceSample.position,
-                    surfaceSample.normal);
+                    surfaceNormal);
 
                 const double areaWeight = options.useSampleAreaWeight
                     ? std::max(0.0, surfaceSample.areaWeight)
                     : 1.0;
 
-                result.field.results[i].thickness += depositRate * options.timeStep * areaWeight;
+                result.field.results[i].thickness += depositRate * deltaTime * areaWeight;
             }
         }
 

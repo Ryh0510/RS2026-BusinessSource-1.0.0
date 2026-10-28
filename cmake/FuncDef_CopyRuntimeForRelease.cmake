@@ -201,6 +201,11 @@ function(deploy_qt TARGET_NAME)
                     --no-translations
                     --no-compiler-runtime
                     "$<TARGET_FILE:${TARGET_NAME}>"
+                COMMAND ${CMAKE_COMMAND}
+                    "-DQT_BIN_DIR=${_qt_bin_dir}"
+                    "-DOUTPUT_DIR=$<TARGET_FILE_DIR:${TARGET_NAME}>"
+                    "-DCONFIG=$<CONFIG>"
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/DeployQtPluginRuntime.cmake"
                 COMMENT "Deploying Qt runtime for ${TARGET_NAME}"
             )
         endif()

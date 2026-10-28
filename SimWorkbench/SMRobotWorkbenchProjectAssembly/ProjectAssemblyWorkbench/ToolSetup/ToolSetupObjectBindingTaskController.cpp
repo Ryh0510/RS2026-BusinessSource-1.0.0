@@ -98,6 +98,8 @@ namespace robot_qt_viewer
         m_draft.boundFrame.owner = m_draft.boundEntity;
         m_draft.boundFrame.frameId = frameId.toStdString();
         m_draft.mode = simulation_project::BindingMode::AlignFrames;
+        m_draft.assetKind = "tool";
+        m_draft.assetType = "tool";
         m_draft.sourcePolicy =
             simulation_project::SourceEntityPolicy::HideAndDisableCollision;
 

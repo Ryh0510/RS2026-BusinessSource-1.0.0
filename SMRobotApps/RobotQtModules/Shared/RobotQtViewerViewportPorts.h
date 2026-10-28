@@ -6,6 +6,8 @@
 #include <vector>
 
 #include <QString>
+#include <QHash>
+#include <AssetCore/ModelDesc.h>
 #include <QStringList>
 
 #include <SimulationProject/ProjectDocument.h>
@@ -49,6 +51,7 @@ namespace robot_qt_viewer
         virtual SprayMeasurementResult sprayMeasurement(const QString& robotId) const = 0;
         virtual void setTrajectoryControlPointOverlay(const QString& trajectoryId,
             const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true, bool showOrientations = false) = 0;
+        virtual void setTrajectoryHighlightRange(int first, int last) { (void)first; (void)last; }
         virtual void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) = 0;
     };
 
@@ -56,6 +59,79 @@ namespace robot_qt_viewer
     {
         bool success = false;
         QString errorMessage;
+    };
+
+    struct CoatingTrajectoryPreviewPoint
+    {
+        double positionX = 0.0;
+        double positionY = 0.0;
+        double positionZ = 0.0;
+        double directionX = 1.0;
+        double directionY = 0.0;
+        double directionZ = 0.0;
+        double frameXAxisX = 1.0;
+        double frameXAxisY = 0.0;
+        double frameXAxisZ = 0.0;
+        double frameYAxisX = 0.0;
+        double frameYAxisY = 1.0;
+        double frameYAxisZ = 0.0;
+        double frameZAxisX = 0.0;
+        double frameZAxisY = 0.0;
+        double frameZAxisZ = 1.0;
+        bool sprayEnabled = false;
+        bool startsNewSegment = false;
+    };
+
+    struct CoatingPredictionDebugTriangle
+    {
+        double ax = 0.0;
+        double ay = 0.0;
+        double az = 0.0;
+        double bx = 0.0;
+        double by = 0.0;
+        double bz = 0.0;
+        double cx = 0.0;
+        double cy = 0.0;
+        double cz = 0.0;
+    };
+
+    struct CoatingPredictionDebugPoint
+    {
+        double positionX = 0.0;
+        double positionY = 0.0;
+        double positionZ = 0.0;
+        double directionX = 1.0;
+        double directionY = 0.0;
+        double directionZ = 0.0;
+    };
+
+    struct CoatingPredictionDebugState
+    {
+        bool visible = false;
+        QString objectId;
+        std::vector<CoatingPredictionDebugTriangle> seedTriangles;
+        std::vector<CoatingPredictionDebugTriangle> cylindricalTriangles;
+        std::vector<CoatingPredictionDebugTriangle> localSectorTriangles;
+        std::vector<std::uint32_t> localSectorVertexIndices;
+        std::vector<CoatingPredictionDebugPoint> profileLinePoints;
+        std::vector<CoatingPredictionDebugPoint> selectedProfileLinePoints;
+        std::vector<CoatingPredictionDebugPoint> sprayPoints;
+        double axisOriginX = 0.0;
+        double axisOriginY = 0.0;
+        double axisOriginZ = 0.0;
+        double axisDirectionX = 0.0;
+        double axisDirectionY = 0.0;
+        double axisDirectionZ = 1.0;
+        double axisLength = 1.0;
+        double markerRadius = 0.002;
+    };
+
+    struct CoatingPredictionDebugVisibility
+    {
+        bool cylindricalSurface = true;
+        bool rotationAxis = true;
+        bool localSector = true;
+        bool sprayPoints = true;
     };
 
     class IRobotQtViewerDocumentViewportPort
@@ -226,12 +302,133 @@ namespace robot_qt_viewer
     {
     public:
         virtual ~IRobotQtViewerVisualizationViewportPort() = default;
+        virtual void focusCoatingObject(const QString& objectId, double duration = 0.3)
+        {
+            (void)objectId;
+            (void)duration;
+        }
 
         virtual bool applySurfaceScalarOverlay(
             const smrobot::visualization::SurfaceScalarOverlay& overlay,
-            QString* errorMessage) = 0;
-        virtual bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible) = 0;
-        virtual bool clearSurfaceScalarOverlay(const QString& objectId) = 0;
-        virtual void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId) = 0;
+            QString* errorMessage,
+            bool blackOutsideRange = false)
+        {
+            (void)overlay;
+            (void)blackOutsideRange;
+            if(errorMessage != nullptr) {
+                *errorMessage = QStringLiteral("Surface scalar overlays are not supported by this viewport.");
+            }
+            return false;
+        }
+        virtual bool applySurfaceScalarOverlayModel(
+            const smrobot::visualization::SurfaceScalarOverlay& overlay,
+            const assetcore::ModelDesc& model,
+            QString* errorMessage,
+            bool blackOutsideRange = false)
+        {
+            (void)overlay;
+            (void)model;
+            (void)blackOutsideRange;
+            if(errorMessage != nullptr) {
+                *errorMessage = QStringLiteral(
+                    "Custom surface scalar overlay models are not supported by this viewport.");
+            }
+            return false;
+        }
+        virtual bool setCoatingPredictionModel(
+            const QString& objectId,
+            const assetcore::ModelDesc& model,
+            QString* errorMessage)
+        {
+            (void)objectId;
+            (void)model;
+            if(errorMessage != nullptr) {
+                *errorMessage = QStringLiteral(
+                    "Custom coating prediction models are not supported by this viewport.");
+            }
+            return false;
+        }
+        virtual bool clearCoatingPredictionModel(const QString& objectId)
+        {
+            (void)objectId;
+            return false;
+        }
+        virtual bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible)
+        {
+            (void)objectId;
+            (void)visible;
+            return false;
+        }
+        virtual bool clearSurfaceScalarOverlay(const QString& objectId)
+        {
+            (void)objectId;
+            return false;
+        }
+        virtual void setSurfaceScalarProbeEnabled(bool enabled, const QString& objectId)
+        {
+            (void)enabled;
+            (void)objectId;
+        }
+        virtual void beginRotationSurfacePick()
+        {
+        }
+        virtual void setCoatingTrajectoryPreview(
+            const std::vector<CoatingTrajectoryPreviewPoint>& points,
+            bool visible,
+            bool showTrajectoryLines = true,
+            bool showSprayPointFrames = true)
+        {
+            (void)points;
+            (void)visible;
+            (void)showTrajectoryLines;
+            (void)showSprayPointFrames;
+        }
+        virtual bool setCoatingTrajectoryPreviewVisible(
+            bool visible,
+            bool showTrajectoryLines = true,
+            bool showSprayPointFrames = true)
+        {
+            (void)visible;
+            (void)showTrajectoryLines;
+            (void)showSprayPointFrames;
+            return false;
+        }
+        virtual void setCoatingPredictionDebugState(
+            const CoatingPredictionDebugState& state)
+        {
+            (void)state;
+        }
+        virtual void setCoatingPredictionDebugVisibility(
+            const CoatingPredictionDebugVisibility& visibility)
+        {
+            (void)visibility;
+        }
+        virtual void clearCoatingPredictionDebugState()
+        {
+        }
+        virtual bool setCoatingModelVisible(const QString& objectId, bool visible)
+        {
+            (void)objectId;
+            (void)visible;
+            return false;
+        }
+        virtual void setCoatingModelVisibilities(const QHash<QString, bool>& visibility)
+        {
+            (void)visibility;
+        }
+        virtual void clearCoatingModelVisibility(const QString& objectId)
+        {
+            (void)objectId;
+        }
+        virtual void setCoatingAnalysisView(bool active)
+        {
+            (void)active;
+        }
+        virtual void setGpuPredictionBusy(bool busy)
+        {
+            (void)busy;
+        }
+        virtual bool setSceneObjectVisibilityOverride(const QString& objectId, bool visible) = 0;
+        virtual bool clearSceneObjectVisibilityOverride(const QString& objectId) = 0;
     };
 }

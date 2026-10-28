@@ -52,9 +52,6 @@ function(_rs_normalize_dependency dependency out_dependency out_state)
     endwhile()
 
     if(_state STREQUAL "VALID" AND
-       _dependency MATCHES "^[A-Za-z0-9_.+-]+$")
-        set(_state SKIP)
-    elseif(_state STREQUAL "VALID" AND
        NOT _dependency MATCHES "^[A-Za-z0-9_.+-]+::[A-Za-z0-9_.+-]+$")
         set(_state INVALID)
     endif()
@@ -186,3 +183,102 @@ function(add_dll_path_from_target target imported)
 endfunction()
 
 #   add_dll_path_from_target(coal_test coal::coal)
+
+# Keep declaration collection and source construction on the same cache choices.
+function(rs_component_is_enabled package component out_enabled)
+    set(_enabled OFF)
+    if(BuildPackage_${package} AND NOT UsingPrebuilt_${package})
+        if(package STREQUAL "SMRobotApps" AND component STREQUAL "RobotViewerCore")
+            # RobotViewerCore is deliberately always added by the Apps source package.
+            set(_enabled ON)
+        else()
+            option(Build${package}_${component} "Build ${package}::${component}" ON)
+            if(Build${package}_${component})
+                set(_enabled ON)
+            endif()
+            if(package STREQUAL "SMRobotApps" AND component STREQUAL "RobotQtViewer"
+               AND NOT BuildRobotQtViewer)
+                set(_enabled OFF)
+            endif()
+        endif()
+    endif()
+    set(${out_enabled} "${_enabled}" PARENT_SCOPE)
+endfunction()
+
+macro(rs_begin_package_requirements package)
+    set(${package}_RequiredLibsPublic)
+    set(${package}_RequiredLibsPrivate)
+    set(${package}_RequiredLibs)
+    set(RS2026_SOURCE_COMPONENTS_${package})
+endmacro()
+
+macro(rs_collect_component_requirements package component)
+    rs_component_is_enabled("${package}" "${component}" _rs_component_enabled)
+    if(_rs_component_enabled)
+        list(APPEND RS2026_SOURCE_COMPONENTS_${package} "${component}")
+        list(APPEND ${package}_RequiredLibsPublic ${${component}_RequiredLibsPublic})
+        list(APPEND ${package}_RequiredLibsPrivate ${${component}_RequiredLibsPrivate})
+    endif()
+    unset(_rs_component_enabled)
+endmacro()
+
+function(rs_source_dependency_owner package component out_package out_component)
+    set(_package "${package}")
+    set(_component "${component}")
+    if(package STREQUAL "SMRobotWorkbenchCommon" AND
+       component MATCHES "^RobotQtModules(Shared|CoreWidgets)$")
+        set(_package SMRobotApps)
+        set(_component RobotQtModules)
+    elseif(package STREQUAL "SMRobotCore" AND
+           component MATCHES "^Collision(Robot|Tools|Presentation)$")
+        set(_component Collision)
+    elseif(package STREQUAL "SMRobotWorkbenchProjectAssembly" AND
+           component MATCHES "^ProjectAssembly(Editors|SceneExplorer|ToolSetup)$")
+        set(_component ProjectAssemblyWorkbench)
+    elseif(package STREQUAL "SMRobotWorkbenchCollisionConfig" AND
+           component MATCHES "^Collision(DetectorConfig|LinkModelSetup|RuntimeResults)$")
+        set(_component CollisionConfigWorkbench)
+    elseif(package STREQUAL "SMRobotWorkbenchRobotRun" AND
+           component STREQUAL "RobotRunMotionControl")
+        set(_component RobotRunWorkbench)
+    elseif(package STREQUAL "SMRobotWorkbenchMotionPlanning" AND
+           component STREQUAL "MotionPlanningEditor")
+        set(_component MotionPlanningWorkbench)
+    endif()
+    set(${out_package} "${_package}" PARENT_SCOPE)
+    set(${out_component} "${_component}" PARENT_SCOPE)
+endfunction()
+
+function(rs_validate_source_component_dependencies)
+    foreach(_source_package IN LISTS AllBuildPackages)
+        foreach(_source_component IN LISTS RS2026_SOURCE_COMPONENTS_${_source_package})
+            set(_dependencies
+                ${${_source_package}${_source_component}_RequiredLibsPublic}
+                ${${_source_package}${_source_component}_RequiredLibsPrivate})
+            foreach(_raw IN LISTS _dependencies)
+                _rs_normalize_dependency("${_raw}" _dependency _state)
+                if(NOT _state STREQUAL "VALID")
+                    continue()
+                endif()
+                string(REPLACE "::" ";" _parts "${_dependency}")
+                list(GET _parts 0 _package)
+                list(GET _parts 1 _component)
+                if(NOT _package IN_LIST AllBuildPackages)
+                    continue()
+                endif()
+                if(UsingPrebuilt_${_package})
+                    continue()
+                endif()
+                rs_source_dependency_owner("${_package}" "${_component}" _owner _owned)
+                rs_component_is_enabled("${_owner}" "${_owned}" _enabled)
+                if(NOT _enabled)
+                    message(FATAL_ERROR
+                        "[BuildGraph] ${_source_package}::${_source_component} requires "
+                        "${_dependency}, but its source owner ${_owner}::${_owned} is disabled. "
+                        "Enable BuildPackage_${_owner} and Build${_owner}_${_owned}, "
+                        "select an appropriate prebuilt package, or disable the caller.")
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+endfunction()

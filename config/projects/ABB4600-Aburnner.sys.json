@@ -1,0 +1,475 @@
+{
+    "compat": {
+        "sourceVersion": 3,
+        "writePolicy": "v3-opt-in"
+    },
+    "core": {
+        "assetSearchPaths": [
+            "${PROJECT_DIR}",
+            "${DATA_DIR}",
+            "${ENV:SMROBOT_ASSET_DIR}"
+        ],
+        "assetStore": {
+            "assets": [],
+            "collisionModels": [],
+            "directory": "ABB4600-burnner.assets",
+            "libraries": []
+        },
+        "attachments": {
+            "assets": [
+                {
+                    "assetKind": "tool",
+                    "assetMountToVisual": {
+                        "pitch": -0.0,
+                        "roll": 0.0,
+                        "x": -0.0,
+                        "y": -0.0,
+                        "yaw": 0.0,
+                        "z": -0.0
+                    },
+                    "assetType": "tool",
+                    "functionalFrames": [
+                        {
+                            "assetMountToFrame": {
+                                "pitch": -1.5934856070708223,
+                                "roll": 2.6179938779914935,
+                                "x": -0.09600000000000004,
+                                "y": 0.054240000000000024,
+                                "yaw": 3.141592653589793,
+                                "z": 1.2198000000000004
+                            },
+                            "frameType": "tcp",
+                            "id": "a2_1_asset.tcp",
+                            "name": "TCP",
+                            "primary": true
+                        }
+                    ],
+                    "id": "a2_1_asset",
+                    "name": "A2(1)",
+                    "visualPath": "A2(1).STL",
+                    "visualScale": 0.001
+                }
+            ],
+            "attachments": [
+                {
+                    "assetId": "a2_1_asset",
+                    "attachmentKind": "tool",
+                    "enabled": true,
+                    "id": "a2_1_attachment",
+                    "mountFrameId": "m710ic_50_drake_ee_link_mount",
+                    "mountToAssetMount": {
+                        "pitch": 0.0,
+                        "roll": 0.0,
+                        "x": 0.0,
+                        "y": 0.0,
+                        "yaw": 0.0,
+                        "z": 0.0
+                    },
+                    "name": "A2(1) @ m710ic_50_drake_ee_link_mount",
+                    "sourceObjectId": "A2_1_"
+                }
+            ],
+            "mountFrames": [
+                {
+                    "frameName": "ee_link",
+                    "id": "m710ic_50_drake_ee_link_mount",
+                    "mountType": "robot_mount",
+                    "name": "m710ic_50_drake_ee_link_mount",
+                    "ownerFrameToMount": {
+                        "pitch": -1.5707963267948966,
+                        "roll": 3.141592653589793,
+                        "x": 0.0,
+                        "y": 0.0,
+                        "yaw": 0.0,
+                        "z": 0.0
+                    },
+                    "ownerId": "m710ic_50_drake",
+                    "ownerType": "robot"
+                }
+            ]
+        },
+        "collision": {
+            "allowedPairs": [],
+            "detectors": [
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": false,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "default_collision",
+                    "maxContacts": 32,
+                    "modelBindings": [],
+                    "name": "Default Collision",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [
+                        {
+                            "excludeLinksA": [],
+                            "excludeLinksB": [],
+                            "includeLinksA": [],
+                            "includeLinksB": [],
+                            "linkA": "",
+                            "linkB": "",
+                            "linkName": "",
+                            "objectA": "",
+                            "objectB": "",
+                            "objectGroupA": "",
+                            "objectGroupB": "",
+                            "objectGroupId": "",
+                            "objectId": "",
+                            "robotA": "",
+                            "robotB": "",
+                            "robotId": "",
+                            "type": "SceneAll"
+                        }
+                    ],
+                    "queryPolicy": "",
+                    "selectionSetAId": "",
+                    "selectionSetBId": "",
+                    "targets": [],
+                    "type": "SceneAll"
+                },
+                {
+                    "contacts": true,
+                    "distance": true,
+                    "distanceThreshold": 0.0,
+                    "enabled": true,
+                    "excludePairs": [],
+                    "geometryRole": "Exact",
+                    "geometrySource": "",
+                    "id": "agent_robot_workpieces",
+                    "maxContacts": 32,
+                    "modelBindings": [],
+                    "name": "agent_robot_workpieces",
+                    "nearestPoints": true,
+                    "pairFilters": [],
+                    "pairGenerators": [],
+                    "queryPolicy": "BetweenSets",
+                    "selectionSetAId": "agent_robot_workpieces_A",
+                    "selectionSetBId": "agent_robot_workpieces_B",
+                    "targets": [],
+                    "type": "SelectedObjects"
+                }
+            ],
+            "objectModelSelections": [],
+            "objectOverrides": [],
+            "query": {
+                "contacts": true,
+                "enabled": true,
+                "maxContacts": 32,
+                "nearestPoints": true,
+                "normals": true,
+                "pairs": [],
+                "robotObjectPairs": []
+            },
+            "robotLinkModelSelections": [],
+            "robotOverrides": [],
+            "selectionSets": [
+                {
+                    "enabled": true,
+                    "id": "agent_robot_workpieces_A",
+                    "members": [
+                        {
+                            "attachmentId": "",
+                            "linkName": "world",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "base_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "J1_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "wbase",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "J2_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "J3_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "J4_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "J5_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "J6_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "flange",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "ee_link",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "",
+                            "linkName": "fanuc_flange",
+                            "objectId": "",
+                            "robotId": "m710ic_50_drake"
+                        },
+                        {
+                            "attachmentId": "a2_1_attachment",
+                            "linkName": "",
+                            "objectId": "",
+                            "robotId": ""
+                        }
+                    ],
+                    "name": "agent_robot_workpieces_A"
+                },
+                {
+                    "enabled": true,
+                    "id": "agent_robot_workpieces_B",
+                    "members": [
+                        {
+                            "attachmentId": "",
+                            "linkName": "",
+                            "objectId": "A",
+                            "robotId": ""
+                        }
+                    ],
+                    "name": "agent_robot_workpieces_B"
+                }
+            ]
+        },
+        "objects": [
+            {
+                "collisionEnabled": true,
+                "collisionScale": 0.001,
+                "id": "A",
+                "name": "A",
+                "objectFrames": [],
+                "objectType": "workpiece",
+                "sourcePath": "A.STL",
+                "transform": {
+                    "pitch": -0.0,
+                    "roll": 1.570796326794897,
+                    "x": 1.2,
+                    "y": 0.6,
+                    "yaw": 1.570796326794897,
+                    "z": 0.6
+                },
+                "visible": true,
+                "visualScale": 0.001
+            },
+            {
+                "collisionEnabled": false,
+                "collisionScale": 0.001,
+                "id": "A2_1_",
+                "name": "A2(1)",
+                "objectFrames": [],
+                "objectType": "tool",
+                "sourcePath": "A2(1).STL",
+                "transform": {
+                    "pitch": -0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "visible": false,
+                "visualScale": 0.001
+            }
+        ],
+        "pointClouds": [],
+        "robots": [
+            {
+                "baseTransform": {
+                    "pitch": -0.0,
+                    "roll": 0.0,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "yaw": 0.0,
+                    "z": 0.0
+                },
+                "collisionEnabled": true,
+                "id": "m710ic_50_drake",
+                "initialJoints": [
+                    {
+                        "jointName": "J1",
+                        "value": 0.0
+                    },
+                    {
+                        "jointName": "J2",
+                        "value": 0.0
+                    },
+                    {
+                        "jointName": "J3",
+                        "value": 0.0
+                    },
+                    {
+                        "jointName": "J4",
+                        "value": 0.0
+                    },
+                    {
+                        "jointName": "J5",
+                        "value": 0.0
+                    },
+                    {
+                        "jointName": "J6",
+                        "value": 0.0
+                    }
+                ],
+                "name": "m710ic_50_drake",
+                "sourceModelIndex": 0,
+                "sourcePath": "fanuc_m710ic50/m710ic_50_drake.urdf",
+                "sourceType": "urdf",
+                "visible": true
+            }
+        ]
+    },
+    "extensions": {
+        "rws.tcp.a2_1_attachment": {
+            "payload": {
+                "convention": "fanuc",
+                "reference_link": "fanuc_flange"
+            },
+            "version": 1
+        },
+        "rws.user_frame": {
+            "payload": {
+                "pitch": 0,
+                "roll": 0,
+                "x": 0,
+                "y": 0,
+                "yaw": 0,
+                "z": 0
+            },
+            "version": 1
+        },
+        "rws.virtual_baffles": {
+            "payload": {
+                "enabled": true,
+                "fit_tolerance_mm": 5,
+                "thickness_mm": 1,
+                "visible": true
+            },
+            "version": 1
+        }
+    },
+    "format": "smrobot.simulation-project",
+    "platform": {
+        "collisionVisualization": {
+            "detectors": {
+                "agent_robot_workpieces": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                },
+                "default_collision": {
+                    "alpha": 0.25,
+                    "contactPointRadius": 0.025,
+                    "normalLength": 0.12,
+                    "showCollisionGeometry": true,
+                    "showContacts": true,
+                    "showNearestPoints": true,
+                    "showNormals": true,
+                    "showObjectHighlight": true,
+                    "visible": true
+                }
+            },
+            "global": {
+                "alpha": 0.25,
+                "contactPointRadius": 0.025,
+                "normalLength": 0.12,
+                "showCollisionGeometry": true,
+                "showContacts": true,
+                "showNearestPoints": true,
+                "showNormals": true,
+                "showObjectHighlight": true,
+                "visible": true
+            }
+        },
+        "debugVisualization": {},
+        "pointCloudVisualization": {},
+        "view": {
+            "backgroundColorMode": "theme",
+            "camera": {
+                "distance": 4.0,
+                "pitch": 0.0,
+                "target": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "upAxis": "Z",
+                "yaw": 0.0
+            },
+            "selectedLink": "",
+            "selectedRobot": "",
+            "showAxis": true,
+            "showGrid": true
+        },
+        "visibility": {
+            "assets": {
+                "a2_1_asset": {
+                    "visible": true
+                }
+            },
+            "attachments": {
+                "a2_1_attachment": {
+                    "visible": true
+                }
+            },
+            "objects": {
+                "A": {
+                    "visible": true
+                },
+                "A2_1_": {
+                    "visible": false
+                }
+            },
+            "pointClouds": {},
+            "robots": {
+                "m710ic_50_drake": {
+                    "visible": true
+                }
+            },
+            "sensors": {}
+        }
+    },
+    "version": 3
+}

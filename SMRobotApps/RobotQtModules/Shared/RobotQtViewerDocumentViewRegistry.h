@@ -21,6 +21,11 @@ namespace robot_qt_viewer
             QObject* receiver,
             RobotQtViewerEventHub::EventHandler handler);
         void unregisterModule(QObject* receiver);
+        void registerModule(
+            const QString& moduleId,
+            QObject* receiver,
+            RobotQtViewerEventHub::EventHandler handler,
+            const QVector<RobotQtViewerEventKind>& events);
 
         int registeredModuleCount() const;
 

@@ -10,8 +10,7 @@ message( STATUS "Operation System is : ${CMAKE_SYSTEM} ${CMAKE_SIZEOF_VOID_P}" )
 ############################################################
 if ( CMAKE_SYSTEM_NAME MATCHES "Linux" )
     message(STATUS "current platform: Linux " )
-    set( CMAKE_C_COMPILER "/usr/bin/gcc" )
-    set( CMAKE_CXX_COMPILER "/usr/bin/g++" )
+    # Compiler/toolchain selection is owned by CMake before project().
     set( CMAKE_CXX_STANDARD 17 )
 
     # Keep Linux runtime resolution tied to the build/package tree instead of
@@ -139,7 +138,11 @@ set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/$<CONFIG>/lib )
 #   Install prefix setting
 if( CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT )
     set( CMAKE_INSTALL_PREFIX "${PROJECT_SOURCE_DIR}/PrebuiltPackages" CACHE PATH
-        "Install directory for project packages" FORCE
+        "Local selected prebuilt package output" FORCE
     )
+elseif(CMAKE_INSTALL_PREFIX STREQUAL "${CMAKE_BINARY_DIR}/LocalPrebuiltPackages")
+    set(CMAKE_INSTALL_PREFIX "${PROJECT_SOURCE_DIR}/PrebuiltPackages" CACHE PATH
+        "Local selected prebuilt package output" FORCE)
+    message(STATUS "Restored default INSTALL prefix to ${CMAKE_INSTALL_PREFIX}")
 endif()
 

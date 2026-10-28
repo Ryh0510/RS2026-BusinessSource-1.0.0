@@ -724,9 +724,11 @@ namespace robot_qt_viewer
 
     bool RobotQtViewerVisualizationViewportAdapter::applySurfaceScalarOverlay(
         const smrobot::visualization::SurfaceScalarOverlay& overlay,
-        QString* errorMessage)
+        QString* errorMessage,
+        bool blackOutsideRange)
     {
-        return m_viewport.applySurfaceScalarOverlay(overlay, errorMessage);
+        return m_viewport.applySurfaceScalarOverlay(
+            overlay, errorMessage, blackOutsideRange);
     }
 
     bool RobotQtViewerVisualizationViewportAdapter::setSurfaceScalarOverlayVisible(
@@ -746,6 +748,19 @@ namespace robot_qt_viewer
         const QString& objectId)
     {
         m_viewport.setSurfaceScalarProbeEnabled(enabled, objectId);
+    }
+
+    bool RobotQtViewerVisualizationViewportAdapter::setSceneObjectVisibilityOverride(
+        const QString& objectId,
+        bool visible)
+    {
+        return m_viewport.setSceneObjectVisibilityOverride(objectId, visible);
+    }
+
+    bool RobotQtViewerVisualizationViewportAdapter::clearSceneObjectVisibilityOverride(
+        const QString& objectId)
+    {
+        return m_viewport.clearSceneObjectVisibilityOverride(objectId);
     }
 
     smrobot::visualization::CustomMeshResult
@@ -916,6 +931,186 @@ namespace robot_qt_viewer
     {
         return m_trajectorySession.snapshot();
     }
+    bool RobotQtViewerVisualizationViewportAdapter::applySurfaceScalarOverlayModel(
+        const smrobot::visualization::SurfaceScalarOverlay& overlay,
+        const assetcore::ModelDesc& model,
+        QString* errorMessage,
+        bool blackOutsideRange)
+    {
+        return m_viewport.applySurfaceScalarOverlayModel(
+            overlay, model, errorMessage, blackOutsideRange);
+    }
+    bool RobotQtViewerVisualizationViewportAdapter::setCoatingPredictionModel(
+        const QString& objectId,
+        const assetcore::ModelDesc& model,
+        QString* errorMessage)
+    {
+        return m_viewport.setCoatingPredictionModel(objectId, model, errorMessage);
+    }
+    bool RobotQtViewerVisualizationViewportAdapter::clearCoatingPredictionModel(
+        const QString& objectId)
+    {
+        return m_viewport.clearCoatingPredictionModel(objectId);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::setCoatingTrajectoryPreview(
+        const std::vector<CoatingTrajectoryPreviewPoint>& points,
+        bool visible,
+        bool showTrajectoryLines,
+        bool showSprayPointFrames)
+    {
+        std::vector<ProjectScene::CoatingTrajectoryPreviewPoint> converted;
+        converted.reserve(points.size());
+        for(const CoatingTrajectoryPreviewPoint& point : points) {
+            ProjectScene::CoatingTrajectoryPreviewPoint target;
+            target.positionX = point.positionX;
+            target.positionY = point.positionY;
+            target.positionZ = point.positionZ;
+            target.directionX = point.directionX;
+            target.directionY = point.directionY;
+            target.directionZ = point.directionZ;
+            target.frameXAxisX = point.frameXAxisX;
+            target.frameXAxisY = point.frameXAxisY;
+            target.frameXAxisZ = point.frameXAxisZ;
+            target.frameYAxisX = point.frameYAxisX;
+            target.frameYAxisY = point.frameYAxisY;
+            target.frameYAxisZ = point.frameYAxisZ;
+            target.frameZAxisX = point.frameZAxisX;
+            target.frameZAxisY = point.frameZAxisY;
+            target.frameZAxisZ = point.frameZAxisZ;
+            target.sprayEnabled = point.sprayEnabled;
+            target.startsNewSegment = point.startsNewSegment;
+            converted.push_back(target);
+        }
+        m_viewport.setCoatingTrajectoryPreview(
+            converted,
+            visible,
+            showTrajectoryLines,
+            showSprayPointFrames);
+    }
+    bool RobotQtViewerVisualizationViewportAdapter::setCoatingTrajectoryPreviewVisible(
+        bool visible,
+        bool showTrajectoryLines,
+        bool showSprayPointFrames)
+    {
+        return m_viewport.setCoatingTrajectoryPreviewVisible(
+            visible,
+            showTrajectoryLines,
+            showSprayPointFrames);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::setCoatingPredictionDebugState(
+        const CoatingPredictionDebugState& state)
+    {
+        ProjectScene::CoatingPredictionDebugState converted;
+        converted.visible = state.visible;
+        converted.objectId = state.objectId.toStdString();
+        converted.axisOriginX = state.axisOriginX;
+        converted.axisOriginY = state.axisOriginY;
+        converted.axisOriginZ = state.axisOriginZ;
+        converted.axisDirectionX = state.axisDirectionX;
+        converted.axisDirectionY = state.axisDirectionY;
+        converted.axisDirectionZ = state.axisDirectionZ;
+        converted.axisLength = state.axisLength;
+        converted.markerRadius = state.markerRadius;
+        const auto convertTriangle = [](const CoatingPredictionDebugTriangle& source) {
+            ProjectScene::CoatingPredictionDebugTriangle target;
+            target.ax = source.ax;
+            target.ay = source.ay;
+            target.az = source.az;
+            target.bx = source.bx;
+            target.by = source.by;
+            target.bz = source.bz;
+            target.cx = source.cx;
+            target.cy = source.cy;
+            target.cz = source.cz;
+            return target;
+        };
+        const auto convertTriangles = [&](const std::vector<CoatingPredictionDebugTriangle>& source,
+                                          std::vector<ProjectScene::CoatingPredictionDebugTriangle>& target) {
+            target.reserve(source.size());
+            for(const auto& triangle : source) {
+                target.push_back(convertTriangle(triangle));
+            }
+        };
+        const auto convertPoint = [](const CoatingPredictionDebugPoint& source) {
+            ProjectScene::CoatingPredictionDebugPoint target;
+            target.positionX = source.positionX;
+            target.positionY = source.positionY;
+            target.positionZ = source.positionZ;
+            target.directionX = source.directionX;
+            target.directionY = source.directionY;
+            target.directionZ = source.directionZ;
+            return target;
+        };
+        const auto convertPoints = [&](const std::vector<CoatingPredictionDebugPoint>& source,
+                                       std::vector<ProjectScene::CoatingPredictionDebugPoint>& target) {
+            target.reserve(source.size());
+            for(const auto& point : source) {
+                target.push_back(convertPoint(point));
+            }
+        };
+        convertTriangles(state.seedTriangles, converted.seedTriangles);
+        convertTriangles(state.cylindricalTriangles, converted.cylindricalTriangles);
+        convertTriangles(state.localSectorTriangles, converted.localSectorTriangles);
+        converted.localSectorVertexIndices = state.localSectorVertexIndices;
+        convertPoints(state.profileLinePoints, converted.profileLinePoints);
+        convertPoints(state.selectedProfileLinePoints, converted.selectedProfileLinePoints);
+        convertPoints(state.sprayPoints, converted.sprayPoints);
+        m_viewport.setCoatingPredictionDebugState(converted);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::setCoatingPredictionDebugVisibility(
+        const CoatingPredictionDebugVisibility& visibility)
+    {
+        ProjectScene::CoatingPredictionDebugVisibility converted;
+        converted.cylindricalSurface = visibility.cylindricalSurface;
+        converted.rotationAxis = visibility.rotationAxis;
+        converted.localSector = visibility.localSector;
+        converted.sprayPoints = visibility.sprayPoints;
+        m_viewport.setCoatingPredictionDebugVisibility(converted);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::clearCoatingPredictionDebugState()
+    {
+        m_viewport.clearCoatingPredictionDebugState();
+    }
+    bool RobotQtViewerVisualizationViewportAdapter::setCoatingModelVisible(
+        const QString& objectId,
+        bool visible)
+    {
+        return m_viewport.setCoatingModelVisible(objectId, visible);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::setCoatingModelVisibilities(
+        const QHash<QString, bool>& visibility)
+    {
+        std::unordered_map<std::string, bool> converted;
+        converted.reserve(static_cast<std::size_t>(visibility.size()));
+        for(auto iterator = visibility.constBegin(); iterator != visibility.constEnd(); ++iterator) {
+            converted[iterator.key().toStdString()] = iterator.value();
+        }
+        m_viewport.setCoatingModelVisibilities(converted);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::clearCoatingModelVisibility(
+        const QString& objectId)
+    {
+        m_viewport.clearCoatingModelVisibility(objectId);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::setCoatingAnalysisView(bool active)
+    {
+        m_viewport.setCoatingAnalysisView(active);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::setGpuPredictionBusy(bool busy)
+    {
+        m_viewport.setUpdatesEnabled(!busy);
+        if(!busy) m_viewport.update();
+    }
+    void RobotQtViewerVisualizationViewportAdapter::focusCoatingObject(
+        const QString& objectId,
+        double duration)
+    {
+        m_viewport.focusCoatingObject(objectId, duration);
+    }
+    void RobotQtViewerVisualizationViewportAdapter::beginRotationSurfacePick()
+    {
+        m_viewport.beginCoatingSurfacePick();
+    }
 
     IRobotQtViewerMotionPlanningViewportPort::RobotForwardKinematics
     RobotQtViewerMotionPlanningViewportAdapter::robotForwardKinematics(const QString& robotId,
@@ -999,3 +1194,5 @@ namespace robot_qt_viewer
         m_viewport.clearTrajectoryControlPointOverlay(trajectoryId);
     }
 }
+
+void robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryHighlightRange(int first,int last) { m_viewport.setTrajectoryHighlightRange(first,last); }

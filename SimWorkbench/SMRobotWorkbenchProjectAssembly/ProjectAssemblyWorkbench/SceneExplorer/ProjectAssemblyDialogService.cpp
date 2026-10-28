@@ -90,6 +90,14 @@ bool ProjectAssemblyDialogService::confirmDelete(
     QString title;
     QString message;
     switch(kind) {
+    case SceneExplorerNodeKind::ToolAsset:
+        title = QStringLiteral("Delete Device Definition");
+        message = QStringLiteral("Delete unused device definition %1? Definitions still in use must be unbound first.").arg(entityId);
+        break;
+    case SceneExplorerNodeKind::ToolAttachment:
+        title = QStringLiteral("Delete Installed Device");
+        message = QStringLiteral("Delete installed device %1? Its unused definition will also be removed; the mount frame is retained.").arg(entityId);
+        break;
     case SceneExplorerNodeKind::Robot:
         title = QStringLiteral("Delete Robot");
         message = QStringLiteral(

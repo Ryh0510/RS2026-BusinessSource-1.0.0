@@ -1,0 +1,10 @@
+Original RS2026 project environment asset.
+
+The geometry and bitmap textures were generated specifically for this project
+by scripts/blender/build_factory_environment.py using Blender. No downloaded
+third-party models or texture images are included. Text geometry is generated
+with Blender's built-in font.
+
+Use and distribution follow the licensing terms of the RS2026 project and its
+data repository. This file does not grant an additional standalone license or
+change the licensing of Blender or any other tool used to produce the asset.

@@ -1,4 +1,8 @@
 #pragma once
+class QMenu;
+class QJsonObject;
+class QContextMenuEvent;
+#include <AssetCore/ModelDesc.h>
 
 #include "ProjectScene.h"
 #include "RobotCollisionModelInspector.h"
@@ -49,6 +53,9 @@ public:
     void setDefaultBackgroundColor(const simulation_project::ColorDesc& color);
     void setEnvironmentPreset(ProjectSceneEnvironmentPreset preset);
     ProjectSceneEnvironmentPreset environmentPreset() const;
+    bool setEnvironmentSelection(const ProjectSceneEnvironmentSelection& selection, std::string* error = nullptr);
+    ProjectSceneEnvironmentSelection environmentSelection() const;
+    bool environmentSceneInitialized() const;
     bool refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
@@ -165,7 +172,14 @@ public:
     bool setCollisionDetectorEnabled(const QString& id, bool enabled);
     bool setCollisionDetectorVisible(const QString& id, bool visible);
     bool updateCollisionDetectorRuntimeOptions(const simulation_project::CollisionDetectorDesc& desc);
+    bool applyUserCoordinateFrameDocument(const simulation_project::ProjectDocument& document);
+    bool loadTrajectoryRecord(const QJsonObject& trajectory, QString& error);
+    bool showStoredTrajectory(const QString& id, QString& error);
+    bool deleteStoredTrajectory(const QString& id, QString& error);
+    bool previewSprayDirection(const QJsonObject& trajectory, QString& error);
+    bool renderTrajectoryRecord(const QJsonObject& trajectory, QString& error);
     bool rebuildCollisionDetectorsFromDocument(const simulation_project::ProjectDocument& document);
+    simulation_project::ProjectDocument runtimeDocumentSnapshot() const;
     bool removeCollisionDetector(const QString& id);
     bool generateRobotCollisionProxy(
         const QString& robotId,
@@ -216,6 +230,8 @@ public:
         const QString& robotId) const;
     std::vector<ProjectScene::MountedAttachmentInfo> mountedAttachments() const;
     std::vector<ProjectScene::ToolAttachmentInfo> toolAttachments() const;
+    bool robotLinkTransform(const std::string& robotId, const std::string& linkName,
+        simulation_project::TransformDesc& transform) const;
     bool setActiveMountedAttachment(const QString& id);
     bool setActiveToolAttachment(const QString& id);
     void setActiveToolFrameRobot(const QString& robotId);
@@ -234,14 +250,51 @@ public:
     void resetCamera();
     void setInteractionMode(ProjectSceneInteractionMode mode);
     ProjectSceneInteractionMode interactionMode() const;
+    bool applySurfaceScalarOverlayModel(
+        const smrobot::visualization::SurfaceScalarOverlay& overlay,
+        const assetcore::ModelDesc& model,
+        QString* errorMessage = nullptr,
+        bool blackOutsideRange = false);
+    bool setCoatingPredictionModel(
+        const QString& objectId,
+        const assetcore::ModelDesc& model,
+        QString* errorMessage = nullptr);
+    bool clearCoatingPredictionModel(const QString& objectId);
+    void setCoatingTrajectoryPreview(
+        const std::vector<ProjectScene::CoatingTrajectoryPreviewPoint>& points,
+        bool visible,
+        bool showTrajectoryLines = true,
+        bool showSprayPointFrames = true);
+    bool setCoatingTrajectoryPreviewVisible(
+        bool visible,
+        bool showTrajectoryLines = true,
+        bool showSprayPointFrames = true);
+    void setCoatingPredictionDebugState(
+        const ProjectScene::CoatingPredictionDebugState& state);
+    void setCoatingPredictionDebugVisibility(
+        const ProjectScene::CoatingPredictionDebugVisibility& visibility);
+    void clearCoatingPredictionDebugState();
+    bool setCoatingModelVisible(const QString& objectId, bool visible);
+    void setCoatingModelVisibilities(
+        const std::unordered_map<std::string, bool>& visibility);
+    void clearCoatingModelVisibility(const QString& objectId);
+    void setCoatingAnalysisView(bool active);
+    void focusCoatingObject(const QString& objectId, double duration = 0.3);
+    void beginCoatingSurfacePick();
     bool applySurfaceScalarOverlay(
         const smrobot::visualization::SurfaceScalarOverlay& overlay,
-        QString* errorMessage = nullptr);
+        QString* errorMessage = nullptr,
+        bool blackOutsideRange = false);
     bool setSurfaceScalarOverlayVisible(const QString& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const QString& objectId);
+    bool setSceneObjectVisibilityOverride(const QString& objectId, bool visible);
+    bool clearSceneObjectVisibilityOverride(const QString& objectId);
+    void clearSceneObjectVisibilityOverrides();
+    bool sceneObjectVisible(const QString& objectId, bool& visible) const;
     void setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true, bool showOrientations = false);
+    void setTrajectoryHighlightRange(int first, int last);
     void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
     smrobot::visualization::CustomMeshResult upsertCustomMesh(
         const smrobot::visualization::CustomMeshDesc& desc,
@@ -273,6 +326,9 @@ public:
     void setAllCameraPreviewsVisible(bool visible);
 
 signals:
+    void environmentCommitted();
+    void environmentSceneReady();
+    void environmentRestoreFailed(const QString& error);
     void robotLinksAvailable(
         const QString& robotId,
         const QString& robotName,
@@ -292,6 +348,9 @@ signals:
         const QString& robotMountId,
         const QString& mountedAttachmentId,
         const QString& sceneObjectId);
+    void coatingSurfacePicked(const QString& objectId, quint32 triangleIndex, double x, double y, double z, double nx, double ny, double nz);
+    void coatingContextMenuRequested(QMenu* menu);
+    void coatingSurfaceScalarHovered(const QString& objectId, double value, double x, double y, double z, const QPoint& position, bool hit);
     void surfaceScalarHovered(
         const QString& objectId,
         double value,
@@ -302,6 +361,7 @@ protected:
     void initializeGL() override;
     void resizeGL(int width, int height) override;
     void paintGL() override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
@@ -326,12 +386,20 @@ private:
     void updateCameraOverlayGeometry();
 
     int m_jointPreviewDegrees = 0;
+    std::string m_sdkPreviewRobot;
+    std::vector<std::string> m_sdkPreviewNames;
+    std::vector<double> m_sdkPreviewValues;
+    Clock::time_point m_sdkPreviewExpiry;
+    Clock::time_point m_manualJointControlExpiry;
+    std::string m_manualJointControlRobot;
     QString m_robotName;
     std::size_t m_linkCount = 0;
     std::size_t m_jointCount = 0;
     std::unique_ptr<ProjectScene> m_scene;
+    friend class RwsPythonBridge;
     simulation_project::ColorDesc m_defaultBackgroundColor;
     ProjectSceneEnvironmentPreset m_environmentPreset = ProjectSceneEnvironmentPreset::Factory;
+    ProjectSceneEnvironmentSelection m_environmentSelection;
     simulation_project::ProjectDocument m_pendingProjectDocument;
     std::filesystem::path m_pendingProjectBasePath;
     QTimer* m_updateTimer = nullptr;
@@ -344,11 +412,13 @@ private:
     std::size_t m_cameraRoundRobinIndex = 0;
     QPoint m_lastMousePos;
     QPoint m_mousePressPos;
+    bool m_cameraDraggedSincePress = false;
     QString m_lastError;
     Clock::time_point m_startTime;
     ProjectSceneInteractionMode m_interactionMode = ProjectSceneInteractionMode::Browse;
     bool m_treePublished = false;
     bool m_hasPendingProjectDocument = false;
+    bool m_coatingSurfacePick = false;
     bool m_surfaceScalarProbeEnabled = false;
     bool m_firstPaintPending = true;
     bool m_cameraDragFramePending = false;

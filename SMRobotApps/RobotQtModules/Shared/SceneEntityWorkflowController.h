@@ -37,7 +37,9 @@ namespace robot_qt_viewer
     {
         Robot,
         Object,
-        PointCloud
+        PointCloud,
+        AttachmentAsset,
+        MountedAttachment
     };
 
     struct SceneEntityDeleteResult
@@ -70,11 +72,19 @@ namespace robot_qt_viewer
             const std::filesystem::path& path,
             const std::string& objectType,
             SceneObjectImportUnit unit = SceneObjectImportUnit::Meters);
+        SceneEntityImportResult importSceneObjectFromPath(
+            const std::filesystem::path& path,
+            const std::string& objectType,
+            double scale);
         SceneEntityImportResult importPointCloudFromPath(
             const std::filesystem::path& path,
             const std::string& format);
         void restoreImportState(const SceneEntityImportResult& result);
         SceneEntityDeleteResult deleteEntity(SceneEntityKind kind, const QString& entityId);
+        SceneEntityMutationResult setEntityRole(SceneEntityKind kind, const QString& entityId, const QString& role);
+        SceneEntityMutationResult setMountedTcp(const QString& attachmentId,
+            const simulation_project::TransformDesc& assetToTcp,
+            const QString& convention, const QString& referenceLink);
         SceneEntityMutationResult setRobotBaseTransform(
             const QString& robotId,
             const simulation_project::TransformDesc& transform);

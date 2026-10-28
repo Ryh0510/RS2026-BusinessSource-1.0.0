@@ -17,13 +17,15 @@ foreach(comp_ ${${PACKAGE_NAME}_Components})
     message(STATUS "${PKG_MSG_HEADER} ${PACKAGE_NAME}${comp_}_RequiredLibsPrivate: ${${PACKAGE_NAME}${comp_}_RequiredLibsPrivate}")
 endforeach()
 
-option(ExportPacakge${PACKAGE_NAME} "Export package -- ${PACKAGE_NAME}" ON)
+rs2026_named_cache_option(ExportPackage_${PACKAGE_NAME} ExportPacakge${PACKAGE_NAME}
+    "Export package -- ${PACKAGE_NAME}" ON)
 foreach(export_comp_ ${${PACKAGE_NAME}_ExportComponents})
-    cmake_dependent_option(
+    rs2026_named_dependent_option(
+        ExportPackage_${PACKAGE_NAME}_${export_comp_}
         ExportPacakge${PACKAGE_NAME}_${export_comp_}
         "${PACKAGE_NAME} : export ${export_comp_}"
         ON
-        "ExportPacakge${PACKAGE_NAME}"
+        "ExportPackage_${PACKAGE_NAME}"
         OFF)
 endforeach()
 
@@ -39,7 +41,15 @@ if(NOT UsingPrebuilt_${PACKAGE_NAME})
             "BuildPackage_${PACKAGE_NAME}"
             OFF)
         if(Build${PACKAGE_NAME}_${each_comp_})
-            add_subdirectory(${each_comp_})
+            get_property(_binary_owner GLOBAL PROPERTY
+                "RS2026_WORKBENCH_BINARY_${each_comp_}")
+            if(_binary_owner AND NOT _binary_owner STREQUAL PACKAGE_NAME)
+                message(FATAL_ERROR
+                    "Workbench binary directory name is shared by ${_binary_owner} and ${PACKAGE_NAME}: ${each_comp_}")
+            endif()
+            set_property(GLOBAL PROPERTY
+                "RS2026_WORKBENCH_BINARY_${each_comp_}" "${PACKAGE_NAME}")
+            add_subdirectory(${each_comp_} "${CMAKE_BINARY_DIR}/w/${each_comp_}")
         else()
             message(STATUS "Build${PACKAGE_NAME}_${each_comp_} is ${Build${PACKAGE_NAME}_${each_comp_}} in ${PACKAGE_NAME} directory.")
         endif()

@@ -16,8 +16,11 @@ set( ${PACKAGE_NAME}_PublicComponents
     SprayCore
     SprayTrajectoryCore
     SprayThicknessPrediction
+    SprayThicknessPredictionOpenGL
     SprayPathPlanning
     SprayTrajectoryOptimization
+    SprayFreeformTrajPlan
+    CalibrationInstructionTranslation
 )
 
 set( ${PACKAGE_NAME}_CompatibilityComponents )
@@ -37,8 +40,11 @@ set( ${PACKAGE_NAME}_Components
     SprayCore
     SprayTrajectoryCore
     SprayThicknessPrediction
+    SprayThicknessPredictionOpenGL
     SprayPathPlanning
     SprayTrajectoryOptimization
+    SprayFreeformTrajPlan
+    CalibrationInstructionTranslation
 )
 message( STATUS "==================================================================" )
 message( STATUS "All Targets in Package ${PACKAGE_NAME}: ${${PACKAGE_NAME}_Components}" )
@@ -52,20 +58,21 @@ endforeach()
 foreach( comp_ ${${PACKAGE_NAME}_Components} )
     list( FIND ${PACKAGE_NAME}_ExportComponents ${comp_} export_index_ )
     if( export_index_ EQUAL -1 )
-        set( ExportPacakge${PACKAGE_NAME}_${comp_} OFF CACHE BOOL "Do not export internal ${PACKAGE_NAME}::${comp_}" FORCE )
+        set( ExportPackage_${PACKAGE_NAME}_${comp_} OFF CACHE BOOL "Do not export internal ${PACKAGE_NAME}::${comp_}" FORCE )
+        set(ExportPacakge${PACKAGE_NAME}_${comp_} "${ExportPackage_${PACKAGE_NAME}_${comp_}}" CACHE INTERNAL "Compatibility alias" FORCE)
     else()
-        set( ExportPacakge${PACKAGE_NAME}_${comp_} ON CACHE BOOL "Export public ${PACKAGE_NAME}::${comp_}" FORCE )
+        set( ExportPackage_${PACKAGE_NAME}_${comp_} ON CACHE BOOL "Export public ${PACKAGE_NAME}::${comp_}" FORCE )
+        set(ExportPacakge${PACKAGE_NAME}_${comp_} "${ExportPackage_${PACKAGE_NAME}_${comp_}}" CACHE INTERNAL "Compatibility alias" FORCE)
     endif()
 endforeach()
 
 ##########################################################################
 # Package ${PACKAGE_NAME} required targets
 ##########################################################################
+rs_begin_package_requirements(${PACKAGE_NAME})
 foreach( TARGET_NAME ${${PACKAGE_NAME}_Components} )
     include( ${PACKAGE_NAME}/${TARGET_NAME}/TargetConfigSetting )
-
-    list( APPEND ${PACKAGE_NAME}_RequiredLibsPublic ${${TARGET_NAME}_RequiredLibsPublic} )
-    list( APPEND ${PACKAGE_NAME}_RequiredLibsPrivate ${${TARGET_NAME}_RequiredLibsPrivate} )
+    rs_collect_component_requirements(${PACKAGE_NAME} ${TARGET_NAME})
 
     set( ${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPublic ${${TARGET_NAME}_RequiredLibsPublic} )
     set( ${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPrivate ${${TARGET_NAME}_RequiredLibsPrivate} )

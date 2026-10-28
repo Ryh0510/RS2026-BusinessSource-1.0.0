@@ -55,6 +55,21 @@ struct ProjectScenePickResult
     }
 };
 
+struct ProjectSceneTrianglePickResult
+{
+    std::string sceneObjectId;
+    std::uint32_t triangleIndex = 0;
+    Eigen::Vector3d hitPosition = Eigen::Vector3d::Zero();
+    Eigen::Vector3d nearestVertexPosition = Eigen::Vector3d::Zero();
+    Eigen::Vector3d normal = Eigen::Vector3d::UnitZ();
+    double rayDistance = 0.0;
+
+    bool valid() const
+    {
+        return !sceneObjectId.empty();
+    }
+};
+
 class ProjectScenePickingService
 {
 public:

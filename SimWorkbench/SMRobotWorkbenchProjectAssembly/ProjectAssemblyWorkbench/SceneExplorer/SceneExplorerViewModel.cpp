@@ -6,6 +6,9 @@ namespace robot_qt_viewer
 {
     SceneExplorerNodeKind sceneExplorerNodeKindFromType(const QString& type)
     {
+        if(type == QStringLiteral("userFrame")) return SceneExplorerNodeKind::UserFrame;
+        if(type == QStringLiteral("coordinateFrame")) return SceneExplorerNodeKind::CoordinateFrame;
+        if(type == QStringLiteral("trajectory")) return SceneExplorerNodeKind::Trajectory;
         if(type == kSceneExplorerNodeGroup) {
             return SceneExplorerNodeKind::Group;
         }
@@ -42,6 +45,8 @@ namespace robot_qt_viewer
     QString sceneExplorerNodeTypeName(SceneExplorerNodeKind kind)
     {
         switch(kind) {
+        case SceneExplorerNodeKind::Trajectory:
+            return QStringLiteral("trajectory");
         case SceneExplorerNodeKind::Robot:
             return kSceneExplorerNodeRobot;
         case SceneExplorerNodeKind::Object:
@@ -58,6 +63,10 @@ namespace robot_qt_viewer
             return kSceneExplorerNodeObjectFrame;
         case SceneExplorerNodeKind::ToolAttachment:
             return kSceneExplorerNodeToolAttachment;
+        case SceneExplorerNodeKind::UserFrame:
+            return QStringLiteral("userFrame");
+        case SceneExplorerNodeKind::CoordinateFrame:
+            return QStringLiteral("coordinateFrame");
         case SceneExplorerNodeKind::ToolAsset:
             return kSceneExplorerNodeToolAsset;
         case SceneExplorerNodeKind::Group:

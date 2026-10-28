@@ -177,7 +177,18 @@
     "collisionConfig.model.action.apply": "Apply",
     "collisionConfig.model.action.apply.tooltip": "Leaves collision model configuration and returns to detector configuration.",
     "collisionConfig.model.action.cancel": "Cancel",
-    "collisionConfig.model.action.cancel.tooltip": "Cancels the current preview and returns to detector configuration."
+    "collisionConfig.model.action.cancel.tooltip": "Cancels the current preview and returns to detector configuration.",
+    "action.environment.factory-detailed": "Detailed factory (Blender)",
+    "environment.load": "Load environment model...",
+    "environment.custom": "Custom model environment",
+    "environment.cutaway": "Observation cutaway (off: complete environment)",
+    "environment.operation": "Load environment",
+    "environment.parse": "Read model assets",
+    "environment.upload": "Build environment display",
+    "environment.loaded": "Environment loaded",
+    "environment.failed": "Environment load failed",
+    "fileDialog.shell.environment.open.title": "Load environment model",
+    "fileDialog.shell.environment.open.filter": "Environment models (*.gltf *.environment.json)"
   },
   "legacy": {
     "Scene Explorer": "Scene Explorer",

@@ -1,4 +1,5 @@
 #pragma once
+#include <AssetCore/ModelDesc.h>
 
 #include <memory>
 #include <functional>
@@ -22,6 +23,7 @@ struct RobotCollisionProxyRequest;
 struct RobotCollisionProxyQualitySummary;
 struct RobotCollisionRobotSummary;
 struct ProjectScenePickResult;
+struct ProjectSceneTrianglePickResult;
 
 enum class ProjectSceneInteractionMode
 {
@@ -50,6 +52,93 @@ enum class ProjectSceneCameraView
 class ProjectScene : public smrobot::visualization::ICustomMeshScene
 {
 public:
+    struct CoatingTrajectoryPreviewPoint
+    {
+        double positionX = 0.0;
+        double positionY = 0.0;
+        double positionZ = 0.0;
+        double directionX = 1.0;
+        double directionY = 0.0;
+        double directionZ = 0.0;
+        double frameXAxisX = 1.0;
+        double frameXAxisY = 0.0;
+        double frameXAxisZ = 0.0;
+        double frameYAxisX = 0.0;
+        double frameYAxisY = 1.0;
+        double frameYAxisZ = 0.0;
+        double frameZAxisX = 0.0;
+        double frameZAxisY = 0.0;
+        double frameZAxisZ = 1.0;
+        bool sprayEnabled = false;
+        bool startsNewSegment = false;
+    };
+
+    struct CoatingPredictionDebugTriangle
+    {
+        double ax = 0.0;
+        double ay = 0.0;
+        double az = 0.0;
+        double bx = 0.0;
+        double by = 0.0;
+        double bz = 0.0;
+        double cx = 0.0;
+        double cy = 0.0;
+        double cz = 0.0;
+    };
+
+    struct CoatingPredictionDebugPoint
+    {
+        double positionX = 0.0;
+        double positionY = 0.0;
+        double positionZ = 0.0;
+        double directionX = 1.0;
+        double directionY = 0.0;
+        double directionZ = 0.0;
+    };
+
+    struct CoatingPredictionDebugState
+    {
+        bool visible = false;
+        std::string objectId;
+        std::vector<CoatingPredictionDebugTriangle> seedTriangles;
+        std::vector<CoatingPredictionDebugTriangle> cylindricalTriangles;
+        std::vector<CoatingPredictionDebugTriangle> localSectorTriangles;
+        std::vector<std::uint32_t> localSectorVertexIndices;
+        std::vector<CoatingPredictionDebugPoint> profileLinePoints;
+        std::vector<CoatingPredictionDebugPoint> selectedProfileLinePoints;
+        std::vector<CoatingPredictionDebugPoint> sprayPoints;
+        double axisOriginX = 0.0;
+        double axisOriginY = 0.0;
+        double axisOriginZ = 0.0;
+        double axisDirectionX = 0.0;
+        double axisDirectionY = 0.0;
+        double axisDirectionZ = 1.0;
+        double axisLength = 1.0;
+        double markerRadius = 0.002;
+    };
+
+    struct CoatingPredictionDebugVisibility
+    {
+        bool cylindricalSurface = true;
+        bool rotationAxis = true;
+        bool localSector = true;
+        bool sprayPoints = true;
+    };
+
+    struct DebugLineSegment
+    {
+        simulation_project::Vec3Desc startWorld;
+        simulation_project::Vec3Desc endWorld;
+        simulation_project::ColorDesc color{ 1.0, 0.78, 0.12, 1.0 };
+    };
+
+    struct DebugLineOverlay
+    {
+        std::string ownerId;
+        std::string overlayId;
+        std::vector<DebugLineSegment> segments;
+        bool visible = true;
+    };
     struct RobotJointInfo
     {
         std::string jointName;
@@ -219,9 +308,12 @@ public:
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
     const std::filesystem::path& projectBasePath() const;
+    simulation_project::ProjectDocument runtimeDocumentSnapshot() const;
     void setDefaultBackgroundColor(const simulation_project::ColorDesc& color);
     void setEnvironmentPreset(ProjectSceneEnvironmentPreset preset);
     ProjectSceneEnvironmentPreset environmentPreset() const;
+    bool setEnvironmentSelection(const ProjectSceneEnvironmentSelection& selection, std::string* error = nullptr);
+    ProjectSceneEnvironmentSelection environmentSelection() const;
     bool refreshCollisionConfiguration(
         const simulation_project::ProjectDocument& document,
         const std::filesystem::path& basePath);
@@ -231,8 +323,43 @@ public:
     bool isInitialized() const;
 
     void resize(int width, int height);
-    void update(double timeSeconds);
+    void update(double timeSeconds, bool updateCollisionPresentation = true);
+    // Requery current geometry without advancing playback or submitting duplicate overlays.
+    void refreshCollisionPresentation(bool submitOverlays = true);
+    void rebuildVirtualBaffles();
+    std::string virtualBaffleStatus();
+    void setSprayReferencePaths(const std::vector<Eigen::Vector3d>& input, const std::vector<Eigen::Vector3d>& targets);
+    void setSprayDirectionArrow(const Eigen::Vector3d& origin, const Eigen::Vector3d& target, bool visible);
+    ProjectSceneTrianglePickResult pickTriangleScreenPoint(int x, int y) const;
     void render();
+    void focusCoatingObject(const std::string& objectId, double duration = 0.3);
+    void setCoatingAnalysisView(bool active);
+    void clearCoatingModelVisibility(const std::string& objectId);
+    void setCoatingModelVisibilities(const std::unordered_map<std::string, bool>& visibility);
+    bool setCoatingModelVisible(const std::string& objectId, bool visible);
+    void clearCoatingPredictionDebugState();
+    void setCoatingPredictionDebugVisibility(
+        const CoatingPredictionDebugVisibility& visibility);
+    void setCoatingPredictionDebugState(const CoatingPredictionDebugState& state);
+    bool setCoatingTrajectoryPreviewVisible(
+        bool visible,
+        bool showTrajectoryLines = true,
+        bool showSprayPointFrames = true);
+    void setCoatingTrajectoryPreview(
+        const std::vector<CoatingTrajectoryPreviewPoint>& points,
+        bool visible,
+        bool showTrajectoryLines = true,
+        bool showSprayPointFrames = true);
+    bool clearCoatingPredictionModel(const std::string& objectId);
+    bool setCoatingPredictionModel(
+        const std::string& objectId,
+        const assetcore::ModelDesc& model,
+        std::string* errorMessage = nullptr);
+    bool applySurfaceScalarOverlayModel(
+        const smrobot::visualization::SurfaceScalarOverlay& overlay,
+        const assetcore::ModelDesc& model,
+        std::string* errorMessage = nullptr,
+        bool blackOutsideRange = false);
     std::vector<CameraInfo> cameras() const;
     bool renderCameraFrame(
         const std::string& attachmentId,
@@ -268,12 +395,14 @@ public:
     ProjectScenePickResult pickScreenPoint(int x, int y) const;
     bool applySurfaceScalarOverlay(
         const smrobot::visualization::SurfaceScalarOverlay& overlay,
-        std::string* errorMessage = nullptr);
+        std::string* errorMessage = nullptr,
+        bool blackOutsideRange = false);
     bool setSurfaceScalarOverlayVisible(const std::string& objectId, bool visible);
     bool clearSurfaceScalarOverlay(const std::string& objectId);
     void setTrajectoryControlPointOverlay(
         const std::string& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true, bool showOrientations = false);
+    void setTrajectoryHighlightRange(int first, int last);
     void clearTrajectoryControlPointOverlay(const std::string& trajectoryId = std::string());
     smrobot::visualization::SurfaceScalarProbeResult probeSurfaceScalarAtScreenPoint(
         const std::string& objectId,
@@ -357,6 +486,12 @@ public:
     bool setSceneObjectTransform(
         const std::string& objectId,
         const simulation_project::TransformDesc& transform);
+    // Runtime-only visibility override. It is reapplied whenever the scene
+    // refreshes its normal focus and document visibility state.
+    bool setSceneObjectVisibilityOverride(const std::string& objectId, bool visible);
+    bool clearSceneObjectVisibilityOverride(const std::string& objectId);
+    void clearSceneObjectVisibilityOverrides();
+    bool sceneObjectVisible(const std::string& objectId, bool& visible) const;
     bool removeSceneObject(const std::string& objectId);
     bool previewSceneObjectTransform(
         const std::string& objectId,
@@ -406,11 +541,15 @@ public:
     std::size_t endEffectorTracePointCount() const;
     SprayMeasurement sprayMeasurement(
         const std::string& robotId,
-        const std::string& targetRobotId = "burnner") const;
+        const std::string& targetId = "A") const;
     std::string activeMountedAttachmentId() const;
     std::string activeToolAttachmentId() const;
     std::vector<MountedAttachmentInfo> mountedAttachments() const;
     std::vector<ToolAttachmentInfo> toolAttachments() const;
+    bool robotLinkTransform(const std::string& robotId, const std::string& linkName,
+        simulation_project::TransformDesc& transform) const;
+    bool mountedAttachmentPoses(const std::string& attachmentId,
+        simulation_project::TransformDesc& visual, simulation_project::TransformDesc& tcp) const;
     std::vector<RobotLinkMaterialInfo> robotLinkMaterials(
         const std::string& robotId,
         const std::string& linkName) const;
@@ -425,6 +564,7 @@ public:
     bool setCollisionDetectorEnabled(const std::string& id, bool enabled);
     bool setCollisionDetectorVisible(const std::string& id, bool visible);
     bool updateCollisionDetectorRuntimeOptions(const simulation_project::CollisionDetectorDesc& desc);
+    bool applyUserCoordinateFrameDocument(const simulation_project::ProjectDocument& document);
     bool rebuildCollisionDetectorsFromDocument(const simulation_project::ProjectDocument& document);
     bool removeCollisionDetector(const std::string& id);
     bool generateRobotCollisionProxy(

@@ -146,6 +146,11 @@ void CollisionWorkbenchPanel::setDetectorPairs(const CollisionDetectorPairsViewM
     }
 }
 
+void CollisionWorkbenchPanel::setDetectorRuntimeResultText(const QString& text)
+{
+    m_detectorsWidget->setRuntimeResultText(text);
+}
+
 CollisionDetectorPropertiesView CollisionWorkbenchPanel::currentDetectorProperties() const
 {
     return m_detectorsWidget != nullptr ? m_detectorsWidget->currentProperties() : CollisionDetectorPropertiesView();

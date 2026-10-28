@@ -20,6 +20,7 @@ set(${TARGET_NAME}_RequiredLibsPublic
 )
 
 set(${TARGET_NAME}_RequiredLibsPrivate
+    SMRobotMotionPlanning::ProjectMotionPlanning
     Common::GLRuntime
     Common::CustomLog
     Common::Utility

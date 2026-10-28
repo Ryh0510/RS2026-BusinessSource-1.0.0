@@ -1,0 +1,49 @@
+{
+  "generator": "RS2026 original factory environment",
+  "blender": "5.1.0",
+  "units": "meters",
+  "sourceUp": "Z",
+  "exportUp": "Y",
+  "clearWorkspace": [
+    6,
+    6
+  ],
+  "trianglesByPart": {
+    "floor": 4328,
+    "interior": 29448,
+    "wall-n": 3564,
+    "wall-s": 3240,
+    "wall-e": 3240,
+    "wall-w": 3240,
+    "roof": 3132
+  },
+  "triangles": 50192,
+  "drawCalls": 39,
+  "runtimeBytes": 2909199,
+  "sha256": {
+    "runtime\\Brushed steel-base.png": "403f055adfef1281a1a124158de9dc507381e9b4a3ae021ebe7ee23bbe52bb96",
+    "runtime\\Brushed steel-mr.png": "1453020967bff824cfb172da0ffbe352df07d17be5175384eeee351ae6d0448d",
+    "runtime\\Brushed steel-normal.png": "76b1d306c50c657c39bdeed5011edd2bf25b08e79ef2eeb88cf4be0f4585563c",
+    "runtime\\Epoxy-base.png": "58fc1c1d7f6b176cebec1cbdc45e232473ab3691b759aab200bb41df194514f1",
+    "runtime\\Epoxy-mr.png": "27a656271af30f88ab1d50f8799abaa0c94d3a397ba05464672c18bd2c7bdd0f",
+    "runtime\\Epoxy-normal.png": "76b1d306c50c657c39bdeed5011edd2bf25b08e79ef2eeb88cf4be0f4585563c",
+    "runtime\\floor.bin": "c32df0cb7c1754f42d4aaa436c9b539595ec2c5724837de00af1fee1f1748a3b",
+    "runtime\\floor.gltf": "4cb59f840e5d76fdfacf326f8d3914329f29bc045afddc00eec561e2024d055b",
+    "runtime\\interior.bin": "3a2cc87c1038b1ad2b495162d6b26d589346e1a6c7b82858ef7686b211578891",
+    "runtime\\interior.gltf": "f5eabb16d8b73791ef6cb8b400f8b28a188a70aae664a549a4e97c72d9eec001",
+    "runtime\\Ocean-blue enamel-base.png": "3f3cbe40c18137fd1b933fd1bd20e1e529b4f8b5ee73419ccdf20be63530f910",
+    "runtime\\Ocean-blue enamel-mr.png": "26224b69ba49e9bf214bacfa1f6eadc2843572e92e6be50bab397392fad2084b",
+    "runtime\\Ocean-blue enamel-normal.png": "76b1d306c50c657c39bdeed5011edd2bf25b08e79ef2eeb88cf4be0f4585563c",
+    "runtime\\roof.bin": "e8bfa4805a9ef15f75d8cf4ccd90e0c6a338e653fe6c6ffb62ab28ecd983dd7a",
+    "runtime\\roof.gltf": "0a183c7bc16f5c0e54ed66217c8f7b35143b901b4a944d9dbc9f05d0252ffef6",
+    "runtime\\wall-e.bin": "d04c0c036921f7e17d9d0e99184bc50514c17b7c5c8d65c2ee25b6ea4054955b",
+    "runtime\\wall-e.gltf": "66d78397c4b26ebed8de0e49efd2d6323b2b84251b85e8acbf75d4eca8c5d888",
+    "runtime\\wall-n.bin": "0ed61e506e5dd7fbc1713123c993c818a57c235c81141c663195118e792c149f",
+    "runtime\\wall-n.gltf": "fe322d09741430d599850478a16251cf7fdf224587b3dc32cd01b8437de5ba80",
+    "runtime\\wall-s.bin": "3f014a1c5dda1b7390f8118e609612414c7db1ed02f1ecc2c8394867966e79ae",
+    "runtime\\wall-s.gltf": "0cdc56e82d0e24ad571890be6e1320d8d696323fef712f34791906d1ae08ccc1",
+    "runtime\\wall-w.bin": "134f44b5052954de16f406f1dc22cc5c87233a09b4128e3308ac0a3f4dd02b32",
+    "runtime\\wall-w.gltf": "926c7a38efdc944e341b371a151fb2478e56f520bab16102f23d2380aaffd46f",
+    "source\\factory-detailed.blend": "ddc5ca1e3ddbe52892f8c5825d8c188466fde2d4b0d24b8ee3bafc631bdc43b8"
+  }
+}

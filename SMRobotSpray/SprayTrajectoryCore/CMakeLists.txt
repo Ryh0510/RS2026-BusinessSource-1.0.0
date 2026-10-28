@@ -14,6 +14,9 @@ cmake_path(SET abs_include_dir NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 add_library( ${TARGET_NAME} STATIC ${SOURCES} ${HEADERS} ${INTERFACE_HEADERS} )
 add_library( ${PACKAGE_NAME}::${TARGET_NAME} ALIAS ${TARGET_NAME})
+if(MSVC)
+    target_compile_definitions(${TARGET_NAME} PRIVATE _ENABLE_EXTENDED_ALIGNED_STORAGE)
+endif()
 
 target_include_directories(${TARGET_NAME}
     PUBLIC

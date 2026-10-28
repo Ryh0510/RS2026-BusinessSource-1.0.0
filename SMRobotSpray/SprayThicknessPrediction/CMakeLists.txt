@@ -12,9 +12,9 @@ file(GLOB INTERFACE_HEADERS include/${TARGET_NAME}/*.h include/${TARGET_NAME}/*.
 
 cmake_path(SET abs_include_dir NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+
 add_library( ${TARGET_NAME} STATIC ${SOURCES} ${HEADERS} ${INTERFACE_HEADERS} )
 add_library( ${PACKAGE_NAME}::${TARGET_NAME} ALIAS ${TARGET_NAME})
-
 target_include_directories(${TARGET_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -25,7 +25,8 @@ target_include_directories(${TARGET_NAME}
 
 target_link_libraries ( ${TARGET_NAME}
     PUBLIC ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPublic}
-    PRIVATE ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPrivate}
+    PRIVATE
+        ${${PACKAGE_NAME}${TARGET_NAME}_RequiredLibsPrivate}
 )
 
 set_target_properties( ${TARGET_NAME} PROPERTIES
@@ -35,7 +36,9 @@ set_target_properties( ${TARGET_NAME} PROPERTIES
 )
 
 if(BuildTests)
-    add_subdirectory(regression/DemoThicknessPredictionTest)
+    rs2026_add_test_unit(regression/AlgorithmReproductionTest)
+    rs2026_add_test_unit(regression/DemoThicknessPredictionTest)
+    rs2026_add_test_unit(regression/RotationalSurfaceFitterTest)
 endif()
 
 if( ExportPacakge${PACKAGE_NAME}_${TARGET_NAME} )

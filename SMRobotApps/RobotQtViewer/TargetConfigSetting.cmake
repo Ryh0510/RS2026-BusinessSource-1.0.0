@@ -19,7 +19,9 @@ set(${TARGET_NAME}_RequiredLibsPublic
     SMRobotWorkbenchRobotRun::RobotRunWorkbench
     SMRobotWorkbenchMotionPlanning::MotionPlanningWorkbench
     SMRobotWorkbenchPaintingAnalysis::PaintingAnalysisWorkbench
+    SMRobotWorkbenchCalibrationTranslation::CalibrationTranslationWorkbench
     SMRobotWorkbenchSprayProcess::SprayProcessWorkbench
+    SMRobotWorkbenchFreeformTrajPlan::FreeformTrajPlanWorkbench
     SMRobotWorkbenchDigitalTwin::DigitalTwinWorkbench
 )
 

@@ -10,6 +10,7 @@
 #include <QTimer>
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -47,11 +48,45 @@ int main(int argc, char** argv)
     simulation_project::ProjectDocument document;
     document.view.showGrid = true;
     document.view.showAxis = true;
+    const std::filesystem::path objectPath =
+        std::filesystem::temp_directory_path() / "robot_viewer_visibility_smoke.obj";
+    {
+        std::ofstream objectFile(objectPath);
+        objectFile << "v -0.5 -0.5 0\n";
+        objectFile << "v 0.5 -0.5 0\n";
+        objectFile << "v 0.0 0.5 0\n";
+        objectFile << "f 1 2 3\n";
+    }
+    simulation_project::SceneObjectDesc object;
+    object.id = "visibility-smoke-object";
+    object.name = "Visibility smoke object";
+    object.sourcePath = objectPath.string();
+    document.objects.push_back(object);
     if(!viewport.loadProjectDocument(document, std::filesystem::current_path())) {
         std::cerr << "Viewport scene initialization failed.\n";
         return 1;
     }
     processEvents();
+
+    bool objectVisible = false;
+    const QString objectId = QString::fromStdString(object.id);
+    if(!viewport.sceneObjectVisible(objectId, objectVisible) || !objectVisible ||
+        !viewport.setSceneObjectVisibilityOverride(objectId, false)) {
+        std::cerr << "Scene object visibility override setup failed.\n";
+        std::filesystem::remove(objectPath);
+        return 1;
+    }
+    // resetCamera reapplies the complete focus/document visibility calculation.
+    // The runtime override must still win after that calculation.
+    viewport.resetCamera();
+    processEvents();
+    if(!viewport.sceneObjectVisible(objectId, objectVisible) || objectVisible ||
+        !viewport.clearSceneObjectVisibilityOverride(objectId) ||
+        !viewport.sceneObjectVisible(objectId, objectVisible) || !objectVisible) {
+        std::cerr << "Scene object visibility override did not persist or restore.\n";
+        std::filesystem::remove(objectPath);
+        return 1;
+    }
 
     using namespace smrobot::visualization;
     CustomMeshDesc plane;
@@ -153,6 +188,8 @@ int main(int argc, char** argv)
         std::cerr << "Removed custom mesh handle did not report NotFound.\n";
         return 1;
     }
+
+    std::filesystem::remove(objectPath);
 
     std::cout << "Custom mesh viewport smoke passed.\n";
     return 0;

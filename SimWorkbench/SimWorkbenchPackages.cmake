@@ -5,7 +5,9 @@ set(SimWorkbenchPackages
     SMRobotWorkbenchRobotRun
     SMRobotWorkbenchMotionPlanning
     SMRobotWorkbenchSprayProcess
+    SMRobotWorkbenchFreeformTrajPlan
     SMRobotWorkbenchPaintingAnalysis
+    SMRobotWorkbenchCalibrationTranslation
     SMRobotWorkbenchDigitalTwin
 )
 

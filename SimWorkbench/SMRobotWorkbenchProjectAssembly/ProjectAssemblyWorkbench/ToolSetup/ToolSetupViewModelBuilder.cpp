@@ -139,19 +139,6 @@ namespace
             });
     }
 
-    bool hasRobotMountForLink(
-        const simulation_project::ProjectDocument& document,
-        const std::string& robotId,
-        const std::string& linkName)
-    {
-        return std::any_of(
-            document.robotMounts.begin(),
-            document.robotMounts.end(),
-            [&](const simulation_project::RobotMountDesc& mount) {
-                return mount.robotId == robotId && mount.linkName == linkName;
-            });
-    }
-
     const simulation_project::SceneObjectDesc* findSceneObjectDesc(
         const simulation_project::ProjectDocument& document,
         const std::string& objectId)
@@ -400,8 +387,7 @@ ToolSetupPanelView buildToolSetupPanelView(
     }
     view.addMountEnabled =
         hasRobotContext &&
-        !selectedLinkName.isEmpty() &&
-        !hasRobotMountForLink(document, robotIdValue, selectedLinkName.toStdString());
+        !selectedLinkName.isEmpty();
 
     const std::vector<ToolAttachmentView> tools = buildToolAttachmentViews(document);
     int preferredActiveIndex = -1;

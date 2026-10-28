@@ -171,6 +171,12 @@ namespace robot_qt_viewer
             return result;
         }
 
+        if(request.boundEntity.kind == simulation_project::ProjectEntityKind::SceneObject &&
+            (request.assetType == "tool" || request.assetType == "workpiece")) {
+            for(auto& object : candidate.objects)
+                if(object.id == request.boundEntity.id) object.objectType = request.assetType;
+        }
+
         simulation_project::ProjectTransactionRequest transactionRequest;
         transactionRequest.candidate = std::move(candidate);
         transactionRequest.origin = simulation_project::ProjectChangeOrigin::UserEdit;

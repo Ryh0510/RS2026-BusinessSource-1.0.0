@@ -732,6 +732,12 @@ namespace robot_qt_viewer
         const QString selectedMountLinkName = m_widget.currentMountLinkName();
         const simulation_project::RobotMountDesc* selectedMount =
             findRobotMountDesc(m_context.document(), selectedMountId.toStdString());
+        // A new mount is only a task snapshot until Create commits it.
+        if(selectedMount == nullptr && hasMountTransform &&
+            m_mountFrameTask->snapshotIsNew() && m_mountFrameTask->hasSnapshot() &&
+            selectedMountId == m_mountFrameTask->activeEditId()) {
+            selectedMount = &m_mountFrameTask->snapshot();
+        }
         const simulation_project::MountedAttachmentDesc* attachment =
             findMountedAttachmentDesc(m_context.document(), attachmentId.toStdString());
         if(attachment == nullptr) {
@@ -1171,6 +1177,19 @@ namespace robot_qt_viewer
     void ToolSetupModuleController::updateToolFrameVisibility()
     {
         m_mountFrameTask->updateFrameVisibility();
+    }
+
+    void ToolSetupModuleController::setMountFrameVisible(const QString& mountId, bool visible)
+    {
+        m_mountFrameTask->setPinned(mountId, visible);
+        syncPinnedRobotMountFrames();
+        RobotQtViewerViewportPreviewPayload preview;
+        preview.setActivePreviewRobotMount = true;
+        preview.activePreviewRobotMountId = mountId;
+        preview.setRobotMountFrameVisibility = true;
+        preview.mountFrameVisible = visible;
+        preview.selectedLinkFrameVisible = false;
+        mutateViewportPreview(preview, QStringLiteral("sceneExplorerMountVisibility"));
     }
 
     QString ToolSetupModuleController::currentMountId() const

@@ -10,6 +10,7 @@
 
 class QObject;
 class QWidget;
+class QMenu;
 
 namespace robot_qt_viewer
 {
@@ -20,15 +21,18 @@ namespace robot_qt_viewer
     struct PaintingAnalysisWorkbenchComposition
     {
         using SurfaceHoverHandler =
-            std::function<void(const QString&, double, const QPoint&, bool)>;
+            std::function<void(const QString&, double, double, double, double, const QPoint&, bool)>;
 
         RobotQtViewerDocumentContext* documentContext = nullptr;
         RobotQtViewerDocumentViewRegistry* documentViewRegistry = nullptr;
+        QObject* dataSource = nullptr;
         QWidget* overlayParent = nullptr;
         QWidget* tooltipViewport = nullptr;
         std::function<void(const QString&, int)> showStatus;
         std::function<void(QObject&, SurfaceHoverHandler)> connectSurfaceHover;
         std::function<void(QWidget*)> bindLegendOverlay;
+        std::function<void(QWidget*)> installLeftPanel;
+        std::function<void(CoatingAnalysisModuleController&)> bindViewportInteractions;
     };
 
     class CoatingAnalysisWorkbenchLifecycle final : public IRobotQtViewerWorkbenchLifecycle

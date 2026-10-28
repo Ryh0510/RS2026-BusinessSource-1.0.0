@@ -1,0 +1,8 @@
+rs2026_add_test_unit(ModelLoadingTest)
+rs2026_add_test_unit(BoundaryDetectionTest)
+rs2026_add_test_unit(SlicePlaneDocumentTest)
+rs2026_add_test_unit(TrajectoryDocumentTest)
+rs2026_add_test_unit(TrajectoryConnectionDocumentTest)
+rs2026_add_test_unit(PoseTransformTest)
+rs2026_add_test_unit(OptiAlgorithmTest)
+rs2026_add_test_unit(BoundarylessUniformSlicingTest)

@@ -193,6 +193,14 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     m_summaryLabel->setContentsMargins(6, 2, 6, 0);
     layout->addWidget(m_summaryLabel);
 
+    m_runtimeResultLabel = new QLabel(this);
+    m_runtimeResultLabel->setObjectName(QStringLiteral("collisionConfigNearestResult"));
+    m_runtimeResultLabel->setTextFormat(Qt::PlainText);
+    m_runtimeResultLabel->setWordWrap(true);
+    m_runtimeResultLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_runtimeResultLabel->setContentsMargins(6, 2, 6, 0);
+    layout->addWidget(m_runtimeResultLabel);
+
     addSectionHeader(layout, this, QStringLiteral("Collision Pair Scope"), true);
 
     m_pairSummaryLabel = new QLabel(this);
@@ -282,6 +290,13 @@ CollisionDetectorsWidget::CollisionDetectorsWidget(QWidget* parent)
     updateSummary();
     updateActionState();
     updateDraftActionState();
+}
+
+void CollisionDetectorsWidget::setRuntimeResultText(const QString& text)
+{
+    if(m_runtimeResultLabel->text() != text) {
+        m_runtimeResultLabel->setText(text);
+    }
 }
 
 bool CollisionDetectorsWidget::configureNewDetector(

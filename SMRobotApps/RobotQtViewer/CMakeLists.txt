@@ -92,6 +92,9 @@ set(${APP_TARGET_NAME}_SHELL_SOURCES
     regression/PlaybackWindowProfile.h
     MainWindow.cpp
     MainWindow.h
+    RobotQtViewerEnvironmentController.cpp
+    RobotQtViewerEnvironmentSource.cpp
+    RobotQtViewerEnvironmentController.h
     RobotQtViewerBuiltWorkbenchCatalog.h
     ${ROBOT_QT_VIEWER_GENERATED_DIR}/RobotQtViewerBuiltWorkbenchCatalog.cpp
     RobotQtViewerPlatformConfigurationDialog.cpp
@@ -137,8 +140,12 @@ target_include_directories(${APP_TARGET_NAME}
 add_executable(SMRobotApps::${APP_TARGET_NAME} ALIAS ${APP_TARGET_NAME})
 add_executable(Applications::${APP_TARGET_NAME} ALIAS ${APP_TARGET_NAME})
 
+add_subdirectory(Integration/InterprocessCommunication)
+
 target_link_libraries(${APP_TARGET_NAME}
     PRIVATE
+        RobotQtViewer::InterprocessCommunication
+        ProjectAssemblyEditors
         RobotQtModulesStatus
         ${${APP_TARGET_NAME}_REQUIRED_TARGETS}
 )
@@ -157,7 +164,7 @@ target_compile_features(${APP_TARGET_NAME}
 
 target_compile_definitions(${APP_TARGET_NAME}
     PRIVATE
-        ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH="projects/ABB4600-burnner.sys.json"
+        ROBOT_QT_VIEWER_DEFAULT_PROJECT_PATH="projects/ABB4600-Aburnner.sys.json"
 )
 
 set_target_properties(${APP_TARGET_NAME}
@@ -166,10 +173,23 @@ set_target_properties(${APP_TARGET_NAME}
         DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX}
         RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX}
 )
+set(RobotQtViewer_OUTPUT_NAME "" CACHE STRING "Optional viewer executable name for testing beside a running viewer")
+set(RobotQtViewer_SDK_DIRECTORY "" CACHE PATH "Optional SDK channel directory when launching from Visual Studio")
+if(RobotQtViewer_OUTPUT_NAME)
+    set_target_properties(${APP_TARGET_NAME} PROPERTIES OUTPUT_NAME "${RobotQtViewer_OUTPUT_NAME}" RELEASE_POSTFIX "" DEBUG_POSTFIX "")
+endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Windows")
+    set_target_properties(${APP_TARGET_NAME} PROPERTIES
+        VS_DEBUGGER_COMMAND "$<TARGET_FILE:${APP_TARGET_NAME}>"
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>"
+    )
+    if(RobotQtViewer_SDK_DIRECTORY)
+        set_target_properties(${APP_TARGET_NAME} PROPERTIES
+            VS_DEBUGGER_COMMAND_ARGUMENTS "--rws-sdk-dir \"${RobotQtViewer_SDK_DIRECTORY}\"")
+    endif()
     set_property(TARGET ${APP_TARGET_NAME} PROPERTY
-        VS_DEBUGGER_ENVIRONMENT $<$<CONFIG:Debug>:${VSDebugEnvPath}>)
+        VS_DEBUGGER_ENVIRONMENT "${VSDebugEnvPath}")
 endif()
 
 #############################################################
@@ -183,12 +203,31 @@ endif()
 
 deploy_qt( ${APP_TARGET_NAME} )
 
-add_custom_command(TARGET ${APP_TARGET_NAME} POST_BUILD
+# Configuration and its scene-local assets must also refresh on an incremental
+# build with no relink. Keep workpiece assets beside the scene, so an older
+# deployed data directory cannot hide newly added source assets.
+add_custom_target(${APP_TARGET_NAME}RuntimeConfig
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${PROJECT_SOURCE_DIR}/config"
         "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/config"
-    COMMENT "Deploy RobotQtViewer runtime configuration"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/data/fanuc_m710ic50"
+        "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/config/projects/fanuc_m710ic50"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${SMROBOT_DATA_ROOT}/environments/factory-detailed/runtime"
+        "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/data/environments/factory-detailed/runtime"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${SMROBOT_DATA_ROOT}/environments/factory-detailed/README.md"
+        "${SMROBOT_DATA_ROOT}/environments/factory-detailed/LICENSE.txt"
+        "${SMROBOT_DATA_ROOT}/environments/factory-detailed/export-report.json"
+        "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/data/environments/factory-detailed"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${SMROBOT_DATA_ROOT}/shader_gen2"
+        "$<TARGET_FILE_DIR:${APP_TARGET_NAME}>/data/shader_gen2"
+    COMMENT "Deploy RobotQtViewer runtime configuration, scene assets and environment"
+    VERBATIM
 )
+add_dependencies(${APP_TARGET_NAME} ${APP_TARGET_NAME}RuntimeConfig)
 
 rs_example_category_enabled(_build_regression Regression ${PACKAGE_NAME})
 if(_build_regression)
@@ -205,6 +244,12 @@ if(ExportPacakge${PACKAGE_NAME})
         PACKAGE_INTERFACE_HEADERS ${${APP_TARGET_NAME}_INSTALL_HEADER_STAGING_DIR}
     )
 
+    install(DIRECTORY ${PROJECT_SOURCE_DIR}/config/environments/
+        DESTINATION ${PACKAGE_NAME}/bin/config/environments)
+    install(DIRECTORY ${SMROBOT_DATA_ROOT}/environments/factory-detailed/runtime/
+        DESTINATION ${PACKAGE_NAME}/bin/data/environments/factory-detailed/runtime)
+    install(DIRECTORY ${SMROBOT_DATA_ROOT}/shader_gen2/
+        DESTINATION ${PACKAGE_NAME}/bin/data/shader_gen2)
     install(FILES
         $<TARGET_RUNTIME_DLLS:${APP_TARGET_NAME}>
         DESTINATION ${PACKAGE_NAME}/bin
@@ -235,3 +280,7 @@ if(ExportPacakge${PACKAGE_NAME})
     )
 endif()
 
+option(BuildSceneAssemblyTests "Build focused scene deletion and mount regression tests" OFF)
+if(BuildSceneAssemblyTests AND NOT BuildRegression_SMRobotApps)
+    rs2026_add_test_unit(regression/ThemeStateSmokeTest)
+endif()

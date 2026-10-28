@@ -1,4 +1,7 @@
 #include "ProjectScene.h"
+#include <ProjectMotionPlanning/VirtualBaffleEnvironment.h>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "ProjectTrajectoryOrientationOverlayPass.h"
 
 #include "ProjectCollisionRuntimeProjection.h"
@@ -9,6 +12,7 @@
 #include "ProjectSceneCollisionPresentationSystem.h"
 #include "ProjectSceneDocumentProjectionSystem.h"
 #include "ProjectSceneEnvironmentSystem.h"
+#include "ProjectSceneModelEnvironment.h"
 #include "ProjectSceneInteractionSystem.h"
 #include "ProjectSceneStewartPresentationSystem.h"
 #include "ProjectScenePickingService.h"
@@ -1802,16 +1806,18 @@ namespace
         }
     }
 
-    void setSceneObjectHighlighted(RuntimeSceneObject& object, bool highlighted)
+    void setSceneObjectHighlighted(RuntimeSceneObject& object, bool highlighted, bool colliding = false)
     {
-        if(object.highlighted == highlighted) {
+        if(object.highlighted == highlighted && object.collisionHighlighted == colliding) {
             return;
         }
 
         if(object.visualModel) {
             for(unsigned int i = 0; i < object.visualModel->subMeshCount(); ++i) {
                 auto& subMesh = object.visualModel->subMesh(i);
-                if(highlighted) {
+                if(colliding && i < object.originalMaterials.size()) {
+                    subMesh.material = makeRobotCollisionHighlightMaterial(object.originalMaterials[i]);
+                } else if(highlighted) {
                     subMesh.material = object.highlightMaterial;
                 } else if(i < object.originalMaterials.size()) {
                     subMesh.material = object.originalMaterials[i];
@@ -1825,6 +1831,7 @@ namespace
             object.pointCloudNode->setPointSize(pointSize);
         }
         object.highlighted = highlighted;
+        object.collisionHighlighted = colliding;
     }
 
     void updateSceneObjectHighlights(
@@ -1833,16 +1840,16 @@ namespace
         const std::string& selectedObject)
     {
         for(RuntimeSceneObject& object : objects) {
-            bool highlighted = object.documentId == selectedObject;
+            bool colliding = false;
             if(object.collisionObject) {
-                highlighted = highlighted || collidingObjects.count(object.collisionObject->id()) > 0;
+                colliding = collidingObjects.count(object.collisionObject->id()) > 0;
             }
             for(const RuntimeSceneCollisionObject& collisionObject : object.collisionObjects) {
-                highlighted = highlighted ||
+                colliding = colliding ||
                     (collisionObject.collisionObject &&
                         collidingObjects.count(collisionObject.collisionObject->id()) > 0);
             }
-            setSceneObjectHighlighted(object, highlighted);
+            setSceneObjectHighlighted(object, object.documentId == selectedObject || colliding, colliding);
         }
     }
 
@@ -2522,9 +2529,9 @@ namespace
             }
             setToolAttachmentHighlightState(
                 attachment,
-                selected
-                    ? ToolAttachmentHighlightState::Selected
-                    : (colliding ? ToolAttachmentHighlightState::Colliding : ToolAttachmentHighlightState::None));
+                colliding
+                    ? ToolAttachmentHighlightState::Colliding
+                    : (selected ? ToolAttachmentHighlightState::Selected : ToolAttachmentHighlightState::None));
         }
     }
 
@@ -2586,6 +2593,25 @@ namespace
             if(!subMesh.material) {
                 subMesh.material = material;
             }
+        }
+    }
+
+    void disableModelBackFaceCulling(const std::shared_ptr<rendercore::Model>& model)
+    {
+        if(!model) {
+            return;
+        }
+
+        for(size_t i = 0; i < model->subMeshCount(); ++i) {
+            auto& subMesh = model->subMesh(static_cast<unsigned int>(i));
+            if(!subMesh.material) {
+                subMesh.material = std::make_shared<rendercore::Material>();
+            }
+
+            scenecore::MaterialRenderState renderState;
+            scenecore::materialRenderState(subMesh.material.get(), renderState);
+            renderState.cull = scenecore::MaterialCullMode::None;
+            scenecore::setMaterialRenderState(subMesh.material.get(), renderState);
         }
     }
 
@@ -2692,6 +2718,262 @@ namespace
     }
 }
 
+namespace {
+constexpr const char* kSimulationPlateObjectId = "__coating_simulation_plate__";
+    struct CoatingTrajectoryRenderer
+    {
+        struct Vertex
+        {
+            float x = 0.0f;
+            float y = 0.0f;
+            float z = 0.0f;
+            float r = 1.0f;
+            float g = 1.0f;
+            float b = 1.0f;
+            float a = 1.0f;
+        };
+
+        std::vector<Vertex> vertices;
+        GLuint vao = 0;
+        GLuint vbo = 0;
+        GLuint program = 0;
+        GLint mvpLocation = -1;
+        bool gpuDirty = true;
+        bool programFailed = false;
+
+        ~CoatingTrajectoryRenderer()
+        {
+            if(glad_glGetString == nullptr || glad_glGetString(GL_VERSION) == nullptr) {
+                return;
+            }
+            if(vbo != 0) {
+                glDeleteBuffers(1, &vbo);
+            }
+            if(vao != 0) {
+                glDeleteVertexArrays(1, &vao);
+            }
+            if(program != 0) {
+                glDeleteProgram(program);
+            }
+        }
+
+        void setTrajectory(
+            const std::vector<ProjectScene::CoatingTrajectoryPreviewPoint>& points,
+            bool visible,
+            bool showTrajectoryLines,
+            bool showSprayPointFrames)
+        {
+            vertices.clear();
+            if(!visible || points.empty()) {
+                gpuDirty = true;
+                return;
+            }
+
+            const std::size_t trajectoryEdgeCount = showTrajectoryLines
+                ? points.size() - 1
+                : 0;
+            const std::size_t frameEdgeCount = showSprayPointFrames
+                ? points.size() * 3
+                : 0;
+            vertices.reserve((trajectoryEdgeCount + frameEdgeCount) * 2);
+            const auto appendLine = [this](
+                double ax, double ay, double az,
+                double bx, double by, double bz,
+                float r, float g, float b, float a) {
+                vertices.push_back({
+                    static_cast<float>(ax), static_cast<float>(ay), static_cast<float>(az), r, g, b, a });
+                vertices.push_back({
+                    static_cast<float>(bx), static_cast<float>(by), static_cast<float>(bz), r, g, b, a });
+            };
+
+            if(showTrajectoryLines) {
+                for(std::size_t index = 1; index < points.size(); ++index) {
+                    const auto& previous = points[index - 1];
+                    const auto& current = points[index];
+                    if(current.startsNewSegment) {
+                        continue;
+                    }
+                    if(previous.sprayEnabled) {
+                        appendLine(
+                            previous.positionX, previous.positionY, previous.positionZ,
+                            current.positionX, current.positionY, current.positionZ,
+                            1.0f, 0.85f, 0.10f, 1.0f);
+                    } else {
+                        appendLine(
+                            previous.positionX, previous.positionY, previous.positionZ,
+                            current.positionX, current.positionY, current.positionZ,
+                            0.15f, 0.45f, 1.0f, 1.0f);
+                    }
+                }
+            }
+
+            if(showSprayPointFrames) {
+                constexpr double axisLength = 0.015;
+                for(const auto& point : points) {
+                    if(!point.sprayEnabled) {
+                        continue;
+                    }
+                    appendLine(
+                        point.positionX, point.positionY, point.positionZ,
+                        point.positionX + point.frameXAxisX * axisLength,
+                        point.positionY + point.frameXAxisY * axisLength,
+                        point.positionZ + point.frameXAxisZ * axisLength,
+                        0.95f, 0.18f, 0.18f, 1.0f);
+                    appendLine(
+                        point.positionX, point.positionY, point.positionZ,
+                        point.positionX + point.frameYAxisX * axisLength,
+                        point.positionY + point.frameYAxisY * axisLength,
+                        point.positionZ + point.frameYAxisZ * axisLength,
+                        0.10f, 0.95f, 0.35f, 1.0f);
+                    appendLine(
+                        point.positionX, point.positionY, point.positionZ,
+                        point.positionX + point.frameZAxisX * axisLength,
+                        point.positionY + point.frameZAxisY * axisLength,
+                        point.positionZ + point.frameZAxisZ * axisLength,
+                        0.15f, 0.45f, 1.0f, 1.0f);
+                }
+            }
+            gpuDirty = true;
+        }
+
+        GLuint compileShader(GLenum type, const char* source)
+        {
+            const GLuint shader = glCreateShader(type);
+            glShaderSource(shader, 1, &source, nullptr);
+            glCompileShader(shader);
+            GLint compiled = GL_FALSE;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+            if(compiled != GL_FALSE) {
+                return shader;
+            }
+
+            GLint infoLength = 0;
+            glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLength);
+            std::string info(static_cast<std::size_t>(std::max(0, infoLength)), '\0');
+            if(infoLength > 0) {
+                glGetShaderInfoLog(shader, infoLength, nullptr, info.data());
+            }
+            LOG_ERROR("rs2026") << "Coating trajectory shader compile failed: " << info;
+            glDeleteShader(shader);
+            return 0;
+        }
+
+        bool ensureProgram()
+        {
+            if(program != 0) {
+                return true;
+            }
+            if(programFailed) {
+                return false;
+            }
+
+            static const char* vertexSource =
+                "#version 430 core\n"
+                "layout(location = 0) in vec3 position;\n"
+                "layout(location = 1) in vec4 color;\n"
+                "uniform mat4 uMvp;\n"
+                "out vec4 vColor;\n"
+                "void main() {\n"
+                "    gl_Position = uMvp * vec4(position, 1.0);\n"
+                "    vColor = color;\n"
+                "}\n";
+            static const char* fragmentSource =
+                "#version 430 core\n"
+                "in vec4 vColor;\n"
+                "out vec4 fragmentColor;\n"
+                "void main() {\n"
+                "    fragmentColor = vColor;\n"
+                "}\n";
+
+            const GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
+            const GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+            if(vertexShader == 0 || fragmentShader == 0) {
+                if(vertexShader != 0) glDeleteShader(vertexShader);
+                if(fragmentShader != 0) glDeleteShader(fragmentShader);
+                programFailed = true;
+                return false;
+            }
+
+            program = glCreateProgram();
+            glAttachShader(program, vertexShader);
+            glAttachShader(program, fragmentShader);
+            glLinkProgram(program);
+            glDeleteShader(vertexShader);
+            glDeleteShader(fragmentShader);
+            GLint linked = GL_FALSE;
+            glGetProgramiv(program, GL_LINK_STATUS, &linked);
+            if(linked == GL_FALSE) {
+                GLint infoLength = 0;
+                glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLength);
+                std::string info(static_cast<std::size_t>(std::max(0, infoLength)), '\0');
+                if(infoLength > 0) {
+                    glGetProgramInfoLog(program, infoLength, nullptr, info.data());
+                }
+                LOG_ERROR("rs2026") << "Coating trajectory shader link failed: " << info;
+                glDeleteProgram(program);
+                program = 0;
+                programFailed = true;
+                return false;
+            }
+            mvpLocation = glGetUniformLocation(program, "uMvp");
+            return true;
+        }
+
+        void draw(const Eigen::Matrix4f& mvp)
+        {
+            if(vertices.empty() || !ensureProgram()) {
+                return;
+            }
+            if(vao == 0) {
+                glGenVertexArrays(1, &vao);
+                glGenBuffers(1, &vbo);
+            }
+            if(gpuDirty) {
+                glBindVertexArray(vao);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)),
+                    vertices.data(),
+                    GL_STATIC_DRAW);
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), nullptr);
+                glEnableVertexAttribArray(1);
+                glVertexAttribPointer(
+                    1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                    reinterpret_cast<const void*>(sizeof(float) * 3));
+                glBindVertexArray(0);
+                gpuDirty = false;
+            }
+
+            GLint previousProgram = 0;
+            GLint previousVao = 0;
+            GLboolean previousDepthMask = GL_TRUE;
+            const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+            const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+            glGetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
+            glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previousVao);
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(program);
+            glUniformMatrix4fv(mvpLocation, 1, GL_FALSE, mvp.data());
+            glLineWidth(1.0f);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size()));
+
+            glBindVertexArray(static_cast<GLuint>(previousVao));
+            glUseProgram(static_cast<GLuint>(previousProgram));
+            glDepthMask(previousDepthMask);
+            depthEnabled ? glEnable(GL_DEPTH_TEST) : glDisable(GL_DEPTH_TEST);
+            blendEnabled ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
+        }
+    };
+}
+
 struct ProjectScene::Impl
 {
     using ObjectCollisionVariantMeshPreview =
@@ -2759,6 +3041,8 @@ struct ProjectScene::Impl
     scenecore::SceneGraph sceneGraph;
     scenecore::Renderer renderer;
     ProjectSceneEnvironmentSystem environmentSystem;
+    ProjectSceneEnvironmentSelection environmentSelection;
+    ProjectSceneModelEnvironment modelEnvironment;
     std::shared_ptr<scenecore::PrimitivePass> environmentPass;
     std::shared_ptr<scenecore::GridPass> gridPass;
     std::shared_ptr<scenecore::PlanarShadowPass> planarShadowPass;
@@ -2772,6 +3056,9 @@ struct ProjectScene::Impl
     std::unique_ptr<simulation_project::ProjectDocument> pendingProjectDocument;
     std::filesystem::path projectBasePath;
     std::unique_ptr<simulation_runtime::ProjectSimulationRuntime> simulationRuntime;
+    motion_planning::VirtualBaffleEnvironment baffleEnvironment;
+    std::string baffleFailure;
+    std::unordered_map<std::string,smrobot::visualization::CustomMeshHandle> baffleMeshes;
     simulation_runtime::ProjectParallelMechanismRuntime parallelRuntime;
     ProjectScenePreviewOverlayState previewOverlay;
     ProjectSceneDocumentProjectionSystem documentProjectionSystem;
@@ -2819,6 +3106,7 @@ struct ProjectScene::Impl
     bool trajectoryControlPointMarkersVisible = true;
     bool trajectoryControlPointOrientationsVisible = false;
     std::shared_ptr<ProjectTrajectoryOrientationOverlayPass> trajectoryOrientationPass;
+    int trajectoryHighlightFirst = -1, trajectoryHighlightLast = -1;
     std::string trajectoryControlPointOverlayId;
     std::vector<collision::Transform3> trajectoryControlPointOverlay;
     simulation_project::ColorDesc defaultBackgroundColor;
@@ -2836,6 +3124,33 @@ struct ProjectScene::Impl
         collisionPresentationSystem.state().objectVariantMeshPreviewRevision;
     std::unordered_map<std::uint64_t, RuntimeCustomMesh> customMeshes;
     std::unordered_map<std::string, std::uint64_t> customMeshKeys;
+    // Workbenches can temporarily override object visibility without changing
+    // the persisted project document. Focus/reload paths consult this map.
+    std::unordered_map<std::string, bool> sceneObjectVisibilityOverrides;
+    std::unordered_map<std::string, std::shared_ptr<assetcore::ModelDesc>> customOverlayModels;
+    std::shared_ptr<scenecore::ModelNode> simulationPlateNode;
+    std::shared_ptr<rendercore::Model> simulationPlateOriginalModel;
+    std::shared_ptr<rendercore::Model> simulationPlatePredictionModel;
+    std::shared_ptr<assetcore::ModelDesc> simulationPlateModelDesc;
+    std::shared_ptr<RuntimeSurfaceScalarOverlay> simulationPlateSurfaceScalarOverlay;
+    CameraSceneBounds simulationPlateBounds;
+    std::vector<ProjectScene::DebugLineSegment> simulationPlateGridSegments;
+    // The grid is a line overlay rather than part of the plate model. Keep an
+    // explicit visibility state so it cannot outlive the simulation tab.
+    bool simulationPlateVisible = false;
+    bool simulationPlateGridVisible = false;
+    std::vector<ProjectScene::CoatingTrajectoryPreviewPoint> coatingTrajectoryPreview;
+    bool coatingTrajectoryPreviewVisible = false;
+    bool coatingTrajectoryLinesVisible = true;
+    bool coatingSprayPointFramesVisible = true;
+    CoatingTrajectoryRenderer coatingTrajectoryRenderer;
+    ProjectScene::CoatingPredictionDebugState coatingPredictionDebugState;
+    ProjectScene::CoatingPredictionDebugVisibility coatingPredictionDebugVisibility;
+    std::unordered_map<std::string, bool> coatingModelVisibilityOverrides;
+    bool coatingAnalysisActive = false;
+    std::unordered_map<std::string, ProjectScene::DebugLineOverlay> debugLineOverlays;
+    CoatingTrajectoryRenderer coatingDebugRenderer;
+    void rebuildCoatingLineOverlays();
     std::uint64_t nextCustomMeshHandle = 1;
 
     bool initializeOpenGlRuntime();
@@ -3050,13 +3365,21 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     environmentFilter.featureMask = scenecore::renderFeatureMask({ scenecore::RenderFeature::Visual });
     environmentPass->setFilter(environmentFilter);
     renderer.addPass(environmentPass);
+    auto environmentMeshPass = std::make_shared<scenecore::MeshPass>(rendercore::ShaderLibrary::getShader("MLRobotUBO"));
+    environmentMeshPass->setFilter(environmentFilter);
+    renderer.addPass(environmentMeshPass);
     gridPass = std::make_shared<scenecore::GridPass>(scenecore::GridType::FadedInfiniteGrid);
     gridPass->setEnabled(environmentSystem.showsGrid());
     renderer.addPass(gridPass);
     planarShadowPass = std::make_shared<scenecore::PlanarShadowPass>();
     planarShadowPass->setEnabled(environmentSystem.hasGround());
     renderer.addPass(planarShadowPass);
-    renderer.addPass(std::make_shared<scenecore::MeshPass>(rendercore::ShaderLibrary::getShader("MLRobotUBO")));
+    auto visualPass = std::make_shared<scenecore::MeshPass>(rendercore::ShaderLibrary::getShader("MLRobotUBO"));
+    scenecore::RenderFilter visualFilter;
+    visualFilter.layerMask = scenecore::renderLayerMask({scenecore::RenderLayer::VisualMesh, scenecore::RenderLayer::TransparentMesh});
+    visualFilter.categoryMask &= ~scenecore::renderBit(scenecore::RenderCategory::Environment);
+    visualPass->setFilter(visualFilter);
+    renderer.addPass(visualPass);
     renderer.addPass(collisionMeshPass);
     renderer.addPass(std::make_shared<scenecore::PointCloudPass>());
     renderer.addPass(std::make_shared<scenecore::AxisPass>());
@@ -3334,7 +3657,24 @@ void ProjectScene::Impl::applyMountFrameLinkFocusVisibility()
                     findSceneObjectDesc(document(), object.documentId)) {
                     visible = sceneObject->visible;
                 }
+                if(const auto overrideIt = sceneObjectVisibilityOverrides.find(object.documentId);
+                    overrideIt != sceneObjectVisibilityOverrides.end()) {
+                    visible = overrideIt->second;
+                }
+                if(const auto overrideIt = coatingModelVisibilityOverrides.find(object.documentId);
+                    overrideIt != coatingModelVisibilityOverrides.end()) {
+                    visible = overrideIt->second;
+                }
             }
+        }
+        // A mounted object's source mesh is retained for unbinding, not as a
+        // second world-space visual. Reloads and visibility overrides must not
+        // resurrect it at its old import pose.
+        if(std::any_of(document().mountedAttachments.begin(), document().mountedAttachments.end(),
+            [&](const simulation_project::MountedAttachmentDesc& attachment) {
+                return !attachment.sourceObjectId.empty() && attachment.sourceObjectId == object.documentId;
+            })) {
+            visible = false;
         }
         if(object.visualNode) {
             object.visualNode->setVisible(visible);
@@ -4150,8 +4490,9 @@ void ProjectScene::Impl::drawPreviewRobotMountFrames()
         return;
     }
 
+    const auto previewDocument = effectivePreviewDocument();
     const simulation_project::RobotMountDesc* mount =
-        findRobotMountDesc(document(), interactionSystem.activePreviewRobotMountId());
+        findRobotMountDesc(previewDocument, interactionSystem.activePreviewRobotMountId());
     const RuntimeRobot* robot = nullptr;
     std::string linkName;
     if(mount != nullptr) {
@@ -4296,6 +4637,31 @@ void ProjectScene::Impl::drawVisibleObjectFrames()
 
     scenecore::DebugDraw& debug = renderer.debug();
     const glm::vec4 frameColor(0.1f, 1.0f, 0.65f, 1.0f);
+    const auto visibleFrame=[&](const std::string& id) {
+        for(const auto& ext:document().extensions) if(ext.key=="rws.frame."+id) {
+            const auto state=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object();
+            return !state.value("deleted").toBool(false) && state.value("visible").toBool(true);
+        }
+        return true;
+    };
+    if(visibleFrame("world")) drawFrameMarker(debug,collision::Transform3::Identity(),0.30f,glm::vec4(0.92f,0.95f,0.98f,1.0f),1.3f);
+    for(const auto& attachment:attachmentVisualSystem.visuals()) {
+        if(!attachment.visible || !visibleFrame("tcp:"+attachment.documentId)) continue;
+        const simulation_project::AttachmentAssetDesc* asset=nullptr;
+        for(const auto& mounted:document().mountedAttachments) if(mounted.id==attachment.documentId)
+            for(const auto& definition:document().attachmentAssets) if(definition.id==mounted.assetId) asset=&definition;
+        if(asset && std::any_of(asset->functionalFrames.begin(),asset->functionalFrames.end(),[](const auto& f){return f.frameType=="tcp";}))
+            drawFrameMarker(debug,attachment.worldTcp,0.14f,glm::vec4(1.0f,0.1f,0.1f,1.0f));
+    }
+    if(visibleFrame("user")) {
+        simulation_project::TransformDesc userPose;
+        for(const auto& ext:document().extensions) if(ext.key=="rws.user_frame") {
+            const auto o=QJsonDocument::fromJson(QByteArray::fromStdString(ext.serializedPayload)).object();
+            userPose.x=o.value("x").toDouble(); userPose.y=o.value("y").toDouble(); userPose.z=o.value("z").toDouble();
+            userPose.roll=o.value("roll").toDouble(); userPose.pitch=o.value("pitch").toDouble(); userPose.yaw=o.value("yaw").toDouble();
+        }
+        drawFrameMarker(debug,ProjectRuntimeBuilder::makeTransform(userPose),0.22f,glm::vec4(1.0f,0.65f,0.1f,1.0f),1.3f);
+    }
     for(const simulation_project::SceneObjectDesc& object : document().objects) {
         const RuntimeSceneObject* runtimeObject =
             object.visible ? findRuntimeObject(objects, object.id) : nullptr;
@@ -4344,6 +4710,7 @@ void ProjectScene::Impl::drawPinnedRobotMountFrames()
         return;
     }
 
+    const auto previewDocument = effectivePreviewDocument();
     scenecore::DebugDraw& debug = renderer.debug();
     const glm::vec4 mountColor(0.1f, 0.35f, 1.0f, 1.0f);
     for(const std::string& mountId : interactionSystem.pinnedRobotMountFrames()) {
@@ -4352,7 +4719,7 @@ void ProjectScene::Impl::drawPinnedRobotMountFrames()
         }
 
         const simulation_project::RobotMountDesc* mount =
-            findRobotMountDesc(document(), mountId);
+            findRobotMountDesc(previewDocument, mountId);
         if(mount == nullptr) {
             continue;
         }
@@ -4397,9 +4764,7 @@ void ProjectScene::Impl::drawActiveToolAttachmentFrames()
     if(toolFrameVisibility.visual) {
         drawFrameMarker(debug, attachment->worldVisual, 0.13f, glm::vec4(1.0f, 0.8f, 0.1f, 1.0f));
     }
-    if(toolFrameVisibility.tcp) {
-        drawFrameMarker(debug, attachment->worldTcp, 0.14f, glm::vec4(1.0f, 0.1f, 0.1f, 1.0f));
-    }
+    // TCP markers are managed per instance by drawVisibleObjectFrames().
     if(toolFrameVisibility.sensorPreview && isSensorAttachment(*attachment)) {
         drawFrameMarker(debug, attachment->worldTcp, 0.16f, glm::vec4(0.1f, 0.85f, 1.0f, 1.0f));
         if(attachment->hasSensorIntrinsics) {
@@ -4505,13 +4870,13 @@ bool ProjectScene::Impl::sprayNozzleWorldTransform(
     const RuntimeToolAttachmentVisual* attachment = nullptr;
     if(activeToolAttachmentIndex < toolAttachments.size()) {
         const RuntimeToolAttachmentVisual& active = toolAttachments[activeToolAttachmentIndex];
-        if(active.robotId == robotId && active.visible) {
+        if(active.robotId == robotId && active.enabled && active.assetKind == "tool") {
             attachment = &active;
         }
     }
     if(attachment == nullptr) {
         for(const RuntimeToolAttachmentVisual& candidate : toolAttachments) {
-            if(candidate.robotId == robotId && candidate.visible) {
+            if(candidate.robotId == robotId && candidate.enabled && candidate.assetKind == "tool") {
                 attachment = &candidate;
                 break;
             }
@@ -4574,7 +4939,7 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
             debug.drawLine(
                 toGlmVec3(trajectoryControlPointOverlay[index - 1].translation()),
                 toGlmVec3(point.translation()),
-                lineColor,
+                (int(index)>trajectoryHighlightFirst && int(index)<=trajectoryHighlightLast) ? glm::vec4(0.95f,0.12f,0.85f,1.0f) : lineColor,
                 tag);
         }
 
@@ -4591,7 +4956,7 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
         debug.drawSphere(
             markerTransform,
             isStart || isEnd ? endpointRadius : markerRadius,
-            isStart ? startColor : (isEnd ? endColor : markerColor),
+            (int(index)>=trajectoryHighlightFirst && int(index)<=trajectoryHighlightLast) ? glm::vec4(0.95f,0.12f,0.85f,1.0f) : (isStart ? startColor : (isEnd ? endColor : markerColor)),
             scenecore::DrawType::UsingUnlitShader,
             tag);
     }
@@ -4896,7 +5261,8 @@ void ProjectScene::Impl::drawInteractionModeHints()
         !interactionSystem.robotMountFrameVisible()) {
         const glm::vec4 mountColor(0.1f, 0.55f, 1.0f, 1.0f);
         const glm::vec4 activeMountColor(0.1f, 1.0f, 0.35f, 1.0f);
-        for(const simulation_project::RobotMountDesc& mount : document().robotMounts) {
+        const auto previewDocument = effectivePreviewDocument();
+        for(const simulation_project::RobotMountDesc& mount : previewDocument.robotMounts) {
             const bool active = mount.id == interactionSystem.activePreviewRobotMountId();
             if(!active) {
                 continue;
@@ -5124,6 +5490,7 @@ const ProjectCollisionDetectorRuntime* ProjectScene::Impl::activeCollisionDetect
 
 ProjectScene::Impl::~Impl()
 {
+    modelEnvironment.clear(sceneGraph);
     for(auto& entry : customMeshes) {
         if(entry.second.material) {
             scenecore::clearMaterialRenderState(entry.second.material.get());
@@ -5165,6 +5532,37 @@ const std::filesystem::path& ProjectScene::projectBasePath() const
     return m_impl->projectBasePath;
 }
 
+simulation_project::ProjectDocument ProjectScene::runtimeDocumentSnapshot() const
+{
+    auto document=m_impl->document();
+    const auto pose=[](const Eigen::Isometry3d& t) {
+        simulation_project::TransformDesc p;
+        p.x=t.translation().x(); p.y=t.translation().y(); p.z=t.translation().z();
+        p.roll=std::atan2(t.linear()(2,1),t.linear()(2,2));
+        p.pitch=std::asin(std::clamp(-t.linear()(2,0),-1.0,1.0));
+        p.yaw=std::atan2(t.linear()(1,0),t.linear()(0,0)); return p;
+    };
+    for(auto& object:document.objects) {
+        const auto* runtime=findRuntimeObject(m_impl->objects,object.id);
+        if(runtime) object.transform=pose(runtime->transform);
+    }
+    for(auto& robot:document.robots) {
+        const auto* runtime=findRuntimeRobot(m_impl->robots,robot.id);
+        if(!runtime || !runtime->instance) continue;
+        const auto& state=runtime->instance->getState();
+        robot.baseTransform=pose(state.baseTransform); robot.initialJoints.clear();
+        for(const auto& joint:runtime->model.joints) {
+            if(joint.dofIndex>=0 && static_cast<std::size_t>(joint.dofIndex)<state.q.size())
+                robot.initialJoints.push_back({joint.name,state.q[joint.dofIndex]});
+        }
+    }
+    document.collision.query.enabled=m_impl->collisionQueriesEnabled;
+    const std::string baffleKey=motion_planning::VirtualBaffleEnvironment::extensionKey;
+    auto entry=std::find_if(document.extensions.begin(),document.extensions.end(),[&](const auto& e){return e.key==baffleKey;});
+    if(entry==document.extensions.end()) {simulation_project::ProjectExtensionDesc e;e.key=baffleKey;e.serializedPayload="{\"enabled\":true,\"visible\":true,\"thickness_mm\":1,\"fit_tolerance_mm\":5}";document.extensions.push_back(e);}
+    return document;
+}
+
 void ProjectScene::setDefaultBackgroundColor(const simulation_project::ColorDesc& color)
 {
     m_impl->defaultBackgroundColor = color;
@@ -5175,13 +5573,34 @@ void ProjectScene::setDefaultBackgroundColor(const simulation_project::ColorDesc
 
 void ProjectScene::setEnvironmentPreset(ProjectSceneEnvironmentPreset preset)
 {
-    m_impl->environmentSystem.setPreset(preset);
+    ProjectSceneEnvironmentSelection selection;
+    selection.preset = preset;
+    setEnvironmentSelection(selection);
+}
+
+bool ProjectScene::setEnvironmentSelection(const ProjectSceneEnvironmentSelection& selection, std::string* error)
+{
+    std::string detail;
+    if(!m_impl->modelEnvironment.load(selection, m_impl->sceneGraph, detail)) {
+        if(error) *error = detail;
+        return false;
+    }
+    m_impl->environmentSelection = selection;
+    m_impl->environmentSystem.setPreset(selection.isModel() ? ProjectSceneEnvironmentPreset::None : selection.preset);
+    if(error) error->clear();
     if(m_impl->planarShadowPass) {
-        m_impl->planarShadowPass->setEnabled(m_impl->environmentSystem.hasGround());
+        m_impl->planarShadowPass->setEnabled(selection.isModel() ? selection.hasGround : m_impl->environmentSystem.hasGround());
+        m_impl->planarShadowPass->setPlaneHeight(selection.isModel() ? selection.groundHeight + 0.006f : 0.006f);
     }
     if(m_impl->gridPass) {
-        m_impl->gridPass->setEnabled(m_impl->environmentSystem.showsGrid());
+        m_impl->gridPass->setEnabled(selection.isModel() ? selection.showGrid : m_impl->environmentSystem.showsGrid());
     }
+    return true;
+}
+
+ProjectSceneEnvironmentSelection ProjectScene::environmentSelection() const
+{
+    return m_impl->environmentSelection;
 }
 
 ProjectSceneEnvironmentPreset ProjectScene::environmentPreset() const
@@ -5196,6 +5615,8 @@ bool ProjectScene::refreshCollisionConfiguration(
     if(!m_impl->initialized) {
         return false;
     }
+
+    const bool collisionRuntimeWasBuilt = m_impl->collisionRuntimeBuilt;
 
     m_impl->hideObjectCollisionModelVariantPreviewMeshes();
     ++m_impl->objectCollisionVariantMeshPreviewRevision;
@@ -5231,9 +5652,16 @@ bool ProjectScene::refreshCollisionConfiguration(
     m_impl->backgroundColor = makeEffectiveBackgroundColor(
         m_impl->document().view,
         m_impl->defaultBackgroundColor);
+    // Editing a detector clears its geometry. A running query must rebuild it
+    // before the next frame instead of staying enabled with an empty world.
+    if((collisionRuntimeWasBuilt || m_impl->collisionQueriesEnabled) &&
+        !m_impl->ensureCollisionRuntimeBuilt()) {
+        return false;
+    }
     m_impl->applyCollisionOverlayRenderConfig();
     m_impl->applyMountFrameLinkFocusVisibility();
     m_impl->updateObjectCollisionModelVariantPreviewMeshes();
+    rebuildVirtualBaffles();
     return true;
 }
 
@@ -5339,6 +5767,7 @@ bool ProjectScene::initialize()
 
     const auto collisionStart = std::chrono::steady_clock::now();
     m_impl->applyProjectCollisionAndView();
+    m_impl->applyMountFrameLinkFocusVisibility();
     const double collisionMs = elapsedMilliseconds(collisionStart);
     LOG_DEBUG("rs2026") << "ProjectScene applyProjectCollisionAndView: elapsedMs="
         << collisionMs;
@@ -5350,6 +5779,7 @@ bool ProjectScene::initialize()
     setCameraView(ProjectSceneCameraView::Home);
     const double cameraMs = elapsedMilliseconds(cameraStart);
     m_impl->initialized = true;
+    rebuildVirtualBaffles();
     const double totalMs = elapsedMilliseconds(initializeStart);
     const std::string detail =
         "robots=" + std::to_string(m_impl->robots.size()) +
@@ -5394,7 +5824,7 @@ void ProjectScene::resize(int width, int height)
     m_impl->height = height > 0 ? height : 1;
 }
 
-void ProjectScene::update(double timeSeconds)
+void ProjectScene::update(double timeSeconds, bool updateCollisionPresentation)
 {
     if(!m_impl->initialized) {
         return;
@@ -5412,6 +5842,50 @@ void ProjectScene::update(double timeSeconds)
     m_impl->syncProjectToolAttachments();
     m_impl->lastRobotPoseUpdateMs = elapsedMilliseconds(poseStart);
 
+    if(updateCollisionPresentation) refreshCollisionPresentation();
+}
+
+void ProjectScene::rebuildVirtualBaffles()
+{
+    if(!m_impl->simulationRuntime)return;
+    clearCustomMeshes("rws.virtual_baffles");m_impl->baffleMeshes.clear();
+    if(!m_impl->collisionQueriesEnabled)return;
+    m_impl->baffleEnvironment.build(*m_impl->simulationRuntime);
+    using namespace smrobot::visualization;
+    for(const auto& b:m_impl->baffleEnvironment.baffles()){
+        if(!b.geometry.enabled){LOG_WARNING("rs2026") << "Virtual baffle disabled: " << b.objectId << ": " << b.geometry.diagnostic;continue;}
+        double extent=1;for(const auto& ring:b.geometry.contours)for(const auto& p:ring)extent=std::max(extent,p.cwiseAbs().maxCoeff()*2+0.5);
+        CustomMeshDesc desc;desc.ownerId="rws.virtual_baffles";desc.meshId=b.objectId;desc.name="Virtual infinite collision baffle (display window)";
+        desc.visible=b.visible;desc.appearance.baseColor={0.8f,0.25f,0.05f,0.28f};desc.appearance.blend=MeshBlendMode::AlphaBlend;desc.appearance.depthWrite=false;desc.appearance.cull=MeshCullMode::None;
+        desc.mesh.normalMode=MeshNormalMode::GenerateFlat;
+        for(const auto& t:b.geometry.displayTriangles(extent))for(const auto& p:t){desc.mesh.indices.push_back(static_cast<uint32_t>(desc.mesh.positions.size()));desc.mesh.positions.push_back({float(p.x()),float(p.y()),float(p.z())});}
+        const auto* object=findRuntimeObject(m_impl->objects,b.objectId);if(!object)continue;
+        for(int i=0;i<16;++i)desc.transform.columnMajor[i]=float(object->transform.matrix().data()[i]);
+        CustomMeshHandle handle;const auto result=upsertCustomMesh(desc,handle);if(result.success)m_impl->baffleMeshes[b.objectId]=handle;
+        else LOG_WARNING("rs2026") << "Virtual baffle display failed: " << result.message;
+    }
+}
+std::string ProjectScene::virtualBaffleStatus()
+{
+    if(m_impl->simulationRuntime){
+        auto& runtime=*m_impl->simulationRuntime;
+        for(const auto& robot:m_impl->robots){if(!robot.instance)continue;std::vector<std::string> names;std::vector<double> values;
+            const auto& state=robot.instance->getState();for(const auto& joint:robot.model.joints)if(joint.dofIndex>=0){names.push_back(joint.name);values.push_back(state.q.at(joint.dofIndex));}
+            runtime.setRobotJointValues(robot.documentId,names,values);
+            simulation_project::TransformDesc pose;const auto& t=state.baseTransform;pose.x=t.translation().x();pose.y=t.translation().y();pose.z=t.translation().z();pose.pitch=std::asin(std::clamp(-t.linear()(2,0),-1.,1.));pose.roll=std::atan2(t.linear()(2,1),t.linear()(2,2));pose.yaw=std::atan2(t.linear()(1,0),t.linear()(0,0));runtime.setRobotBaseTransform(robot.documentId,pose);
+        }
+        for(const auto& object:m_impl->objects){auto* target=runtime.object(object.documentId);if(target)target->transform=object.transform;
+            const auto it=m_impl->baffleMeshes.find(object.documentId);if(it!=m_impl->baffleMeshes.end()){smrobot::visualization::TransformMatrix t;for(int i=0;i<16;++i)t.columnMajor[i]=float(object.transform.matrix().data()[i]);setCustomMeshTransform(it->second,t);}}
+        runtime.updateAttachmentTransforms();m_impl->baffleFailure.clear();
+        m_impl->baffleEnvironment.validState(runtime,0,m_impl->baffleFailure);
+    }
+    auto status=m_impl->baffleEnvironment.status();status["module_enabled"]=m_impl->collisionQueriesEnabled;status["in_collision"]=m_impl->collisionQueriesEnabled && !m_impl->baffleFailure.empty();status["state_diagnostic"]=m_impl->baffleFailure;return status.dump();
+}
+
+void ProjectScene::refreshCollisionPresentation(bool submitOverlays)
+{
+    if(!m_impl->initialized) return;
+
     if(m_impl->collisionQueriesEnabled) {
         const auto worldUpdateStart = std::chrono::steady_clock::now();
         m_impl->collisionScene.update();
@@ -5419,6 +5893,7 @@ void ProjectScene::update(double timeSeconds)
     } else {
         m_impl->lastCollisionWorldUpdateMs = 0.0;
     }
+    if(m_impl->collisionQueriesEnabled) virtualBaffleStatus();
     ++m_impl->collisionQueryFrame;
 
     ProjectCollisionDetectorRuntime* activeDetector = m_impl->activeCollisionDetector();
@@ -5434,14 +5909,14 @@ void ProjectScene::update(double timeSeconds)
             const bool isActive = &detector == activeDetector;
             const bool wasMissingResult = !detector.hasResult;
 
-            // SDK Continuous performs the collision check but defers nearest points
-            // to ManualNearest. Request both in ONE query for a visible distance
-            // overlay, using the pose that this frame actually renders. Playback
-            // source-sample validation stays independent; hidden overlays stay cheap.
+            // The active detector also supplies the configuration panel's distance.
+            // Its query must not depend on whether the nearest-point overlay is shown.
             const bool showNearest = detector.visible &&
                 detector.visualization.showNearestPoints &&
                 detector.options.enableNearestPoints && detector.options.enableDistance;
-            const auto queryMode = showNearest
+            const bool requestNearest = showNearest || (isActive &&
+                (detector.options.enableNearestPoints || detector.options.enableDistance));
+            const auto queryMode = requestNearest
                 ? simulation_runtime::ProjectCollisionQueryMode::ManualNearest
                 : simulation_runtime::ProjectCollisionQueryMode::Continuous;
             simulation_runtime::ProjectCollisionQueryMetrics metrics;
@@ -5518,8 +5993,7 @@ void ProjectScene::update(double timeSeconds)
     const bool showDetectorCollisionGeometry =
         m_impl->showCollisionGeometry && !collisionModelVariantPreviewActive;
     const std::unordered_set<ObjectID> noVisualCollisionHighlights;
-    const std::unordered_set<ObjectID>& visualHighlightObjects =
-        showDetectorCollisionGeometry ? activeCollidingObjects : noVisualCollisionHighlights;
+    const std::unordered_set<ObjectID>& visualHighlightObjects = collidingObjects;
 
     const std::string selectedRobotId = m_impl->interactionSystem.selection().selectedRobotId();
     const std::string selectedLinkName = m_impl->interactionSystem.selection().selectedLinkName();
@@ -5561,6 +6035,7 @@ void ProjectScene::update(double timeSeconds)
         m_impl->lastContactCount = activeResult.contacts.size();
     }
 
+    if(!submitOverlays) return;
     m_impl->collisionPresentationSystem.state().frameMetrics.resetOverlay();
 
     bool collisionGeometryOverlaySubmitted = false;
@@ -5717,8 +6192,28 @@ void ProjectScene::render()
 
     m_impl->sceneGraph.update();
     m_impl->renderer.updateSceneUBO(m_impl->sceneGraph, mainCameraNode.get());
-    m_impl->renderer.render(m_impl->sceneGraph);
+    const auto environmentCameraPosition = mainCameraNode->camera()->position();
+    m_impl->modelEnvironment.withView(glm::vec3(environmentCameraPosition.x(), environmentCameraPosition.y(), environmentCameraPosition.z()),
+        m_impl->environmentSelection.cutaway, [&]() { m_impl->renderer.render(m_impl->sceneGraph); });
+
+    const auto coatingCamera = m_impl->cameraSystem.mainCameraNode()->camera();
+    if(coatingCamera) {
+        const auto mvp = coatingCamera->projection() * coatingCamera->view();
+        m_impl->coatingTrajectoryRenderer.draw(mvp);
+        m_impl->coatingDebugRenderer.vertices.clear();
+        for(const auto& item : m_impl->debugLineOverlays) {
+            if(!item.second.visible) continue;
+            for(const auto& segment : item.second.segments) {
+                for(const auto& point : {segment.startWorld, segment.endWorld}) {
+                    m_impl->coatingDebugRenderer.vertices.push_back({float(point.x),float(point.y),float(point.z),float(segment.color.r),float(segment.color.g),float(segment.color.b),float(segment.color.a)});
+                }
+            }
+        }
+        m_impl->coatingDebugRenderer.gpuDirty = true;
+        m_impl->coatingDebugRenderer.draw(mvp);
+    }
 }
+
 
 std::vector<ProjectScene::CameraInfo> ProjectScene::cameras() const
 {
@@ -6014,6 +6509,18 @@ ProjectSceneInteractionMode ProjectScene::interactionMode() const
 
 ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
 {
+    if(m_impl->coatingAnalysisActive) {
+        // Collision bounds can overlap or outlive a hidden workpiece. In the
+        // analysis view, select only the visible surface actually clicked.
+        const auto hit = pickTriangleScreenPoint(x, y);
+        ProjectScenePickResult result;
+        if(hit.valid()) {
+            result.kind = ProjectScenePickTargetKind::SceneObject;
+            result.sceneObjectId = hit.sceneObjectId;
+        }
+        return result;
+    }
+
     ProjectScenePickRay ray;
     const std::shared_ptr<scenecore::CameraNode> mainCameraNode =
         m_impl->cameraSystem.mainCameraNode();
@@ -6185,7 +6692,8 @@ ProjectScenePickResult ProjectScene::pickScreenPoint(int x, int y) const
 
 bool ProjectScene::applySurfaceScalarOverlay(
     const smrobot::visualization::SurfaceScalarOverlay& overlay,
-    std::string* errorMessage)
+    std::string* errorMessage,
+    bool blackOutsideRange)
 {
     const auto fail = [&](const std::string& message) {
         if(errorMessage != nullptr) {
@@ -6194,27 +6702,38 @@ bool ProjectScene::applySurfaceScalarOverlay(
         return false;
     };
 
-    RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, overlay.objectId);
-    const simulation_project::SceneObjectDesc* objectDesc =
-        findSceneObjectDesc(m_impl->document(), overlay.objectId);
-    if(runtime == nullptr || objectDesc == nullptr || !runtime->visualNode) {
+    const bool simulationPlate = overlay.objectId == kSimulationPlateObjectId;
+    RuntimeSceneObject* runtime = simulationPlate
+        ? nullptr : findRuntimeObject(m_impl->objects, overlay.objectId);
+    const simulation_project::SceneObjectDesc* objectDesc = simulationPlate
+        ? nullptr : findSceneObjectDesc(m_impl->document(), overlay.objectId);
+    if((simulationPlate && (!m_impl->simulationPlateNode ||
+            !m_impl->simulationPlateModelDesc)) ||
+        (!simulationPlate && (runtime == nullptr || objectDesc == nullptr || !runtime->visualNode))) {
         return fail("The target scene object is not available in the viewport.");
     }
-    if(runtime->objectType == "pointCloud" || runtime->objectType == "toolAttachment") {
+    if(!simulationPlate && (runtime->objectType == "pointCloud" || runtime->objectType == "toolAttachment")) {
         return fail("Surface scalar overlays require a mesh scene object.");
     }
 
-    const std::filesystem::path sourcePath = simulation_project::AssetResolver::resolveProjectPath(
-        ProjectRuntimeBuilder::makeAssetResolveContext(
-            m_impl->projectBasePath,
-            m_impl->document()),
-        objectDesc->sourcePath);
     std::string loadError;
-    const std::shared_ptr<assetcore::ModelDesc> sourceDesc =
-        assetcore::AssetManager::instance().tryLoadModel(
+    std::shared_ptr<assetcore::ModelDesc> sourceDesc;
+    const auto customModel = m_impl->customOverlayModels.find(overlay.objectId);
+    if(customModel != m_impl->customOverlayModels.end()) {
+        sourceDesc = customModel->second;
+    } else if(simulationPlate) {
+        sourceDesc = m_impl->simulationPlateModelDesc;
+    } else {
+        const std::filesystem::path sourcePath = simulation_project::AssetResolver::resolveProjectPath(
+            ProjectRuntimeBuilder::makeAssetResolveContext(
+                m_impl->projectBasePath,
+                m_impl->document()),
+            objectDesc->sourcePath);
+        sourceDesc = assetcore::AssetManager::instance().tryLoadModel(
             pathToUtf8(sourcePath),
             static_cast<float>(objectDesc->visualScale),
             &loadError);
+    }
     if(!sourceDesc) {
         return fail(loadError.empty() ? "Failed to load the target mesh." : loadError);
     }
@@ -6239,8 +6758,14 @@ bool ProjectScene::applySurfaceScalarOverlay(
         runtimeSubMesh.indices = geometry.indices;
         runtimeSubMesh.values = values;
         for(std::size_t vertexIndex = 0; vertexIndex < values.size(); ++vertexIndex) {
-            geometry.colors[vertexIndex] = gammaToLinear(
-                overlay.colorMap.sample(values[vertexIndex], overlay.range));
+            const double value = values[vertexIndex];
+            const bool outsideRange = !std::isfinite(value)
+                || value < overlay.range.minimum
+                || value > overlay.range.maximum;
+            const Eigen::Vector3f displayColor = blackOutsideRange && outsideRange
+                ? Eigen::Vector3f::Zero()
+                : overlay.colorMap.sample(value, overlay.range);
+            geometry.colors[vertexIndex] = gammaToLinear(displayColor);
             runtimeSubMesh.positions.push_back(geometry.positions[vertexIndex].cast<double>());
         }
         if(runtimeSubMesh.indices.empty()) {
@@ -6260,17 +6785,33 @@ bool ProjectScene::applySurfaceScalarOverlay(
     auto vertexColorMaterial = std::make_shared<rendercore::Material>();
     vertexColorMaterial->type = rendercore::MaterialType::ScalarOverlay;
     vertexColorMaterial->baseColor = Eigen::Vector4f::Ones();
+    // Scalar overlays replace the workpiece material after prediction. Keep
+    // the thickness field two-sided regardless of imported triangle winding.
+    scenecore::MaterialRenderState overlayRenderState;
+    overlayRenderState.cull = scenecore::MaterialCullMode::None;
+    scenecore::setMaterialRenderState(vertexColorMaterial.get(), overlayRenderState);
     for(unsigned int subMeshIndex = 0; subMeshIndex < overlayModel->subMeshCount(); ++subMeshIndex) {
         overlayModel->subMesh(subMeshIndex).material = vertexColorMaterial;
     }
 
-    runtimeOverlay->originalModel = runtime->surfaceScalarOverlay
-        ? runtime->surfaceScalarOverlay->originalModel
-        : runtime->visualNode->model();
+    runtimeOverlay->originalModel = simulationPlate
+        ? (m_impl->simulationPlateSurfaceScalarOverlay
+            ? m_impl->simulationPlateSurfaceScalarOverlay->originalModel
+            : m_impl->simulationPlateOriginalModel)
+        : (runtime->surfaceScalarOverlay
+            ? runtime->surfaceScalarOverlay->originalModel
+            : runtime->visualNode->model());
     runtimeOverlay->overlayModel = overlayModel;
     runtimeOverlay->visible = true;
-    runtime->surfaceScalarOverlay = runtimeOverlay;
-    runtime->visualNode->setModel(overlayModel);
+    if(simulationPlate) {
+        m_impl->simulationPlateSurfaceScalarOverlay = runtimeOverlay;
+        m_impl->simulationPlateNode->setModel(overlayModel);
+        m_impl->simulationPlateGridVisible = false;
+        m_impl->rebuildCoatingLineOverlays();
+    } else {
+        runtime->surfaceScalarOverlay = runtimeOverlay;
+        runtime->visualNode->setModel(overlayModel);
+    }
     if(errorMessage != nullptr) {
         errorMessage->clear();
     }
@@ -6279,6 +6820,16 @@ bool ProjectScene::applySurfaceScalarOverlay(
 
 bool ProjectScene::setSurfaceScalarOverlayVisible(const std::string& objectId, bool visible)
 {
+    if(objectId == kSimulationPlateObjectId) {
+        if(!m_impl->simulationPlateNode || !m_impl->simulationPlateSurfaceScalarOverlay) {
+            return false;
+        }
+        m_impl->simulationPlateSurfaceScalarOverlay->visible = visible;
+        m_impl->simulationPlateNode->setModel(visible
+            ? m_impl->simulationPlateSurfaceScalarOverlay->overlayModel
+            : m_impl->simulationPlateSurfaceScalarOverlay->originalModel);
+        return true;
+    }
     RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
     if(runtime == nullptr || !runtime->visualNode || !runtime->surfaceScalarOverlay) {
         return false;
@@ -6293,6 +6844,17 @@ bool ProjectScene::setSurfaceScalarOverlayVisible(const std::string& objectId, b
 
 bool ProjectScene::clearSurfaceScalarOverlay(const std::string& objectId)
 {
+    if(objectId == kSimulationPlateObjectId) {
+        if(!m_impl->simulationPlateNode || !m_impl->simulationPlateSurfaceScalarOverlay) {
+            return false;
+        }
+        m_impl->simulationPlateNode->setModel(
+            m_impl->simulationPlateSurfaceScalarOverlay->originalModel);
+        m_impl->simulationPlateSurfaceScalarOverlay.reset();
+        m_impl->simulationPlateGridVisible = true;
+        m_impl->rebuildCoatingLineOverlays();
+        return true;
+    }
     RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
     if(runtime == nullptr || !runtime->surfaceScalarOverlay) {
         return false;
@@ -6342,17 +6904,28 @@ smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScala
     int y) const
 {
     smrobot::visualization::SurfaceScalarProbeResult result;
-    const RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
-    if(runtime == nullptr || !runtime->surfaceScalarOverlay ||
-        !runtime->surfaceScalarOverlay->visible) {
-        return result;
+    const RuntimeSurfaceScalarOverlay* surfaceScalarOverlay = nullptr;
+    glm::mat4 worldTransform(1.0f);
+    if(objectId == kSimulationPlateObjectId) {
+        if(!m_impl->simulationPlateNode || !m_impl->simulationPlateVisible ||
+            !m_impl->simulationPlateSurfaceScalarOverlay ||
+            !m_impl->simulationPlateSurfaceScalarOverlay->visible) {
+            return result;
+        }
+        surfaceScalarOverlay = m_impl->simulationPlateSurfaceScalarOverlay.get();
+    } else {
+        const RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
+        if(runtime == nullptr || !runtime->surfaceScalarOverlay ||
+            !runtime->surfaceScalarOverlay->visible) {
+            return result;
+        }
+        surfaceScalarOverlay = runtime->surfaceScalarOverlay.get();
+        worldTransform = math::eigenToGlm(runtime->transform) * runtime->visualLocal;
     }
 
     ProjectScenePickRay ray;
     if(!screenRayFromCamera(
-        m_impl->cameraSystem.mainCameraNode()
-            ? m_impl->cameraSystem.mainCameraNode()->camera()
-            : nullptr,
+        m_impl->cameraSystem.mainCameraNode() ? m_impl->cameraSystem.mainCameraNode()->camera() : nullptr,
         m_impl->width,
         m_impl->height,
         x,
@@ -6361,10 +6934,8 @@ smrobot::visualization::SurfaceScalarProbeResult ProjectScene::probeSurfaceScala
         return result;
     }
 
-    const glm::mat4 worldTransform =
-        math::eigenToGlm(runtime->transform) * runtime->visualLocal;
     double nearestDistance = std::numeric_limits<double>::max();
-    for(const RuntimeSurfaceScalarSubMesh& subMesh : runtime->surfaceScalarOverlay->subMeshes) {
+    for(const RuntimeSurfaceScalarSubMesh& subMesh : surfaceScalarOverlay->subMeshes) {
         for(std::size_t index = 0; index + 2 < subMesh.indices.size(); index += 3) {
             const std::uint32_t indexA = subMesh.indices[index];
             const std::uint32_t indexB = subMesh.indices[index + 1];
@@ -7183,6 +7754,45 @@ bool ProjectScene::setSceneObjectTransform(
     return true;
 }
 
+bool ProjectScene::setSceneObjectVisibilityOverride(const std::string& objectId, bool visible)
+{
+    RuntimeSceneObject* object = findRuntimeObject(m_impl->objects, objectId);
+    if(object == nullptr || object->visualNode == nullptr) {
+        return false;
+    }
+    m_impl->sceneObjectVisibilityOverrides[objectId] = visible;
+    m_impl->applyMountFrameLinkFocusVisibility();
+    return true;
+}
+
+bool ProjectScene::clearSceneObjectVisibilityOverride(const std::string& objectId)
+{
+    if(m_impl->sceneObjectVisibilityOverrides.erase(objectId) == 0) {
+        return false;
+    }
+    m_impl->applyMountFrameLinkFocusVisibility();
+    return true;
+}
+
+void ProjectScene::clearSceneObjectVisibilityOverrides()
+{
+    if(m_impl->sceneObjectVisibilityOverrides.empty()) {
+        return;
+    }
+    m_impl->sceneObjectVisibilityOverrides.clear();
+    m_impl->applyMountFrameLinkFocusVisibility();
+}
+
+bool ProjectScene::sceneObjectVisible(const std::string& objectId, bool& visible) const
+{
+    const RuntimeSceneObject* object = findRuntimeObject(m_impl->objects, objectId);
+    if(object == nullptr || object->visualNode == nullptr) {
+        return false;
+    }
+    visible = object->visualNode->isModelVisible();
+    return true;
+}
+
 bool ProjectScene::removeSceneObject(const std::string& objectId)
 {
     if(!m_impl->simulationRuntime) {
@@ -7548,7 +8158,7 @@ std::size_t ProjectScene::endEffectorTracePointCount() const
 
 ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
     const std::string& robotId,
-    const std::string& targetRobotId) const
+    const std::string& targetId) const
 {
     SprayMeasurement result;
     collision::Transform3 tcp = collision::Transform3::Identity();
@@ -7556,16 +8166,49 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
         result.errorMessage = "No spray nozzle pose available";
         return result;
     }
-    const RuntimeRobot* target = findRuntimeRobot(m_impl->robots, targetRobotId);
-    if(!target || !target->instance) {
-        result.errorMessage = "Target robot not found: " + targetRobotId;
+    const RuntimeSceneObject* targetObject = findRuntimeObject(m_impl->objects, targetId);
+    const auto* objectDesc = targetObject ? findSceneObjectDesc(m_impl->document(), targetId) : nullptr;
+    const RuntimeRobot* target = targetObject ? nullptr : findRuntimeRobot(m_impl->robots, targetId);
+    if(!objectDesc && (!target || !target->instance)) {
+        result.errorMessage = "Target workpiece not found: " + targetId;
         return result;
     }
 
-    auto cached = m_impl->spraySurfaceMeshes.find(targetRobotId);
+    const std::string cacheKey = objectDesc
+        ? "object:" + targetId + ":" + objectDesc->sourcePath + ":" + std::to_string(objectDesc->visualScale)
+        : "robot:" + targetId;
+    auto cached = m_impl->spraySurfaceMeshes.find(cacheKey);
     if(cached == m_impl->spraySurfaceMeshes.end()) {
         std::vector<Impl::SpraySurfaceMesh> meshes;
-        for(const auto& link : target->model.links) {
+        if(objectDesc) {
+            const auto path = simulation_project::AssetResolver::resolveProjectPath(
+                ProjectRuntimeBuilder::makeAssetResolveContext(m_impl->projectBasePath, m_impl->document()),
+                objectDesc->sourcePath);
+            std::string error;
+            const auto model = assetcore::AssetManager::instance().tryLoadModel(
+                pathToUtf8(path), static_cast<float>(objectDesc->visualScale), &error);
+            if(!model) {
+                result.errorMessage = "Cannot load target mesh: " + error;
+                return result;
+            }
+            for(const auto& subMesh : model->subMeshes()) {
+                Impl::SpraySurfaceMesh mesh;
+                for(const auto& position : subMesh.geometry.positions) {
+                    const glm::vec4 corrected = model->get_local() * glm::vec4(
+                        position.x(), position.y(), position.z(), 1.0f);
+                    mesh.vertices.emplace_back(corrected.x, corrected.y, corrected.z);
+                }
+                mesh.indices = subMesh.geometry.indices;
+                if(mesh.indices.empty()) {
+                    for(std::size_t i = 0; i + 2 < mesh.vertices.size(); i += 3) {
+                        mesh.indices.push_back(static_cast<std::uint32_t>(i));
+                        mesh.indices.push_back(static_cast<std::uint32_t>(i + 1));
+                        mesh.indices.push_back(static_cast<std::uint32_t>(i + 2));
+                    }
+                }
+                meshes.push_back(std::move(mesh));
+            }
+        } else for(const auto& link : target->model.links) {
             for(const auto& visual : link.second.visuals) {
                 if(visual.meshPath.empty()) {
                     continue;
@@ -7600,7 +8243,7 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
                 }
             }
         }
-        cached = m_impl->spraySurfaceMeshes.emplace(targetRobotId, std::move(meshes)).first;
+        cached = m_impl->spraySurfaceMeshes.emplace(cacheKey, std::move(meshes)).first;
     }
 
     const collision::Vec3 direction = tcp.linear().col(2).normalized();
@@ -7609,7 +8252,8 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
     collision::Vec3 normal = collision::Vec3::Zero();
     std::size_t triangleCount = 0;
     for(const auto& mesh : cached->second) {
-        const collision::Transform3 world = target->instance->getLinkTransform(mesh.linkName);
+        const collision::Transform3 world = targetObject
+            ? targetObject->transform : target->instance->getLinkTransform(mesh.linkName);
         const collision::Transform3 inverse = world.inverse();
         ProjectScenePickRay ray;
         ray.origin = inverse * tcp.translation();
@@ -7636,7 +8280,7 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
         }
     }
     if(nearest == std::numeric_limits<double>::max()) {
-        result.errorMessage = triangleCount == 0 ? "Target has no surface triangles" : "No forward intersection with burnner";
+        result.errorMessage = triangleCount == 0 ? "Target has no surface triangles" : "No forward intersection with " + targetId;
         return result;
     }
     // Orient the two-sided STL normal toward the nozzle, independent of winding.
@@ -7670,6 +8314,39 @@ std::string ProjectScene::activeMountedAttachmentId() const
 std::vector<ProjectScene::ToolAttachmentInfo> ProjectScene::toolAttachments() const
 {
     return mountedAttachments();
+}
+
+bool ProjectScene::robotLinkTransform(const std::string& robotId, const std::string& linkName,
+    simulation_project::TransformDesc& transform) const
+{
+    const auto* robot = findRuntimeRobot(m_impl->robots, robotId);
+    if(!robot || !robot->instance || robot->model.links.find(linkName) == robot->model.links.end()) return false;
+    const auto world = robot->instance->getLinkTransform(linkName);
+    transform.x = world.translation().x();
+    transform.y = world.translation().y();
+    transform.z = world.translation().z();
+    const auto angles = world.linear().eulerAngles(2, 1, 0);
+    transform.yaw = angles[0]; transform.pitch = angles[1]; transform.roll = angles[2];
+    return true;
+}
+
+bool ProjectScene::mountedAttachmentPoses(const std::string& attachmentId,
+    simulation_project::TransformDesc& visual, simulation_project::TransformDesc& tcp) const
+{
+    const auto convert = [](const collision::Transform3& pose) {
+        simulation_project::TransformDesc result;
+        result.x = pose.translation().x(); result.y = pose.translation().y(); result.z = pose.translation().z();
+        const auto angles = pose.linear().eulerAngles(2, 1, 0);
+        result.yaw = angles[0]; result.pitch = angles[1]; result.roll = angles[2];
+        return result;
+    };
+    for(const auto& attachment : m_impl->attachmentVisualSystem.visuals()) {
+        if(attachment.documentId != attachmentId) continue;
+        visual = convert(attachment.worldVisual);
+        tcp = convert(attachment.worldTcp);
+        return true;
+    }
+    return false;
 }
 
 std::vector<ProjectScene::MountedAttachmentInfo> ProjectScene::mountedAttachments() const
@@ -7876,6 +8553,7 @@ bool ProjectScene::setCollisionQueriesEnabled(bool enabled)
     }
     m_impl->lastIncludePairCount = static_cast<std::size_t>(-1);
     m_impl->lastContactCount = static_cast<std::size_t>(-1);
+    rebuildVirtualBaffles();
     return true;
 }
 
@@ -7976,6 +8654,26 @@ bool ProjectScene::updateCollisionDetectorRuntimeOptions(const simulation_projec
     return false;
 }
 
+bool ProjectScene::applyUserCoordinateFrameDocument(const simulation_project::ProjectDocument& document)
+{
+    // Update the existing scene in place: retain camera, focus and all render objects.
+    const auto previous=runtimeDocumentSnapshot();
+    const auto applyObjects=[&](const simulation_project::ProjectDocument& doc) {
+        bool success=true;
+        for(const auto& object:doc.objects) {
+            const auto* runtime=findRuntimeObject(m_impl->objects,object.id);
+            if(!runtime) {success=false;continue;}
+            if(runtime->transform.matrix().isApprox(ProjectRuntimeBuilder::makeTransform(object.transform).matrix(),1e-12)) continue;
+            if(!setSceneObjectTransform(object.id,object.transform)) success=false;
+        }
+        return success;
+    };
+    if(applyObjects(document) && rebuildCollisionDetectorsFromDocument(document)) return true;
+    applyObjects(previous);
+    rebuildCollisionDetectorsFromDocument(previous);
+    return false;
+}
+
 bool ProjectScene::rebuildCollisionDetectorsFromDocument(const simulation_project::ProjectDocument& document)
 {
     const bool collisionRuntimeWasBuilt = m_impl->collisionRuntimeBuilt;
@@ -8013,6 +8711,7 @@ bool ProjectScene::rebuildCollisionDetectorsFromDocument(const simulation_projec
         : (m_impl->collisionDetectors.empty() ? std::string() : m_impl->collisionDetectors.front().id);
     m_impl->lastIncludePairCount = static_cast<std::size_t>(-1);
     m_impl->lastContactCount = static_cast<std::size_t>(-1);
+    rebuildVirtualBaffles();
     return true;
 }
 
@@ -8314,3 +9013,549 @@ RobotCollisionRobotSummary ProjectScene::robotCollisionSummary(
     }
     return summary;
 }
+
+bool ProjectScene::applySurfaceScalarOverlayModel(
+    const smrobot::visualization::SurfaceScalarOverlay& overlay,
+    const assetcore::ModelDesc& model,
+    std::string* errorMessage,
+    bool blackOutsideRange)
+{
+    m_impl->customOverlayModels[overlay.objectId] =
+        std::make_shared<assetcore::ModelDesc>(model);
+    const bool result = applySurfaceScalarOverlay(
+        overlay, errorMessage, blackOutsideRange);
+    m_impl->customOverlayModels.erase(overlay.objectId);
+    return result;
+}
+
+bool ProjectScene::setCoatingPredictionModel(
+    const std::string& objectId,
+    const assetcore::ModelDesc& model,
+    std::string* errorMessage)
+{
+    if(objectId == kSimulationPlateObjectId) {
+        std::shared_ptr<rendercore::Model> displayModel =
+            rendercore::ModelManager::instance().buildModelFromDesc(model);
+        if(!displayModel) {
+            if(errorMessage != nullptr) {
+                *errorMessage = "Failed to build the simulation plate model.";
+            }
+            return false;
+        }
+        auto plateMaterial = std::make_shared<rendercore::Material>();
+        plateMaterial->baseColor = Eigen::Vector4f(0.58f, 0.64f, 0.70f, 1.0f);
+        plateMaterial->specular = Eigen::Vector3f(0.30f, 0.32f, 0.35f);
+        plateMaterial->shininess = 28.0f;
+        ensureModelMaterial(displayModel, plateMaterial);
+        disableModelBackFaceCulling(displayModel);
+        if(!m_impl->simulationPlateNode) {
+            m_impl->simulationPlateNode = std::make_shared<scenecore::ModelNode>(displayModel);
+            m_impl->simulationPlateNode->setName("coating_simulation_plate");
+            m_impl->sceneGraph.root()->addChild(m_impl->simulationPlateNode);
+            m_impl->sceneGraph.registerNode(m_impl->simulationPlateNode);
+        }
+        m_impl->simulationPlateOriginalModel = displayModel;
+        m_impl->simulationPlatePredictionModel = displayModel;
+        m_impl->simulationPlateModelDesc =
+            std::make_shared<assetcore::ModelDesc>(model);
+        m_impl->simulationPlateBounds = CameraSceneBounds();
+        m_impl->simulationPlateGridSegments.clear();
+        for(const assetcore::SubMeshDesc& subMesh : model.subMeshes()) {
+            for(const Eigen::Vector3f& position : subMesh.geometry.positions) {
+                m_impl->simulationPlateBounds.includePoint(position.cast<double>());
+            }
+        }
+        if(m_impl->simulationPlateBounds.valid && !model.subMeshes().empty()) {
+            const auto& positions = model.subMeshes().front().geometry.positions;
+            std::size_t columns = 0;
+            if(!positions.empty()) {
+                const float firstY = positions.front().y();
+                while(columns < positions.size() &&
+                    std::abs(positions[columns].y() - firstY) <= 1.0e-6f) {
+                    ++columns;
+                }
+            }
+            const std::size_t rows = columns > 0 ? positions.size() / columns : 0;
+            if(columns > 1 && rows > 1) {
+                const auto makeSegment = [](const Eigen::Vector3f& a,
+                                            const Eigen::Vector3f& b) {
+                    ProjectScene::DebugLineSegment segment;
+                    segment.startWorld.x = a.x();
+                    segment.startWorld.y = a.y();
+                    segment.startWorld.z = a.z() + 0.00002;
+                    segment.endWorld.x = b.x();
+                    segment.endWorld.y = b.y();
+                    segment.endWorld.z = b.z() + 0.00002;
+                    segment.color = simulation_project::ColorDesc{ 0.08, 0.10, 0.12, 0.9 };
+                    return segment;
+                };
+                m_impl->simulationPlateGridSegments.reserve(rows + columns);
+                for(std::size_t row = 0; row < rows; ++row) {
+                    m_impl->simulationPlateGridSegments.push_back(makeSegment(
+                        positions[row * columns], positions[row * columns + columns - 1]));
+                }
+                for(std::size_t column = 0; column < columns; ++column) {
+                    m_impl->simulationPlateGridSegments.push_back(makeSegment(
+                        positions[column], positions[(rows - 1) * columns + column]));
+                }
+            }
+        }
+        m_impl->simulationPlateNode->setModel(displayModel);
+        m_impl->simulationPlateNode->setVisible(true);
+        m_impl->simulationPlateVisible = true;
+        m_impl->simulationPlateGridVisible = true;
+        m_impl->rebuildCoatingLineOverlays();
+        if(errorMessage != nullptr) {
+            errorMessage->clear();
+        }
+        return true;
+    }
+    RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
+    if(runtime == nullptr || !runtime->visualNode) {
+        if(errorMessage != nullptr) {
+            *errorMessage = "The target scene object is not available in the viewport.";
+        }
+        return false;
+    }
+    std::shared_ptr<rendercore::Model> displayModel =
+        rendercore::ModelManager::instance().buildModelFromDesc(model);
+    if(!displayModel) {
+        if(errorMessage != nullptr) {
+            *errorMessage = "Failed to build the adaptive coating prediction model.";
+        }
+        return false;
+    }
+    disableModelBackFaceCulling(displayModel);
+    if(!runtime->coatingPredictionOriginalModel) {
+        runtime->coatingPredictionOriginalModel = runtime->surfaceScalarOverlay
+            ? runtime->surfaceScalarOverlay->originalModel
+            : runtime->visualNode->model();
+    }
+    runtime->coatingPredictionModel = displayModel;
+    runtime->visualNode->setModel(displayModel);
+    if(errorMessage != nullptr) {
+        errorMessage->clear();
+    }
+    return true;
+}
+
+bool ProjectScene::clearCoatingPredictionModel(const std::string& objectId)
+{
+    if(objectId == kSimulationPlateObjectId) {
+        if(!m_impl->simulationPlateNode || !m_impl->simulationPlateOriginalModel) {
+            return false;
+        }
+        if(m_impl->simulationPlateSurfaceScalarOverlay) {
+            m_impl->simulationPlateNode->setModel(
+                m_impl->simulationPlateSurfaceScalarOverlay->originalModel);
+        } else {
+            m_impl->simulationPlateNode->setModel(m_impl->simulationPlateOriginalModel);
+        }
+        m_impl->simulationPlatePredictionModel.reset();
+        return true;
+    }
+    RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
+    if(runtime == nullptr || !runtime->coatingPredictionOriginalModel) {
+        return false;
+    }
+    if(runtime->surfaceScalarOverlay) {
+        runtime->surfaceScalarOverlay->originalModel = runtime->coatingPredictionOriginalModel;
+    } else if(runtime->visualNode) {
+        runtime->visualNode->setModel(runtime->coatingPredictionOriginalModel);
+    }
+    runtime->coatingPredictionModel.reset();
+    runtime->coatingPredictionOriginalModel.reset();
+    return true;
+}
+
+void ProjectScene::setCoatingTrajectoryPreview(
+    const std::vector<CoatingTrajectoryPreviewPoint>& points,
+    bool visible,
+    bool showTrajectoryLines,
+    bool showSprayPointFrames)
+{
+    if(points.empty()){setSprayDirectionArrow({}, {},false);setSprayReferencePaths({},{});}
+    m_impl->coatingTrajectoryPreview = points;
+    m_impl->coatingTrajectoryLinesVisible = showTrajectoryLines;
+    m_impl->coatingSprayPointFramesVisible = showSprayPointFrames;
+    m_impl->coatingTrajectoryPreviewVisible = visible && !points.empty()
+        && (showTrajectoryLines || showSprayPointFrames);
+    m_impl->coatingTrajectoryRenderer.setTrajectory(
+        m_impl->coatingTrajectoryPreview,
+        m_impl->coatingTrajectoryPreviewVisible,
+        m_impl->coatingTrajectoryLinesVisible,
+        m_impl->coatingSprayPointFramesVisible);
+    m_impl->rebuildCoatingLineOverlays();
+}
+
+bool ProjectScene::setCoatingTrajectoryPreviewVisible(
+    bool visible,
+    bool showTrajectoryLines,
+    bool showSprayPointFrames)
+{
+    m_impl->coatingTrajectoryLinesVisible = showTrajectoryLines;
+    m_impl->coatingSprayPointFramesVisible = showSprayPointFrames;
+    m_impl->coatingTrajectoryPreviewVisible = visible
+        && !m_impl->coatingTrajectoryPreview.empty()
+        && (showTrajectoryLines || showSprayPointFrames);
+    m_impl->coatingTrajectoryRenderer.setTrajectory(
+        m_impl->coatingTrajectoryPreview,
+        m_impl->coatingTrajectoryPreviewVisible,
+        m_impl->coatingTrajectoryLinesVisible,
+        m_impl->coatingSprayPointFramesVisible);
+    m_impl->rebuildCoatingLineOverlays();
+    return !visible || (!m_impl->coatingTrajectoryPreview.empty()
+        && (showTrajectoryLines || showSprayPointFrames));
+}
+
+void ProjectScene::setCoatingPredictionDebugState(
+    const CoatingPredictionDebugState& state)
+{
+    m_impl->coatingPredictionDebugState = state;
+    m_impl->rebuildCoatingLineOverlays();
+}
+
+void ProjectScene::setCoatingPredictionDebugVisibility(
+    const CoatingPredictionDebugVisibility& visibility)
+{
+    m_impl->coatingPredictionDebugVisibility = visibility;
+    m_impl->rebuildCoatingLineOverlays();
+}
+
+void ProjectScene::clearCoatingPredictionDebugState()
+{
+    m_impl->coatingPredictionDebugState = CoatingPredictionDebugState();
+    m_impl->rebuildCoatingLineOverlays();
+}
+
+bool ProjectScene::setCoatingModelVisible(const std::string& objectId, bool visible)
+{
+    if(objectId == kSimulationPlateObjectId) {
+        if(!m_impl->simulationPlateNode) {
+            return false;
+        }
+        m_impl->simulationPlateNode->setVisible(visible);
+        m_impl->simulationPlateVisible = visible;
+        m_impl->rebuildCoatingLineOverlays();
+        return true;
+    }
+    RuntimeSceneObject* runtime = findRuntimeObject(m_impl->objects, objectId);
+    if(runtime == nullptr || !runtime->visualNode) {
+        return false;
+    }
+    m_impl->coatingModelVisibilityOverrides[objectId] = visible;
+    m_impl->applyMountFrameLinkFocusVisibility();
+    return true;
+}
+
+void ProjectScene::setCoatingModelVisibilities(
+    const std::unordered_map<std::string, bool>& visibility)
+{
+    m_impl->coatingModelVisibilityOverrides = visibility;
+    m_impl->applyMountFrameLinkFocusVisibility();
+}
+
+void ProjectScene::clearCoatingModelVisibility(const std::string& objectId)
+{
+    m_impl->coatingModelVisibilityOverrides.erase(objectId);
+    m_impl->applyMountFrameLinkFocusVisibility();
+}
+
+void ProjectScene::setCoatingAnalysisView(bool active)
+{
+    m_impl->coatingAnalysisActive = active;
+    if(!active) {
+        m_impl->coatingModelVisibilityOverrides.clear();
+        m_impl->applyMountFrameLinkFocusVisibility();
+        m_impl->rebuildCoatingLineOverlays();
+    }
+}
+
+void ProjectScene::focusCoatingObject(const std::string& objectId, double duration)
+{
+    if(!m_impl->initialized || objectId.empty()) {
+        return;
+    }
+    const CameraSceneBounds bounds = objectId == kSimulationPlateObjectId ? m_impl->simulationPlateBounds : m_impl->sceneObjectBounds(objectId);
+    if(!bounds.valid) {
+        return;
+    }
+    const ProjectSceneCameraView view = objectId == kSimulationPlateObjectId
+        ? ProjectSceneCameraView::Isometric
+        : ProjectSceneCameraView::Front;
+        m_impl->cameraSystem.animateTo(
+        objectId == kSimulationPlateObjectId
+            ? ProjectSceneCameraSystem::makeLookAtState(bounds, view, 1.30)
+            : ProjectSceneCameraSystem::makeLookAtState(bounds, view, 1.20),
+        std::max(0.05, duration));
+}
+
+void ProjectScene::Impl::rebuildCoatingLineOverlays()
+{
+    constexpr const char* kOwner = "coatingAnalysis";
+    const std::string prefix = std::string(kOwner) + "\n";
+    for(auto it = debugLineOverlays.begin(); it != debugLineOverlays.end();) {
+        it = it->first.rfind(prefix, 0) == 0 ? debugLineOverlays.erase(it) : std::next(it);
+    }
+
+    const auto makePoint = [](double x, double y, double z) {
+        simulation_project::Vec3Desc point;
+        point.x = x;
+        point.y = y;
+        point.z = z;
+        return point;
+    };
+    const auto addSegment = [&](ProjectScene::DebugLineOverlay& overlay,
+                                double ax, double ay, double az,
+                                double bx, double by, double bz,
+                                const simulation_project::ColorDesc& color) {
+        ProjectScene::DebugLineSegment segment;
+        segment.startWorld = makePoint(ax, ay, az);
+        segment.endWorld = makePoint(bx, by, bz);
+        segment.color = color;
+        overlay.segments.push_back(segment);
+    };
+    const auto makeOverlay = [kOwner](const char* id) {
+        ProjectScene::DebugLineOverlay overlay;
+        overlay.ownerId = kOwner;
+        overlay.overlayId = id;
+        overlay.visible = true;
+        return overlay;
+    };
+    const auto storeOverlay = [&](ProjectScene::DebugLineOverlay overlay) {
+        debugLineOverlays[overlay.ownerId + "\n" + overlay.overlayId] = std::move(overlay);
+    };
+    const simulation_project::ColorDesc yellow{ 1.0, 0.85, 0.10, 1.0 };
+    const simulation_project::ColorDesc blue{ 0.15, 0.45, 1.0, 1.0 };
+    const simulation_project::ColorDesc green{ 0.10, 0.95, 0.35, 1.0 };
+    const simulation_project::ColorDesc magenta{ 1.0, 0.10, 0.75, 1.0 };
+
+    if(simulationPlateVisible && simulationPlateGridVisible &&
+        !simulationPlateGridSegments.empty()) {
+        auto overlay = makeOverlay("simulationGrid");
+        overlay.segments = simulationPlateGridSegments;
+        storeOverlay(std::move(overlay));
+    }
+
+    const ProjectScene::CoatingPredictionDebugState& state = coatingPredictionDebugState;
+    if(!state.visible) {
+        return;
+    }
+
+    if(coatingPredictionDebugVisibility.cylindricalSurface) {
+        auto overlay = makeOverlay("cylindricalSurface");
+        const auto appendTriangles = [&](const std::vector<ProjectScene::CoatingPredictionDebugTriangle>& triangles) {
+            for(const auto& triangle : triangles) {
+                addSegment(overlay, triangle.ax, triangle.ay, triangle.az,
+                    triangle.bx, triangle.by, triangle.bz, yellow);
+                addSegment(overlay, triangle.bx, triangle.by, triangle.bz,
+                    triangle.cx, triangle.cy, triangle.cz, yellow);
+                addSegment(overlay, triangle.cx, triangle.cy, triangle.cz,
+                    triangle.ax, triangle.ay, triangle.az, yellow);
+            }
+        };
+        appendTriangles(state.seedTriangles);
+        appendTriangles(state.cylindricalTriangles);
+        storeOverlay(std::move(overlay));
+    }
+
+    if(coatingPredictionDebugVisibility.rotationAxis) {
+        auto overlay = makeOverlay("rotationAxis");
+        addSegment(overlay,
+            state.axisOriginX, state.axisOriginY, state.axisOriginZ,
+            state.axisOriginX + state.axisDirectionX * state.axisLength,
+            state.axisOriginY + state.axisDirectionY * state.axisLength,
+            state.axisOriginZ + state.axisDirectionZ * state.axisLength,
+            blue);
+        storeOverlay(std::move(overlay));
+    }
+
+    if(coatingPredictionDebugVisibility.localSector) {
+        auto overlay = makeOverlay("localSector");
+        const auto appendPoints = [&](const std::vector<ProjectScene::CoatingPredictionDebugPoint>& points) {
+            for(std::size_t index = 1; index < points.size(); ++index) {
+                const auto& previous = points[index - 1];
+                const auto& current = points[index];
+                addSegment(overlay,
+                    previous.positionX, previous.positionY, previous.positionZ,
+                    current.positionX, current.positionY, current.positionZ,
+                    green);
+            }
+        };
+        appendPoints(state.profileLinePoints);
+        appendPoints(state.selectedProfileLinePoints);
+        for(const auto& triangle : state.localSectorTriangles) {
+            addSegment(overlay, triangle.ax, triangle.ay, triangle.az,
+                triangle.bx, triangle.by, triangle.bz, green);
+            addSegment(overlay, triangle.bx, triangle.by, triangle.bz,
+                triangle.cx, triangle.cy, triangle.cz, green);
+            addSegment(overlay, triangle.cx, triangle.cy, triangle.cz,
+                triangle.ax, triangle.ay, triangle.az, green);
+        }
+        storeOverlay(std::move(overlay));
+    }
+
+    if(coatingPredictionDebugVisibility.sprayPoints) {
+        auto overlay = makeOverlay("sprayPoints");
+        for(const auto& point : state.sprayPoints) {
+            const double length = std::max(state.markerRadius, 0.002);
+            addSegment(overlay,
+                point.positionX, point.positionY, point.positionZ,
+                point.positionX + point.directionX * length,
+                point.positionY + point.directionY * length,
+                point.positionZ + point.directionZ * length,
+                magenta);
+        }
+        storeOverlay(std::move(overlay));
+    }
+}
+
+ProjectSceneTrianglePickResult ProjectScene::pickTriangleScreenPoint(int x, int y) const
+{
+    ProjectSceneTrianglePickResult best;
+    ProjectScenePickRay ray;
+    if(!screenRayFromCamera(
+        m_impl->cameraSystem.mainCameraNode() ? m_impl->cameraSystem.mainCameraNode()->camera() : nullptr,
+        m_impl->width,
+        m_impl->height,
+        x,
+        y,
+        ray)) {
+        return best;
+    }
+
+    for(const RuntimeSceneObject& runtimeObject : m_impl->objects) {
+        if(runtimeObject.objectType == "pointCloud" ||
+            runtimeObject.objectType == "toolAttachment" ||
+            !runtimeObject.visualNode ||
+            !runtimeObject.visualNode->isModelVisible()) {
+            continue;
+        }
+
+        const auto* object=findSceneObjectDesc(m_impl->document(),runtimeObject.documentId);
+        if(!object) continue;
+        const auto path=simulation_project::AssetResolver::resolveProjectPath(ProjectRuntimeBuilder::makeAssetResolveContext(m_impl->projectBasePath,m_impl->document()),object->sourcePath);
+        const auto pickModel=assetcore::AssetManager::instance().tryLoadModel(pathToUtf8(path),float(object->visualScale));
+        if(!pickModel) continue;
+        std::size_t triangleIndex = 0;
+        for(const assetcore::SubMeshDesc& subMesh : pickModel->subMeshes()) {
+            const assetcore::GeometryDesc& geometry = subMesh.geometry;
+            const std::size_t indexCount = geometry.indices.empty()
+                ? geometry.positions.size()
+                : geometry.indices.size();
+            for(std::size_t offset = 0; offset + 2 < indexCount; offset += 3) {
+                const std::uint32_t i0 = geometry.indices.empty()
+                    ? static_cast<std::uint32_t>(offset)
+                    : geometry.indices[offset];
+                const std::uint32_t i1 = geometry.indices.empty()
+                    ? static_cast<std::uint32_t>(offset + 1)
+                    : geometry.indices[offset + 1];
+                const std::uint32_t i2 = geometry.indices.empty()
+                    ? static_cast<std::uint32_t>(offset + 2)
+                    : geometry.indices[offset + 2];
+                if(i0 >= geometry.positions.size() ||
+                    i1 >= geometry.positions.size() ||
+                    i2 >= geometry.positions.size()) {
+                    ++triangleIndex;
+                    continue;
+                }
+
+                const Eigen::Vector3d a = runtimeObject.transform *
+                    transformSurfacePoint(runtimeObject.visualLocal, geometry.positions[i0].cast<double>());
+                const Eigen::Vector3d b = runtimeObject.transform *
+                    transformSurfacePoint(runtimeObject.visualLocal, geometry.positions[i1].cast<double>());
+                const Eigen::Vector3d c = runtimeObject.transform *
+                    transformSurfacePoint(runtimeObject.visualLocal, geometry.positions[i2].cast<double>());
+                double distance = 0.0;
+                double barycentricB = 0.0;
+                double barycentricC = 0.0;
+                if(!intersectRayTriangle(
+                    ray, a, b, c, distance, barycentricB, barycentricC) ||
+                    (best.valid() && distance >= best.rayDistance)) {
+                    ++triangleIndex;
+                    continue;
+                }
+
+                const Eigen::Vector3d faceNormal = (b - a).cross(c - a);
+                if(faceNormal.squaredNorm() <= 1.0e-18) {
+                    ++triangleIndex;
+                    continue;
+                }
+
+                best.sceneObjectId = runtimeObject.documentId;
+                best.triangleIndex = static_cast<std::uint32_t>(triangleIndex);
+                best.hitPosition = ray.origin + ray.direction * distance;
+                best.nearestVertexPosition = a;
+                double nearestDistance = (best.hitPosition - a).squaredNorm();
+                if(const double distanceB = (best.hitPosition - b).squaredNorm();
+                    distanceB < nearestDistance) {
+                    best.nearestVertexPosition = b;
+                    nearestDistance = distanceB;
+                }
+                if((best.hitPosition - c).squaredNorm() < nearestDistance) {
+                    best.nearestVertexPosition = c;
+                }
+                best.normal = faceNormal.normalized();
+                best.rayDistance = distance;
+                ++triangleIndex;
+            }
+        }
+    }
+    return best;
+}
+
+void ProjectScene::setSprayDirectionArrow(const Eigen::Vector3d& origin, const Eigen::Vector3d& target, bool visible)
+{
+    const std::string key="sprayDirection\nfirstPoint";
+    m_impl->debugLineOverlays.erase(key);
+    if(!visible || !origin.allFinite() || !target.allFinite() || (target-origin).norm()<1e-9)return;
+    DebugLineOverlay overlay;overlay.ownerId="sprayDirection";overlay.overlayId="firstPoint";
+    const auto segment=[&](const Eigen::Vector3d& a,const Eigen::Vector3d& b) {
+        DebugLineSegment line;line.startWorld={a.x(),a.y(),a.z()};line.endWorld={b.x(),b.y(),b.z()};
+        line.color={1.0,0.9,0.0,1.0};overlay.segments.push_back(line);
+    };
+    const double length=(target-origin).norm();
+    const Eigen::Vector3d u=(target-origin).normalized();
+    const double head=std::min(0.06,length*0.45);
+    const double radius=std::min(0.006,std::max(0.0015,length*0.025));
+    const Eigen::Vector3d e1=u.unitOrthogonal(),e2=u.cross(e1);
+    const Eigen::Vector3d neck=target-head*u;
+    segment(origin,target);
+    // A wire cylinder and a broad conical head remain visible with one-pixel GL lines.
+    constexpr int sides=16;
+    const double pi=std::acos(-1.0);
+    for(int i=0;i<sides;++i) {
+        const double angle=2*pi*i/sides,next=2*pi*(i+1)/sides;
+        const Eigen::Vector3d radial=std::cos(angle)*e1+std::sin(angle)*e2;
+        const Eigen::Vector3d radialNext=std::cos(next)*e1+std::sin(next)*e2;
+        segment(origin+radius*radial,neck+radius*radial);
+        segment(origin+radius*radial,origin+radius*radialNext);
+        segment(neck+radius*radial,neck+radius*radialNext);
+        segment(target,neck+0.65*head*radial);
+        segment(neck+0.65*head*radial,neck+0.65*head*radialNext);
+    }
+    m_impl->debugLineOverlays[key]=std::move(overlay);
+}
+
+void ProjectScene::setSprayReferencePaths(const std::vector<Eigen::Vector3d>& input, const std::vector<Eigen::Vector3d>& targets)
+{
+    const auto store=[&](const std::string& name,const std::vector<Eigen::Vector3d>& points,const simulation_project::ColorDesc& color) {
+        const std::string key="sprayReference\n"+name;
+        m_impl->debugLineOverlays.erase(key);
+        if(points.empty())return;
+        DebugLineOverlay overlay;overlay.ownerId="sprayReference";overlay.overlayId=name;
+        const auto segment=[&](const Eigen::Vector3d& a,const Eigen::Vector3d& b) {
+            DebugLineSegment line;line.startWorld={a.x(),a.y(),a.z()};line.endWorld={b.x(),b.y(),b.z()};line.color=color;overlay.segments.push_back(line);
+        };
+        // Point crosses, not connecting chords: surface geometry between targets is unknown.
+        for(const auto& point:points)for(int axis=0;axis<3;++axis) {
+            Eigen::Vector3d offset=Eigen::Vector3d::Zero();offset[axis]=0.0015;
+            segment(point-offset,point+offset);
+        }
+        m_impl->debugLineOverlays[key]=std::move(overlay);
+    };
+    store("input",input,{0.65,0.65,0.65,1});
+    store("surfaceTargets",targets,{0.15,1.0,0.3,1});
+}
+
+void ProjectScene::setTrajectoryHighlightRange(int first,int last) { m_impl->trajectoryHighlightFirst=first; m_impl->trajectoryHighlightLast=last; }

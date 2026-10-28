@@ -1,0 +1,219 @@
+cmake_minimum_required(VERSION 3.20)
+
+set(_build_dir "@RS2026_LOCAL_PREBUILT_BUILD_DIR@")
+set(_source_dir "@RS2026_LOCAL_PREBUILT_SOURCE_DIR@")
+set(_active_root "@RS2026_LOCAL_PREBUILT_ROOT@")
+if(DEFINED RS2026_LOCAL_PREBUILT_OVERRIDE_ROOT)
+    set(_active_root "${RS2026_LOCAL_PREBUILT_OVERRIDE_ROOT}")
+endif()
+set(_packages "@RS2026_LOCAL_PREBUILT_PACKAGES@")
+set(_known_packages "@RS2026_LOCAL_PREBUILT_KNOWN_PACKAGES@")
+set(_components "@RS2026_LOCAL_PREBUILT_COMPONENTS@")
+set(_problems "@RS2026_LOCAL_PREBUILT_PROBLEMS@")
+set(_legacy_marker_name ".rs2026-local-prebuilt-install")
+
+if(NOT _packages)
+    message(FATAL_ERROR "No InstallPrebuilt_<Package> option is ON")
+endif()
+if(_problems)
+    string(REPLACE ";" "\n  - " _problem_text "${_problems}")
+    message(FATAL_ERROR "Selected packages cannot be installed:\n  - ${_problem_text}")
+endif()
+if(NOT RS2026_LOCAL_PREBUILT_CONFIG)
+    message(FATAL_ERROR "RS2026_LOCAL_PREBUILT_CONFIG is required")
+endif()
+
+get_filename_component(_active_root "${_active_root}" ABSOLUTE)
+get_filename_component(_source_prebuilt "${_source_dir}/PrebuiltPackages" ABSOLUTE)
+cmake_path(IS_PREFIX _source_dir "${_active_root}" NORMALIZE _inside_source)
+cmake_path(IS_PREFIX _build_dir "${_active_root}" NORMALIZE _inside_build)
+cmake_path(IS_PREFIX _source_prebuilt "${_active_root}" NORMALIZE _inside_source_prebuilt)
+if(_active_root STREQUAL _build_dir OR
+   _active_root STREQUAL _source_dir OR
+   (_inside_source AND NOT _inside_build AND NOT _active_root STREQUAL _source_prebuilt) OR
+   (_inside_source_prebuilt AND NOT _active_root STREQUAL _source_prebuilt))
+    message(FATAL_ERROR
+        "CMAKE_INSTALL_PREFIX must be PrebuiltPackages or a dedicated output outside the source root")
+endif()
+get_filename_component(_parent "${_active_root}" DIRECTORY)
+file(MAKE_DIRECTORY "${_parent}")
+string(TIMESTAMP _stamp "%Y%m%d%H%M%S")
+string(RANDOM LENGTH 8 ALPHABET 0123456789abcdef _nonce)
+set(_stage "${_active_root}.stage-${_stamp}-${_nonce}")
+if(EXISTS "${_stage}")
+    message(FATAL_ERROR "Temporary local install path already exists")
+endif()
+
+set(_reuse_packages)
+set(_replace_packages)
+if(EXISTS "${_active_root}")
+    if(NOT IS_DIRECTORY "${_active_root}")
+        message(FATAL_ERROR
+            "Existing output is not owned by this installer: ${_active_root}")
+    endif()
+    file(GLOB _existing_entries RELATIVE "${_active_root}"
+        "${_active_root}/*" "${_active_root}/.*")
+    list(REMOVE_ITEM _existing_entries "." "..")
+    list(REMOVE_DUPLICATES _existing_entries)
+    foreach(_entry IN LISTS _existing_entries)
+        if(_entry STREQUAL _legacy_marker_name)
+            file(READ "${_active_root}/${_entry}" _old_marker)
+            string(FIND "${_old_marker}"
+                "RS2026 local selected prebuilt install\n" _marker_position)
+            if(NOT _marker_position EQUAL 0)
+                message(FATAL_ERROR "Unrecognized legacy install marker: ${_active_root}/${_entry}")
+            endif()
+            continue()
+        endif()
+        if(NOT _entry IN_LIST _known_packages OR
+           NOT IS_DIRECTORY "${_active_root}/${_entry}" OR
+           NOT EXISTS "${_active_root}/${_entry}/manifest.json" OR
+           NOT EXISTS "${_active_root}/${_entry}/lib/cmake/${_entry}/${_entry}Config.cmake")
+            message(FATAL_ERROR "Existing output contains unrelated content: ${_active_root}/${_entry}")
+        endif()
+        file(READ "${_active_root}/${_entry}/manifest.json" _old_manifest)
+        string(JSON _old_name ERROR_VARIABLE _json_error GET "${_old_manifest}" name)
+        if(NOT _json_error STREQUAL "NOTFOUND" OR NOT _old_name STREQUAL _entry)
+            message(FATAL_ERROR "Existing package manifest is invalid: ${_active_root}/${_entry}")
+        endif()
+        if(NOT _entry IN_LIST _packages)
+            continue()
+        endif()
+        string(JSON _component_count ERROR_VARIABLE _json_error
+            LENGTH "${_old_manifest}" publicComponents)
+        if(NOT _json_error STREQUAL "NOTFOUND")
+            message(FATAL_ERROR "Existing package components are invalid: ${_active_root}/${_entry}")
+        endif()
+        set(_old_components)
+        if(_component_count GREATER 0)
+            math(EXPR _last_component "${_component_count} - 1")
+            foreach(_index RANGE 0 ${_last_component})
+                string(JSON _component_name GET "${_old_manifest}" publicComponents ${_index})
+                list(APPEND _old_components "${_component_name}")
+            endforeach()
+        endif()
+        set(_wanted_components)
+        foreach(_component IN LISTS _components)
+            if(_component MATCHES "^smrobot_sdk_${_entry}_(.+)$" AND
+               NOT CMAKE_MATCH_1 STREQUAL "package")
+                list(APPEND _wanted_components "${CMAKE_MATCH_1}")
+            endif()
+        endforeach()
+        list(SORT _old_components)
+        list(SORT _wanted_components)
+        if("${_old_components}" STREQUAL "${_wanted_components}")
+            list(APPEND _reuse_packages "${_entry}")
+        else()
+            list(APPEND _replace_packages "${_entry}")
+        endif()
+    endforeach()
+endif()
+
+file(MAKE_DIRECTORY "${_stage}")
+foreach(_package IN LISTS _reuse_packages)
+    file(COPY "${_active_root}/${_package}" DESTINATION "${_stage}")
+endforeach()
+
+function(_rs2026_abort_install reason)
+    file(REMOVE_RECURSE "${_stage}")
+    message(FATAL_ERROR "${reason}")
+endfunction()
+
+foreach(_component IN LISTS _components)
+    execute_process(COMMAND "${CMAKE_COMMAND}"
+        --install "${_build_dir}"
+        --config "${RS2026_LOCAL_PREBUILT_CONFIG}"
+        --prefix "${_stage}"
+        --component "${_component}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(NOT _result EQUAL 0)
+        _rs2026_abort_install(
+            "Installing ${_component} failed (${_result}):\n${_stdout}\n${_stderr}")
+    endif()
+    message(STATUS "Installed ${_component}")
+endforeach()
+
+if("Common" IN_LIST _packages)
+    set(_common_root "${_stage}/Common")
+    file(COPY "${_source_dir}/cmake/local_prebuilt_common/README.md"
+        DESTINATION "${_common_root}")
+    file(COPY "${_source_dir}/cmake/local_prebuilt_common/docs"
+        "${_source_dir}/cmake/local_prebuilt_common/examples"
+        DESTINATION "${_common_root}")
+    set(_common_component_json "")
+    foreach(_component IN LISTS _components)
+        if(_component MATCHES "^smrobot_sdk_Common_(.+)$" AND
+           NOT CMAKE_MATCH_1 STREQUAL "package")
+            if(_common_component_json)
+                string(APPEND _common_component_json ", ")
+            endif()
+            string(APPEND _common_component_json "\"${CMAKE_MATCH_1}\"")
+        endif()
+    endforeach()
+    file(WRITE "${_common_root}/manifest.json"
+        "{\n  \"schema\": \"SMRobotPackageManifest.v1\",\n"
+        "  \"formatVersion\": 1,\n  \"name\": \"Common\",\n"
+        "  \"version\": \"@PROJECT_VERSION@\",\n"
+        "  \"artifactKind\": \"shared-library-sdk\",\n"
+        "  \"cmakePackage\": \"Common\",\n"
+        "  \"targetNamespace\": \"Common::\",\n"
+        "  \"runtimeDirectory\": \"bin\",\n"
+        "  \"requiredDirectories\": [\"include\", \"lib\", \"bin\", \"docs\", \"examples\"],\n"
+        "  \"publicComponents\": [${_common_component_json}],\n"
+        "  \"excludedContent\": [\"private headers\", \"implementation sources\", \"internal tests\"]\n}\n")
+endif()
+
+file(GLOB _actual_top RELATIVE "${_stage}" "${_stage}/*")
+set(_expected_top ${_packages})
+list(SORT _actual_top)
+list(SORT _expected_top)
+if(NOT "${_actual_top}" STREQUAL "${_expected_top}")
+    _rs2026_abort_install(
+        "Unexpected local prebuilt root entries: ${_actual_top}; expected: ${_expected_top}")
+endif()
+foreach(_package IN LISTS _packages)
+    set(_package_root "${_stage}/${_package}")
+    foreach(_required
+        "${_package_root}/manifest.json"
+        "${_package_root}/lib/cmake/${_package}/${_package}Config.cmake")
+        if(NOT EXISTS "${_required}")
+            _rs2026_abort_install("Incomplete ${_package} install: ${_required}")
+        endif()
+    endforeach()
+    file(GLOB _targets "${_package_root}/lib/cmake/*/*Targets.cmake")
+    file(GLOB _libraries
+        "${_package_root}/lib/*.lib" "${_package_root}/lib/*.a"
+        "${_package_root}/lib/*.so*" "${_package_root}/lib/*.dylib"
+        "${_package_root}/bin/*.dll")
+    if(NOT _targets OR NOT _libraries)
+        _rs2026_abort_install(
+            "${_package} has no installed Targets file or library in ${_package_root}")
+    endif()
+endforeach()
+
+file(MAKE_DIRECTORY "${_active_root}")
+foreach(_package IN LISTS _replace_packages)
+    file(REMOVE_RECURSE "${_active_root}/${_package}")
+    if(EXISTS "${_active_root}/${_package}")
+        _rs2026_abort_install("Could not replace old package: ${_package}")
+    endif()
+endforeach()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_directory
+    "${_stage}" "${_active_root}" RESULT_VARIABLE _copy_result)
+if(NOT _copy_result EQUAL 0)
+    _rs2026_abort_install("Could not copy the validated local install to ${_active_root}")
+endif()
+foreach(_entry IN LISTS _existing_entries)
+    if(NOT _entry STREQUAL _legacy_marker_name AND NOT _entry IN_LIST _packages)
+        file(REMOVE_RECURSE "${_active_root}/${_entry}")
+        if(EXISTS "${_active_root}/${_entry}")
+            _rs2026_abort_install("Could not remove deselected package: ${_entry}")
+        endif()
+    endif()
+endforeach()
+file(REMOVE "${_active_root}/${_legacy_marker_name}")
+file(REMOVE_RECURSE "${_stage}")
+if(EXISTS "${_stage}" OR EXISTS "${_active_root}/${_legacy_marker_name}")
+    message(FATAL_ERROR "Could not clean temporary local install files")
+endif()
+message(STATUS "Local prebuilt packages: ${_active_root}")

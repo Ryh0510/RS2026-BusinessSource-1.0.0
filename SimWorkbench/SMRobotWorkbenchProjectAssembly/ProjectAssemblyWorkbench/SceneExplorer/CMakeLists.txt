@@ -60,9 +60,7 @@ set_target_properties(${TARGET_NAME}
 )
 
 if(BuildTests)
-    add_subdirectory(
-        regression/SceneExplorerCollisionProjectionSmokeTest
-        ${PROJECT_BINARY_DIR}/tests/scene_explorer_collision_projection)
+    rs2026_add_test_unit(regression/SceneExplorerCollisionProjectionSmokeTest)
 endif()
 
 if(ExportPacakge${PACKAGE_NAME})

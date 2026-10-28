@@ -177,7 +177,18 @@
     "collisionConfig.model.action.apply": "应用",
     "collisionConfig.model.action.apply.tooltip": "离开碰撞模型配置并返回检测器配置。",
     "collisionConfig.model.action.cancel": "取消",
-    "collisionConfig.model.action.cancel.tooltip": "取消当前预览并返回检测器配置。"
+    "collisionConfig.model.action.cancel.tooltip": "取消当前预览并返回检测器配置。",
+    "action.environment.factory-detailed": "精细工厂（Blender）",
+    "environment.load": "加载环境模型…",
+    "environment.custom": "自选模型环境",
+    "environment.cutaway": "观察剖切（关闭则显示完整环境）",
+    "environment.operation": "加载环境",
+    "environment.parse": "读取模型资产",
+    "environment.upload": "构建环境显示",
+    "environment.loaded": "环境加载成功",
+    "environment.failed": "环境加载失败",
+    "fileDialog.shell.environment.open.title": "加载环境模型",
+    "fileDialog.shell.environment.open.filter": "环境模型 (*.gltf *.environment.json)"
   },
   "legacy": {
     "Scene Explorer": "场景浏览器",

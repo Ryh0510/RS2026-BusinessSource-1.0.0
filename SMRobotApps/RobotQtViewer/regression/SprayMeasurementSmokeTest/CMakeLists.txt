@@ -34,13 +34,17 @@ set_target_properties(${EXAMPLE_TARGET_NAME} PROPERTIES
 copy_runtime_dlls(${EXAMPLE_TARGET_NAME})
 deploy_qt(${EXAMPLE_TARGET_NAME})
 if(BuildTests)
+    add_test(NAME RobotQtViewerCollisionConfigNearestSmoke COMMAND ${EXAMPLE_TARGET_NAME} --collision-config-nearest)
+    set_tests_properties(RobotQtViewerCollisionConfigNearestSmoke PROPERTIES
+        LABELS "RobotQtViewer;Regression;Collision" TIMEOUT 60
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
     add_test(NAME RobotQtViewerConfigurationTabsSmoke COMMAND ${EXAMPLE_TARGET_NAME} --configuration-tabs)
     set_tests_properties(RobotQtViewerConfigurationTabsSmoke PROPERTIES
         LABELS "RobotQtViewer;Regression;IK"
         TIMEOUT 60
         WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
     add_test(NAME RobotQtViewerIkPlaybackSmoke COMMAND ${EXAMPLE_TARGET_NAME}
-        --ik-project "${CMAKE_SOURCE_DIR}/config/projects/ABB4600-burnner.sys.json"
+        --ik-project "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ABB4600-A.sys.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/ik_tcp_poses.txt")
     set_tests_properties(RobotQtViewerIkPlaybackSmoke PROPERTIES
         LABELS "RobotQtViewer;Regression;IK"
@@ -53,9 +57,17 @@ endif()
 
 if(BuildTests)
     add_test(NAME RobotQtViewerMultiIkSmoke COMMAND ${EXAMPLE_TARGET_NAME}
-        --multi-ik-project "${CMAKE_SOURCE_DIR}/config/projects/ABB4600-burnner.sys.json"
+        --multi-ik-project "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ABB4600-A.sys.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/ik_tcp_poses.txt")
     set_tests_properties(RobotQtViewerMultiIkSmoke PROPERTIES
         LABELS "RobotQtViewer;Regression;IK"
         WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
+endif()
+
+if(BuildTests)
+    add_test(NAME RobotQtViewerAWorkpieceSmoke COMMAND ${EXAMPLE_TARGET_NAME}
+        --a-workpiece "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ABB4600-A.sys.json")
+    set_tests_properties(RobotQtViewerAWorkpieceSmoke PROPERTIES
+        LABELS "RobotQtViewer;Regression;Spray;ScenePersistence"
+        TIMEOUT 180 WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
 endif()

@@ -156,6 +156,50 @@ namespace robot_qt_viewer
             actionScope == SceneExplorerActionScope::ProjectAssembly;
         const bool showCollisionActions =
             actionScope == SceneExplorerActionScope::CollisionConfig;
+        if(node.kind == SceneExplorerNodeKind::Trajectory) {
+            model.actions.push_back(makeActionView(QStringLiteral("\u663e\u793a\u6b64\u8f68\u8ff9"),ContextMenuActionKind::ShowTrajectory,node,displayName,robotLinks,true,false,collisionMember,false));
+            model.actions.push_back(makeActionView(QStringLiteral("\u5bfc\u51fa\u8f68\u8ff9..."),ContextMenuActionKind::ExportTrajectory,node,displayName,robotLinks,true,false,collisionMember,false));
+            model.actions.push_back(makeActionView(QStringLiteral("\u5220\u9664\u8f68\u8ff9"),ContextMenuActionKind::DeleteTrajectory,node,displayName,robotLinks,true,false,collisionMember,false));
+            return model;
+        }
+        if(node.kind == SceneExplorerNodeKind::UserFrame || node.kind == SceneExplorerNodeKind::CoordinateFrame) {
+            model.actions.push_back(makeActionView(QStringLiteral("\u663e\u793a"), ContextMenuActionKind::ShowItem,node,displayName,robotLinks,true,false,collisionMember,hasCollisionMember));
+            model.actions.push_back(makeActionView(QStringLiteral("\u9690\u85cf"), ContextMenuActionKind::HideItem,node,displayName,robotLinks,true,false,collisionMember,hasCollisionMember));
+            if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::UserFrame) model.actions.push_back(makeActionView(
+                QStringLiteral("\u7f16\u8f91\u7528\u6237\u5750\u6807\u7cfb..."),
+                ContextMenuActionKind::EditUserFrame,node,displayName,robotLinks,
+                true,false,collisionMember,hasCollisionMember));
+            if(showProjectAssemblyActions && node.id != QStringLiteral("world")) model.actions.push_back(makeActionView(
+                QStringLiteral("\u5220\u9664\u5750\u6807\u7cfb"), ContextMenuActionKind::DeleteCoordinateFrame,node,displayName,robotLinks,true,false,collisionMember,hasCollisionMember));
+            if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::CoordinateFrame && node.id != QStringLiteral("world")) model.actions.push_back(makeActionView(
+                QStringLiteral("\u8bbe\u7f6e TCP..."), ContextMenuActionKind::EditTcp,node,displayName,robotLinks,true,false,collisionMember,hasCollisionMember));
+            return model;
+        }
+
+        const bool frameTarget = node.kind == SceneExplorerNodeKind::Link ||
+            node.kind == SceneExplorerNodeKind::RobotMount || node.kind == SceneExplorerNodeKind::ObjectFrame;
+        model.actions.push_back(makeActionView(
+            frameTarget ? QStringLiteral("\u663e\u793a\u5750\u6807\u7cfb") : QStringLiteral("\u663e\u793a"),
+            ContextMenuActionKind::ShowItem, node, displayName, robotLinks,
+            true, false, collisionMember, hasCollisionMember));
+        model.actions.push_back(makeActionView(
+            frameTarget ? QStringLiteral("\u9690\u85cf\u5750\u6807\u7cfb") : QStringLiteral("\u9690\u85cf"),
+            ContextMenuActionKind::HideItem, node, displayName, robotLinks,
+            true, false, collisionMember, hasCollisionMember));
+        if(showProjectAssemblyActions && (node.kind == SceneExplorerNodeKind::Object ||
+            node.kind == SceneExplorerNodeKind::ToolAttachment || node.kind == SceneExplorerNodeKind::ToolAsset)) {
+            model.actions.push_back(makeActionView(QStringLiteral("\u8bbe\u4e3a\u5de5\u5177"),
+                ContextMenuActionKind::SetAsTool, node, displayName, robotLinks,
+                true, true, collisionMember, hasCollisionMember));
+            model.actions.push_back(makeActionView(QStringLiteral("\u8bbe\u4e3a\u5de5\u4ef6"),
+                ContextMenuActionKind::SetAsWorkpiece, node, displayName, robotLinks,
+                true, false, collisionMember, hasCollisionMember));
+        }
+        if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::ToolAttachment) {
+            model.actions.push_back(makeActionView(QStringLiteral("\u8bbe\u7f6e TCP..."),
+                ContextMenuActionKind::EditTcp, node, displayName, robotLinks,
+                true, false, collisionMember, hasCollisionMember));
+        }
 
         if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::Robot) {
             model.actions.push_back(makeActionView(
@@ -294,6 +338,10 @@ namespace robot_qt_viewer
                 hasCollisionMember));
         } else if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::ToolAttachment) {
             model.actions.push_back(makeActionView(
+                QStringLiteral("Delete Installed Device..."),
+                ContextMenuActionKind::DeleteObject, node, displayName, robotLinks,
+                true, true, collisionMember, hasCollisionMember));
+            model.actions.push_back(makeActionView(
                 QStringLiteral("Unbind Attachment..."),
                 ContextMenuActionKind::UnbindMountedAttachment,
                 node,
@@ -303,6 +351,11 @@ namespace robot_qt_viewer
                 false,
                 collisionMember,
                 hasCollisionMember));
+        } else if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::ToolAsset) {
+            model.actions.push_back(makeActionView(
+                QStringLiteral("Delete Device Definition..."),
+                ContextMenuActionKind::DeleteObject, node, displayName, robotLinks,
+                true, true, collisionMember, hasCollisionMember));
         } else if(showProjectAssemblyActions && node.kind == SceneExplorerNodeKind::PointCloud) {
             model.actions.push_back(makeActionView(
                 QStringLiteral("Rename Point Cloud..."),
@@ -411,13 +464,14 @@ namespace robot_qt_viewer
         if(node.id.isEmpty()) {
             return false;
         }
-            return node.kind == SceneExplorerNodeKind::Robot ||
+            return node.kind == SceneExplorerNodeKind::Trajectory || node.kind == SceneExplorerNodeKind::CoordinateFrame || node.kind == SceneExplorerNodeKind::UserFrame || node.kind == SceneExplorerNodeKind::Robot ||
             node.kind == SceneExplorerNodeKind::Object ||
             node.kind == SceneExplorerNodeKind::ObjectFrame ||
             node.kind == SceneExplorerNodeKind::PointCloud ||
             node.kind == SceneExplorerNodeKind::Link ||
             node.kind == SceneExplorerNodeKind::RobotMount ||
-            node.kind == SceneExplorerNodeKind::ToolAttachment;
+            node.kind == SceneExplorerNodeKind::ToolAttachment ||
+            node.kind == SceneExplorerNodeKind::ToolAsset;
     }
 
     bool SceneTreeIntentController::isEntityActionable(const SceneExplorerNodeRef& node)

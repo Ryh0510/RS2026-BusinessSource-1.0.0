@@ -7,6 +7,7 @@ message(STATUS "\n------------------ Find packages in ${this_cmake_file} -------
 
 set(SAVE_MODULE_PATH ${CMAKE_MODULE_PATH})
 include(CMakePrintHelpers)
+include("${CMAKE_CURRENT_LIST_DIR}/../DependencyProviders.cmake")
 
 get_filename_component(_rs2026_default_local_prebuild "${PROJECT_SOURCE_DIR}/../prebuild" ABSOLUTE)
 set(LOCAL_PREBUILD_ROOT "${_rs2026_default_local_prebuild}" CACHE PATH
@@ -80,24 +81,61 @@ _rs2026_local_assert_dir("${LOCAL_PREBUILD_ROOT}" "Local prebuild root")
 
 # Header-only packages bundled with the source tree.
 set(CMAKE_MODULE_PATH "${BUILDINLIB_DIR}")
+rs_dependency_provider_required(_local_glm glm glm)
+if(UsingPrebuilt_SMRobotPlatform)
+    set(_local_glm ON)
+endif()
+if(_local_glm)
 include(Findglm_3rdParty)
-include(FindEigen_3rdParty)
-include(Findnlohmann_json_3rdParty)
 _rs2026_local_assert_target(glm glm::glm)
+endif()
+
+rs_dependency_provider_required(_local_eigen Eigen3 Eigen3 ompl fcl pinocchio)
+if(UsingPrebuilt_SMRobotCore OR UsingPrebuilt_SMRobotPlatform)
+    set(_local_eigen ON)
+endif()
+if(_local_eigen)
+include(FindEigen_3rdParty)
 _rs2026_local_assert_target(Eigen3 Eigen3::Eigen)
+endif()
+
+rs_dependency_provider_required(_local_json nlohmann_json nlohmann_json)
+if(_local_json)
+include(Findnlohmann_json_3rdParty)
 _rs2026_local_assert_target(nlohmann_json nlohmann_json::nlohmann_json)
+
+endif()
 
 # Windows dependencies bundled with the source tree.
 set(CMAKE_MODULE_PATH "${BUILDINLIB_DIR}/Windows")
-include(Findglfw_3rdParty)
-include(Findfreeglut_3rdParty)
-include(Findpinocchio_3rdParty)
-include(FindCoACD_3rdParty)
-_rs2026_local_assert_target(glfw glfw::glfw)
-_rs2026_local_assert_target(FreeGLUT FreeGLUT::freeglut)
-_rs2026_local_assert_target(pinocchio pinocchio::pinocchio)
-_rs2026_local_assert_target(CoACD CoACD::coacd)
+rs_dependency_provider_required(_local_glfw glfw glfw)
+rs_optional_glfw_required(_local_optional_glfw)
+if(_local_glfw OR _local_optional_glfw)
+    include(Findglfw_3rdParty)
+    _rs2026_local_assert_target(glfw glfw::glfw)
+endif()
+rs_dependency_provider_required(_local_freeglut FreeGLUT FreeGLUT)
+rs_optional_freeglut_required(_local_optional_freeglut)
+if(_local_freeglut OR _local_optional_freeglut)
+    include(Findfreeglut_3rdParty)
+    _rs2026_local_assert_target(FreeGLUT FreeGLUT::freeglut)
+endif()
+rs_dependency_provider_required(_local_pinocchio pinocchio pinocchio urdfdom urdfdom_headers console_bridge)
+if(UsingPrebuilt_SMRobotCore)
+    set(_local_pinocchio ON)
+endif()
+if(_local_pinocchio)
+    include(Findpinocchio_3rdParty)
+    _rs2026_local_assert_target(pinocchio pinocchio::pinocchio)
+endif()
+rs_dependency_provider_required(_local_coacd CoACD CoACD)
+if(_local_coacd)
+    include(FindCoACD_3rdParty)
+    _rs2026_local_assert_target(CoACD CoACD::coacd)
+endif()
 
+rs_dependency_provider_required(_local_boost Boost Boost ompl pinocchio urdfdom urdfdom_headers console_bridge)
+if(_local_boost)
 # Boost 1.78.0 from the workstation prebuild directory.
 set(_rs2026_boost_root "${LOCAL_PREBUILD_ROOT}/Boost-1.78.0/boost_1_78_0")
 set(BOOST_ROOT "${_rs2026_boost_root}" CACHE PATH "Boost 1.78.0 root." FORCE)
@@ -151,6 +189,13 @@ target_compile_definitions(Boost::log INTERFACE BOOST_LOG_DYN_LINK)
 target_compile_definitions(Boost::log_setup INTERFACE BOOST_LOG_DYN_LINK)
 message(STATUS "Found Boost ${Boost_VERSION} at ${Boost_DIR}")
 
+endif()
+
+rs_dependency_provider_required(_local_assimp assimp assimp)
+if(UsingPrebuilt_SMRobotPlatform)
+    set(_local_assimp ON)
+endif()
+if(_local_assimp)
 # Assimp 6.0.2 from the workstation prebuild directory.
 set(assimp_DIR "${LOCAL_PREBUILD_ROOT}/assimp-6.0.2/Assimp6.0.2/lib/cmake/assimp-6.0" CACHE PATH
     "Assimp 6.0.2 CMake package directory." FORCE)
@@ -161,6 +206,10 @@ find_package(assimp CONFIG REQUIRED
 _rs2026_local_assert_target(assimp assimp::assimp)
 message(STATUS "Found assimp ${assimp_VERSION} at ${assimp_DIR}")
 
+endif()
+
+rs_dependency_provider_required(_local_fcl FCL fcl ccd octomap)
+if(_local_fcl)
 # FCL static package from the workstation prebuild directory.
 set(CMAKE_MODULE_PATH "${LOCAL_PREBUILD_ROOT}/fcl-0.7.0-static/fcl_static_x64")
 include(CMake_FindFCL)
@@ -168,6 +217,10 @@ _rs2026_local_assert_target(FCL fcl::fcl ccd::ccd octomap::octomap)
 
 find_package(Threads REQUIRED)
 
+endif()
+
+rs_dependency_provider_required(_local_ompl OMPL ompl)
+if(_local_ompl)
 # OMPL 2.0.1 from the workstation prebuild directory.
 set(SMROBOT_OMPL_INSTALL_DIR "${LOCAL_PREBUILD_ROOT}/ompl-2.0.1/ompl-2.0.1" CACHE PATH
     "OMPL 2.0.1 install prefix." FORCE)
@@ -182,12 +235,19 @@ set_property(TARGET ompl::ompl PROPERTY MAP_IMPORTED_CONFIG_RELWITHDEBINFO Relea
 set_property(TARGET ompl::ompl PROPERTY MAP_IMPORTED_CONFIG_MINSIZEREL Release)
 message(STATUS "Found OMPL ${OMPL_VERSION} at ${ompl_DIR}")
 
+endif()
+
+rs_dependency_provider_required(_local_qt Qt5 Qt5)
+if(_local_qt)
 # Qt 5.15.5 from the workstation prebuild directory.
 set(_rs2026_qt_root "${LOCAL_PREBUILD_ROOT}/Qt5155_x64/Qt5155_x64")
 set(Qt5_DIR "${_rs2026_qt_root}/lib/cmake/Qt5" CACHE PATH
     "Qt 5.15.5 CMake package directory." FORCE)
 _rs2026_local_assert_dir("${Qt5_DIR}" "Qt5 CMake package directory")
-set(Qt_Components Core Gui Widgets OpenGL)
+rs_project_required_components(Qt5 Qt_Components)
+if(NOT Qt_Components)
+    set(Qt_Components Core Gui Widgets OpenGL)
+endif()
 find_package(Qt5 CONFIG REQUIRED
     COMPONENTS ${Qt_Components}
     PATHS "${Qt5_DIR}"
@@ -198,11 +258,19 @@ endforeach()
 _rs2026_local_assert_target(Qt5 Qt5::qmake)
 message(STATUS "Found Qt ${Qt5_VERSION} at ${Qt5_DIR}")
 
+endif()
+
+rs_dependency_provider_required(_local_opengl OpenGL OpenGL)
+if(_local_opengl)
 find_package(OpenGL REQUIRED)
 if(TARGET OpenGL::GL)
     message(STATUS "Target OpenGL::GL is FOUND!")
 endif()
 
+endif()
+
+rs_dependency_provider_required(_local_osqp OSQP osqp osqpstatic)
+if(_local_osqp)
 set(OSQP_SOURCE_DIR "${LOCAL_PREBUILD_ROOT}/osqp-0.6.3" CACHE PATH
     "OSQP 0.6.3 source directory." FORCE)
 _rs2026_local_assert_dir("${OSQP_SOURCE_DIR}" "OSQP source directory")
@@ -211,6 +279,8 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING
 add_subdirectory("${OSQP_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/prebuild/osqp-0.6.3" EXCLUDE_FROM_ALL)
 _rs2026_local_assert_target(osqpstatic)
 message(STATUS "Found OSQP source tree at ${OSQP_SOURCE_DIR}")
+
+endif()
 
 set(CMAKE_MODULE_PATH ${SAVE_MODULE_PATH})
 message(STATUS "\n------------------ End of finding packages in ${this_cmake_file} ------------------")

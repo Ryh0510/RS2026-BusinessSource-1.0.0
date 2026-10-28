@@ -6,6 +6,7 @@
 
 #include <SimulationProject/ProjectDocument.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -232,7 +233,11 @@ int main()
             &mountItem,
             true,
             robot_qt_viewer::SceneExplorerActionScope::CollisionConfig);
-    checks.require(mountMenu.actions.empty(), "robot mount has no collision context menu actions");
+    checks.require(std::none_of(mountMenu.actions.begin(), mountMenu.actions.end(), [](const auto& view) {
+        using Action = robot_qt_viewer::SceneTreeIntentController::ContextMenuActionKind;
+        return view.action.kind == Action::ConfigureCollisionModel ||
+            view.action.kind == Action::AddToDetectorSetA || view.action.kind == Action::AddToDetectorSetB;
+    }), "robot mount offers visibility actions without collision model or detector actions");
 
     QTreeWidgetItem linkItem = makeTreeItem(node(
         robot_qt_viewer::SceneExplorerNodeKind::Link,

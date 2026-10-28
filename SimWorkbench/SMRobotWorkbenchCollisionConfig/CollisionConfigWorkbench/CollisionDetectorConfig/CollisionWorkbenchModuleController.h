@@ -13,6 +13,7 @@
 #include <memory>
 
 class CollisionWorkbenchPanel;
+class QTimer;
 
 namespace simulation_project
 {
@@ -124,6 +125,7 @@ namespace robot_qt_viewer
         std::unique_ptr<CollisionDocumentEventPublisher> m_documentEvents;
         std::unique_ptr<CollisionLinkModelSetupModuleController> m_linkModelSetupController;
         std::unique_ptr<CollisionDetectorConfigModuleController> m_detectorConfigController;
+        QTimer* m_resultsTimer = nullptr;
         bool m_workbenchActive = false;
         bool m_updating = false;
         bool m_collisionModelConfigurationActive = false;

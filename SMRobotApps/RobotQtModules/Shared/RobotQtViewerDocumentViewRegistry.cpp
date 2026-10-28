@@ -30,6 +30,17 @@ namespace robot_qt_viewer
         m_modules.push_back(module);
     }
 
+    void RobotQtViewerDocumentViewRegistry::registerModule(
+        const QString& moduleId, QObject* receiver,
+        RobotQtViewerEventHub::EventHandler handler,
+        const QVector<RobotQtViewerEventKind>& events)
+    {
+        if(receiver == nullptr || !handler) return;
+        unregisterModule(receiver);
+        for(const auto kind : events) m_eventHub.subscribe(kind, receiver, handler, moduleId);
+        m_modules.push_back({moduleId, receiver});
+    }
+
     void RobotQtViewerDocumentViewRegistry::unregisterModule(QObject* receiver)
     {
         if(receiver == nullptr) {

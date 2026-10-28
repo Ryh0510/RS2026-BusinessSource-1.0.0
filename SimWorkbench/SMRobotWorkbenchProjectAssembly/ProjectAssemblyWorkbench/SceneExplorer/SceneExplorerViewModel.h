@@ -42,7 +42,10 @@ namespace robot_qt_viewer
         RobotMount,
         ObjectFrame,
         ToolAttachment,
-        ToolAsset
+        ToolAsset,
+        UserFrame,
+        CoordinateFrame,
+        Trajectory
     };
 
     enum class SceneExplorerTreeProjection
