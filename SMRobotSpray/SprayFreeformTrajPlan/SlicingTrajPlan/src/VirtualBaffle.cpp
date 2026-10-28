@@ -75,7 +75,11 @@ VirtualBaffle buildVirtualBaffle(const ModelData& model,double thickness,double 
             throw std::runtime_error("invalid thickness or fit tolerance");
         BoundaryDetector detector; BoundaryData boundary; Epiphyseal ignored;
         if(!detector.detectBoundaries(model,boundary,ignored,&b.topology)||!b.topology.usable())
-            throw std::runtime_error("requires exactly two closed unbranched manifold rims");
+            throw std::runtime_error("boundary_topology: expected two closed unbranched manifold rims; loops=" +
+                std::to_string(b.topology.loopCount) + ", branch_vertices=" +
+                std::to_string(b.topology.branchVertices) + ", open_vertices=" +
+                std::to_string(b.topology.openVertices) + ", nonmanifold_edges=" +
+                std::to_string(b.topology.nonManifoldEdges));
         const auto a=resample(boundary.lowerBoundary_),c=resample(boundary.upperBoundary_);
         V3 ca=V3::Zero(),cc=V3::Zero();
         for(size_t i=0;i<a.size();++i){ca+=a[i];cc+=c[i];} ca/=a.size();cc/=c.size();
@@ -90,10 +94,10 @@ VirtualBaffle buildVirtualBaffle(const ModelData& model,double thickness,double 
         std::sort(matches.begin(),matches.end(),[](const auto& x,const auto& y){return x.score<y.score;});
         const auto best=matches.front();
         b.correspondenceRms=std::sqrt(best.score);
-        for(size_t k=1;k<matches.size();++k){const auto& other=matches[k];
-            int d=std::abs(other.shift-best.shift);d=std::min(d,n-d);
-            if((other.sign!=best.sign||d>4) && other.score-best.score<1e-8)
-                throw std::runtime_error("ambiguous boundary correspondence");}
+        // Equivalent cyclic matches are valid for symmetric rims. The actual
+        // mesh section, fit residual and topology below decide usability.
+        if(!std::isfinite(b.correspondenceRms))
+            throw std::runtime_error("invalid_boundary_correspondence");
         std::vector<V3> mids; b.center.setZero();
         for(int i=0;i<n;++i){mids.push_back((a[i]+c[(best.shift+best.sign*i+n)%n])*.5);b.center+=mids.back();}b.center/=n;
         Eigen::Matrix3d covariance=Eigen::Matrix3d::Zero();
@@ -125,7 +129,9 @@ VirtualBaffle buildVirtualBaffle(const ModelData& model,double thickness,double 
                 if(segments(x[i],x[(i+1)%x.size()],y[j],y[(j+1)%y.size()],0))
                     throw std::runtime_error("crossing or touching aperture contours");}}
         b.enabled=true;
-        b.diagnostic=b.maxResidual>thickness ? "enabled; plane fit residual exceeds slab thickness" : "enabled";
+        b.diagnostic=b.maxResidual>thickness
+            ? "enabled_with_fit_warning: residual exceeds slab thickness; infinite slab uses the least-squares plane"
+            : "enabled: infinite slab, closed-section even-odd aperture";
     }catch(const std::exception& e){b.enabled=false;b.diagnostic=e.what();}
     return b;
 }
@@ -133,7 +139,11 @@ VirtualBaffle buildVirtualBaffle(const ModelData& model,double thickness,double 
 bool VirtualBaffle::apertureContains(const V2& point) const {
     if(!enabled || !point.allFinite()) return false;
     bool aperture=false;
-    for(const auto& ring:contours) if(ring.size()>=3) aperture^=inside(ring,point);
+    for(const auto& ring:contours) if(ring.size()>=3) {
+        for(size_t i=0;i<ring.size();++i)
+            if(distance(point,ring[i],ring[(i+1)%ring.size()])<=eps) return false;
+        aperture^=inside(ring,point);
+    }
     return aperture;
 }
 

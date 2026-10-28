@@ -1282,3 +1282,8 @@ Release/Debug受影响主程序、领域库和工具完整构建通过。最终R
 在顶层 CMakeLists.txt 的最低版本声明之后、依赖准备与 project() 之前加每个 binary tree 独立的 file(LOCK ... GUARD PROCESS TIMEOUT 180)，串行保护本工程的配置期写入。相对本轮备份仅新增此锁块，保持 CRLF、原有用户改动、自动重新生成、Debug/Release 分离；无业务代码/API/依赖变化。
 用户实际 build 重新配置、Release CollisionDetectorConfig 与 RobotQtViewer 构建及重复增量构建退出0；Debug CollisionDetectorConfig 构建退出0。刻意并发启动两次真实 CMake 配置，第二次在第一次活动期间没有进入 project() 输出，176次100ms观察均等待，两进程最终退出0。Release 实际主程序从 VS 默认项目工作目录启动，场景/厂房/机器人加载 ok=true，截图已检查，正常退出0。未重建 Debug 全部主程序或重跑轨迹性能测试，本轮修复仅涉及配置生成并发。
 证据、事前 CMakeLists/cache/错误日志、两次并发日志、构建日志及启动截图在外层 output/vs2019-msb8066-20261028，摘要 diagnosis.json。VS 已打开旧工程时应接受重新加载修改后的项目，或重新打开外层 build/RobotSimulator2026.sln，再用 Release/x64 启动 RobotQtViewer。
+
+### 2026-10-28 曲面规划新增功能合入（验收完成）
+已合入算法d241ed2与工作台cb97bf1的上下过渡点姿态/偏移方向解耦、法向开关、独立喷距及跟随模式、QSettings保存恢复，统一算法层位置与逐点spray_distance。选择性吸收挡板配准、孔口边缘与诊断行为，保留本地自交/无效输入检查和GPU/BVH，维护compat源与材料化实现一致。9个源/配置文件CRLF，无新依赖或API重命名。
+用户原build的Release/Debug主程序、曲面模块和依赖均构建通过；同5项曲面/真实控制器UI/跨工作台回归在两配置均通过。UI用临时INI隔离验证100mm跟随、80.5/135mm自定义、关闭保留、取消、恢复跟随及重建后120mm全局喷距。专用C:/b构建VirtualBaffleGeometry通过，含512组BVH/完整网格对照。两配置主程序实际加载FANUC/厂房、视口ok=true、退出0并检查截图。
+首次用户build因BuildExternalTrajectoryTests=OFF缺少VirtualBaffleTests目标报MSB1009；保留日志，改用已开启的专用构建验收挡板，用户选项未改。最终仅既有C4819和Debug OMPL缺PDB的LNK4099警告。未重复GA/APF/CDF完整性能测试；原1.txt哈希未变。详情docs/freeform_update_20261028.md，证据/备份在外层output/freeform-update-20261028。

@@ -23,7 +23,7 @@ set_target_properties(${TEST_TARGET} PROPERTIES FOLDER tests/SMRobotApps
     DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX} RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX})
 copy_runtime_dlls(${TEST_TARGET})
 deploy_qt(${TEST_TARGET})
-foreach(MODE data workbenches cdf receiving)
+foreach(MODE data workbenches cdf receiving freeform-transitions)
     add_test(NAME RobotQtViewerTrajectoryTransfer-${MODE} COMMAND ${TEST_TARGET} --${MODE})
     set_tests_properties(RobotQtViewerTrajectoryTransfer-${MODE} PROPERTIES
         LABELS "RobotQtViewer;Regression;TrajectoryTransfer"

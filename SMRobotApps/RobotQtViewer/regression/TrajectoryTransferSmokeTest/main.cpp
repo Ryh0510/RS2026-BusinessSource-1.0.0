@@ -35,6 +35,9 @@
 #include <QThread>
 #include <QTimer>
 #include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QSettings>
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <algorithm>
@@ -408,6 +411,87 @@ namespace
         fixture.source.clear();
         check(fixture.coating->waypoints().empty(),"Clearing shared source invalidates dependent analysis input");
     }
+
+    void freeformTransitionTests()
+    {
+        QTemporaryDir settingsDirectory;
+        QCoreApplication::setOrganizationName(QStringLiteral("RS2026Regression"));
+        QCoreApplication::setApplicationName(QStringLiteral("FreeformTransitionControls"));
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settingsDirectory.path());
+        Workbenches fixture(false,false);
+        using namespace smrobot::workbench::freeform;
+        const auto configure=spray_freeform_traj_plan::WorkflowAction::ConfigureTrajectoryFrame;
+        {
+            FreeformTrajPlanWorkflowPanel workflow;
+            FreeformTrajPlanParameterPanel parameters;
+            FreeformTrajPlanWorkbenchController controller(workflow,parameters,fixture.context,&fixture.source,{},{});
+            parameters.parametersChanged(20,1,5,5,5,100,50,2,12);
+            const auto open=[&]() {
+                workflow.workflowActionRequested(configure);
+                QApplication::processEvents();
+                return workflow.findChild<QDialog*>(QStringLiteral("trajectoryFrameDialog"));
+            };
+            auto* dialog=open();
+            check(dialog!=nullptr,"Actual freeform frame configuration opens");
+            if(!dialog)return;
+            const auto combo=[&](const char* id){return dialog->findChild<QComboBox*>(QString::fromLatin1(id));};
+            const auto flag=[&](const char* id){return dialog->findChild<QCheckBox*>(QString::fromLatin1(id));};
+            const auto number=[&](const char* id){return dialog->findChild<QDoubleSpinBox*>(QString::fromLatin1(id));};
+            auto* upperPose=combo("upperTransitionPose");auto* lowerPose=combo("lowerTransitionPose");
+            auto* upperOffset=combo("upperTransitionOffset");auto* lowerOffset=combo("lowerTransitionOffset");
+            auto* upperNormal=flag("upperTransitionNormalOffset");auto* lowerNormal=flag("lowerTransitionNormalOffset");
+            auto* upperFollow=flag("upperTransitionFollowSprayDistance");auto* lowerFollow=flag("lowerTransitionFollowSprayDistance");
+            auto* upperDistance=number("upperTransitionSprayDistance");auto* lowerDistance=number("lowerTransitionSprayDistance");
+            const bool controls=upperPose&&lowerPose&&upperOffset&&lowerOffset&&upperNormal&&lowerNormal&&upperFollow&&lowerFollow&&upperDistance&&lowerDistance;
+            check(controls,"Independent upper/lower transition controls are present");
+            if(!controls)return;
+            check(upperNormal->isChecked()&&lowerNormal->isChecked()&&upperFollow->isChecked()&&lowerFollow->isChecked()
+                && upperDistance->value()==100&&lowerDistance->value()==100,"Default transition distances follow the 100 mm global input");
+            upperPose->setCurrentIndex(1);lowerPose->setCurrentIndex(0);
+            upperOffset->setCurrentIndex(0);lowerOffset->setCurrentIndex(1);
+            upperDistance->setValue(80.5);lowerDistance->setValue(135);
+            check(!upperFollow->isChecked()&&!lowerFollow->isChecked(),"Manual distance edits independently disable global following");
+            lowerNormal->setChecked(false);
+            check(!lowerDistance->isEnabled()&&!lowerFollow->isEnabled()&&lowerDistance->value()==135,
+                "Disabling normal offset preserves its custom distance");
+            dialog->accept();QApplication::processEvents();
+            QSettings saved;
+            check(saved.value("freeform/upperTransitionSmoothPose").toBool()&&!saved.value("freeform/upperTransitionOppositeOffset").toBool()
+                && !saved.value("freeform/lowerTransitionSmoothPose").toBool()&&saved.value("freeform/lowerTransitionOppositeOffset").toBool(),
+                "Opposite travel direction and smooth pose persist independently");
+            check(saved.value("freeform/upperTransitionSprayDistance").toDouble()==80.5
+                &&saved.value("freeform/lowerTransitionSprayDistance").toDouble()==135
+                &&!saved.value("freeform/lowerTransitionNormalOffset").toBool(),"Custom upper/lower distances and disabled state persist");
+            dialog=open();
+            auto* retained=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("upperTransitionSprayDistance"));
+            check(retained&&retained->value()==80.5,"Reopening restores the custom distance");
+            if(retained)retained->setValue(90);
+            dialog->reject();QApplication::processEvents();
+            check(QSettings().value("freeform/upperTransitionSprayDistance").toDouble()==80.5,"Cancel leaves saved transition settings unchanged");
+            dialog=open();
+            dialog->findChild<QCheckBox*>(QStringLiteral("lowerTransitionNormalOffset"))->setChecked(true);
+            dialog->findChild<QCheckBox*>(QStringLiteral("lowerTransitionFollowSprayDistance"))->setChecked(true);
+            check(dialog->findChild<QDoubleSpinBox*>(QStringLiteral("lowerTransitionSprayDistance"))->value()==100,
+                "Re-enabling follow resets to the current global distance");
+            dialog->accept();QApplication::processEvents();
+        }
+        {
+            FreeformTrajPlanWorkflowPanel workflow;
+            FreeformTrajPlanParameterPanel parameters;
+            FreeformTrajPlanWorkbenchController restored(workflow,parameters,fixture.context,&fixture.source,{},{});
+            parameters.parametersChanged(20,1,5,5,5,120,50,2,12);
+            workflow.workflowActionRequested(configure);QApplication::processEvents();
+            auto* dialog=workflow.findChild<QDialog*>(QStringLiteral("trajectoryFrameDialog"));
+            check(dialog!=nullptr,"Recreated controller restores transition preferences");
+            if(!dialog)return;
+            check(dialog->findChild<QDoubleSpinBox*>(QStringLiteral("upperTransitionSprayDistance"))->value()==80.5
+                &&dialog->findChild<QDoubleSpinBox*>(QStringLiteral("lowerTransitionSprayDistance"))->value()==120,
+                "Custom mode survives restart while follow mode uses the new global distance");
+            dialog->reject();QApplication::processEvents();
+        }
+    }
+
     void cdfTests()
     {
         Workbenches fixture(true,true,true);
@@ -493,6 +577,7 @@ int main(int argc,char** argv)
     const std::string mode=argc>1?argv[1]:"--data";
     if(mode=="--data") dataTests();
     else if(mode=="--workbenches") workbenchTests();
+    else if(mode=="--freeform-transitions") freeformTransitionTests();
     else if(mode=="--cdf") cdfTests();
     else if(mode=="--receiving") receivingTests();
     else return 2;
