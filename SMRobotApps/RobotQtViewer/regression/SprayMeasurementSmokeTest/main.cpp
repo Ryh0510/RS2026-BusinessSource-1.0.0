@@ -1,3 +1,5 @@
+#include <ProjectMotionPlanning/CartesianMotion.h>
+#include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectScene.h>
 #include <ProjectMotionPlanning/ProjectMotionPlanning.h>
 #include "../../../../SMRobotMotionPlanning/ProjectMotionPlanning/src/ApfLocalPlanner.h"
@@ -640,6 +642,14 @@ namespace
     {
     public:
         using PresentationObservingServices::PresentationObservingServices;
+        std::function<void(const std::vector<double>&)> jointObserver;
+        bool setRobotJointValues(const QString& robotId, const std::vector<std::string>& names,
+            const std::vector<double>& values) override
+        {
+            const bool applied = RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValues(robotId, names, values);
+            if(applied && jointObserver) jointObserver(values);
+            return applied;
+        }
         int samples = 0;
         void appendEndEffectorTraceSample() override
         {
@@ -2127,11 +2137,16 @@ namespace
                 preview.mutate(frames, QStringLiteral("toolSetupPinnedMountFrames"));
             });
         const auto waitMulti = [&]() {
+#ifdef NDEBUG
+            constexpr int timeoutMs = 60000;
+#else
+            constexpr int timeoutMs = 300000;
+#endif
             QElapsedTimer timer; timer.start();
-            while(allButton->text() != QStringLiteral("\u5168\u9006\u89e3") && timer.elapsed() < 60000) {
+            while(allButton->text() != QStringLiteral("\u5168\u9006\u89e3") && timer.elapsed() < timeoutMs) {
                 application.processEvents(QEventLoop::AllEvents, 20);
             }
-            require(timer.elapsed() < 60000, "Background multi IK finishes without blocking GUI");
+            require(timer.elapsed() < timeoutMs, "Background multi IK finishes without blocking GUI");
         };
         const auto plansBeforeMulti = MotionPlanningProjectStore::plans(session.document());
         widget.multiIkRequested(true, QVector<double>(6, -180), QVector<double>(6, 180), 64);
@@ -2375,6 +2390,8 @@ namespace
         });
         const bool solved = plan != plans.end() &&
             plan->trajectory.points.size() == imported.plan.cartesianControlPoints.points.size();
+        if(!solved) for(auto* label : widget.findChildren<QLabel*>())
+            if(label->property("error").toBool()) std::cout << "Basic IK diagnostic: " << label->text().toStdString() << std::endl;
         require(solved, "Basic Planning Solve IK and apply stores every solved point");
         if(solved) {
             std::vector<double> applied;
@@ -2389,6 +2406,160 @@ namespace
             require(signsPreserved, "UI applies stored IK angles using the unchanged sign mapping");
             require((actualFk(applied).translation() - imported.plan.cartesianControlPoints.points.front().tcpPose.translation()).norm() < 2.0e-6,
                 "Basic Planning apply aligns actual TCP with the imported trajectory");
+            // Observe actual runtime joints from the production MoveL playback button.
+            auto linearPlan = *plan;
+            linearPlan.id = "movel-playback-sign-regression";
+            linearPlan.trajectory.points.resize(2);
+            linearPlan.cartesianControlPoints.points.clear();
+            auto runtimeEnd = expected;
+            const double increments[] = {0.02, -0.02, 0.015, 0.03, -0.025, 0.04};
+            for(std::size_t j = 0; j < runtimeEnd.size(); ++j) runtimeEnd[j] += increments[j];
+            linearPlan.trajectory.points.front() = {0., plan->trajectory.points.front().q, {}, {}};
+            linearPlan.trajectory.points.back() = {1., ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(runtimeEnd), {}, {}};
+            linearPlan.optimizationMetadata = R"({"motion":"cartesian_linear","joint_convention":"irb4600_stored"})";
+            // Play a real exported/reimported joint table, including its motion law and exact encoder branch.
+            QTemporaryDir jointRoundtripFolder;
+            require(jointRoundtripFolder.isValid(), "MoveL joint table roundtrip folder exists");
+            const auto jointRoundtripPath = std::filesystem::path(jointRoundtripFolder.path().toStdWString()) / "movel_joint_table.txt";
+            std::string jointRoundtripText;
+            require(ProjectTrajectoryControlPointEditor::serializeJointTable(linearPlan, jointRoundtripText, &error),
+                "MoveL joint table serializes for real GUI playback");
+            { std::ofstream file(jointRoundtripPath); file << jointRoundtripText; }
+            const auto jointRoundtrip = ProjectTrajectoryImporter::importFile(jointRoundtripPath, importOptions);
+            require(jointRoundtrip.success && CartesianMotionSampler::isMoveL(jointRoundtrip.plan) &&
+                jointRoundtrip.plan.trajectory.points.front().q == linearPlan.trajectory.points.front().q &&
+                jointRoundtrip.plan.trajectory.points.back().q == linearPlan.trajectory.points.back().q,
+                "Joint TXT reimport retains exact commands and MoveL before production GUI playback");
+            if(jointRoundtrip.success) {
+                linearPlan.trajectory = jointRoundtrip.plan.trajectory;
+                linearPlan.optimizationMetadata = jointRoundtrip.plan.optimizationMetadata;
+            }
+            auto linearDocument = session.document();
+            const auto flangeFk = viewport.robotForwardKinematics(QStringLiteral("ABB4600_urdf"), names, false);
+            const Eigen::Isometry3d linkFromTcp = flangeFk(expected).inverse() * actualFk(expected);
+            simulation_project::RobotMountDesc linearMount;
+            linearMount.id = "movel_test_mount"; linearMount.robotId = linearPlan.robotId; linearMount.linkName = "Link6";
+            linearDocument.robotMounts.push_back(linearMount);
+            simulation_project::AttachmentAssetDesc linearTool;
+            linearTool.id = "movel_test_tool"; linearTool.assetKind = "tool"; linearTool.visible = false;
+            QTemporaryDir linearToolFolder;
+            require(linearToolFolder.isValid(), "MoveL test tool folder exists");
+            const auto linearToolPath = std::filesystem::path(linearToolFolder.path().toStdWString()) / "tool.stl";
+            {
+                std::ofstream mesh(linearToolPath);
+                mesh << "solid tool\n";
+                const double vertices[4][3] = {{0,0,0},{.001,0,0},{0,.001,0},{0,0,.001}};
+                const int faces[4][3] = {{0,2,1},{0,1,3},{0,3,2},{1,2,3}};
+                for(const auto& face : faces) {
+                    mesh << "facet normal 0 0 0\nouter loop\n";
+                    for(int v : face) mesh << "vertex " << vertices[v][0] << ' ' << vertices[v][1] << ' ' << vertices[v][2] << '\n';
+                    mesh << "endloop\nendfacet\n";
+                }
+                mesh << "endsolid tool\n";
+            }
+            linearTool.visualPath = linearToolPath.generic_u8string();
+            simulation_project::AttachmentFunctionalFrameDesc linearTcp;
+            linearTcp.id = "tcp"; linearTcp.frameType = "tcp"; linearTcp.primary = true;
+            linearTcp.assetMountToFrame.x = linkFromTcp.translation().x();
+            linearTcp.assetMountToFrame.y = linkFromTcp.translation().y();
+            linearTcp.assetMountToFrame.z = linkFromTcp.translation().z();
+            const Eigen::Vector3d zyx = linkFromTcp.linear().eulerAngles(2, 1, 0);
+            linearTcp.assetMountToFrame.yaw = zyx.x(); linearTcp.assetMountToFrame.pitch = zyx.y(); linearTcp.assetMountToFrame.roll = zyx.z();
+            linearTool.functionalFrames.push_back(linearTcp);
+            linearDocument.attachmentAssets.push_back(linearTool);
+            simulation_project::MountedAttachmentDesc linearAttachment;
+            linearAttachment.id = "movel_test_attachment"; linearAttachment.mountFrameId = linearMount.id;
+            linearAttachment.assetId = linearTool.id; linearAttachment.visible = false;
+            linearDocument.mountedAttachments.push_back(linearAttachment);
+            require(MotionPlanningProjectStore::upsertPlan(linearDocument, linearPlan, &error), "MoveL playback fixture stores");
+            session.setDocument(linearDocument, projectPath, false, false);
+            robot_qt_viewer::RobotQtViewerEvent linearChanged;
+            linearChanged.kind = robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged;
+            controller.handleEvent(linearChanged);
+            auto runtimeTablePlan = linearPlan;
+            for(auto& point : runtimeTablePlan.trajectory.points)
+                point.q = ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(point.q);
+            runtimeTablePlan.optimizationMetadata = R"({"motion":"cartesian_linear","joint_convention":"runtime"})";
+            const auto runtimeTablePath = std::filesystem::path(jointRoundtripFolder.path().toStdWString()) / "runtime_joint_table.txt";
+            std::string runtimeTableText;
+            require(ProjectTrajectoryControlPointEditor::serializeJointTable(runtimeTablePlan, runtimeTableText, &error),
+                "Runtime convention TXT serializes for actual GUI import");
+            { std::ofstream file(runtimeTablePath); file << runtimeTableText; }
+            const auto runtimeTableImport = ProjectTrajectoryImporter::importFile(runtimeTablePath, importOptions);
+            const bool previousNativeDialogs = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+            SaveDialogAcceptor importAcceptor;
+            importAcceptor.path = QString::fromStdWString(runtimeTablePath.wstring());
+            application.installEventFilter(&importAcceptor);
+            widget.importTrajectoryRequested();
+            const auto guiImportedPlans = MotionPlanningProjectStore::plans(session.document());
+            const auto guiImported = std::find_if(guiImportedPlans.begin(), guiImportedPlans.end(), [&](const auto& candidate) {
+                return runtimeTableImport.success && candidate.id == runtimeTableImport.plan.id;
+            });
+            require(guiImported != guiImportedPlans.end() && CartesianMotionSampler::isMoveL(*guiImported) &&
+                guiImported->trajectory.points.size() == 2 &&
+                guiImported->trajectory.points.front().q == linearPlan.trajectory.points.front().q &&
+                guiImported->trajectory.points.back().q == linearPlan.trajectory.points.back().q,
+                "Actual GUI runtime TXT import converts ABB signs once and preserves exact MoveL commands");
+            widget.importCdfJointAnglesRequested();
+            widget.applySelectedCdfJointAnglesRequested(1);
+            bool cdfRuntimeExact = true;
+            for(std::size_t j = 0; j < names.size(); ++j) {
+                bool readable = false;
+                const double actual = services.robotJointValue(QStringLiteral("ABB4600_urdf"), QString::fromStdString(names[j]), &readable);
+                cdfRuntimeExact &= readable && actual == runtimeEnd[j];
+            }
+            require(cdfRuntimeExact, "Actual GUI CDF runtime TXT import/apply preserves exact endpoint encoder signs");
+            application.removeEventFilter(&importAcceptor);
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previousNativeDialogs);
+            widget.trajectorySelectionChanged(QString::fromStdString(runtimeTableImport.plan.id));
+            std::vector<std::vector<double>> displayedJoints;
+            services.jointObserver = [&](const auto& q) { displayedJoints.push_back(q); };
+            widget.playbackRequested(0.5);
+            QEventLoop linearLoop;
+            QTimer linearCompletion;
+            QElapsedTimer linearElapsed; linearElapsed.start();
+#ifdef NDEBUG
+            constexpr int linearTimeoutMs = 15000;
+#else
+            constexpr int linearTimeoutMs = 300000;
+#endif
+            QObject::connect(&linearCompletion, &QTimer::timeout, &linearLoop, [&]() {
+                bool atEnd = !displayedJoints.empty();
+                if(atEnd) for(std::size_t j = 0; j < runtimeEnd.size(); ++j)
+                    atEnd &= std::abs(displayedJoints.back()[j] - runtimeEnd[j]) < 1e-9;
+                if((atEnd && services.isFramePresented(services.lastTicket)) || linearElapsed.elapsed() > linearTimeoutMs)
+                    linearLoop.quit();
+            });
+            linearCompletion.start(20);
+            linearLoop.exec();
+            linearCompletion.stop();
+            widget.playbackStopRequested();
+            services.jointObserver = {};
+            const auto fromPose = actualFk(expected), toPose = actualFk(runtimeEnd);
+            const Eigen::Vector3d chord = toPose.translation() - fromPose.translation();
+            bool linearFrames = chord.squaredNorm() > 1e-10;
+            int interiorFrames = 0;
+            for(const auto& q : displayedJoints) {
+                const auto pose = actualFk(q);
+                const double fraction = (pose.translation() - fromPose.translation()).dot(chord) / chord.squaredNorm();
+                const double f = std::clamp(fraction, 0., 1.);
+                const auto rotation = Eigen::Quaterniond(fromPose.linear()).slerp(f, Eigen::Quaterniond(toPose.linear()));
+                linearFrames &= fraction >= -1e-6 && fraction <= 1 + 1e-6 &&
+                    (pose.translation() - fromPose.translation() - f * chord).norm() < 1e-7 &&
+                    Eigen::AngleAxisd(rotation.toRotationMatrix() * pose.linear().transpose()).angle() < 1e-7;
+                if(f > 0.05 && f < 0.95) ++interiorFrames;
+            }
+            bool endpointMatches = !displayedJoints.empty();
+            if(endpointMatches) for(std::size_t j = 0; j < runtimeEnd.size(); ++j)
+                endpointMatches &= std::abs(displayedJoints.back()[j] - runtimeEnd[j]) < 1e-9;
+            std::cout << "MoveL GUI frames=" << displayedJoints.size() << " interior=" << interiorFrames
+                << " linear=" << linearFrames << " endpoint=" << endpointMatches << std::endl;
+            if(!linearFrames || interiorFrames < 3 || !endpointMatches) for(auto* label : widget.findChildren<QLabel*>())
+                if(label->property("error").toBool()) std::cout << "MoveL GUI diagnostic: " << label->text().toStdString() << std::endl;
+            require(linearFrames && interiorFrames >= 3 && endpointMatches,
+                "Actual GUI MoveL frames follow TCP line/slerp and retain ABB encoder signs through the endpoint");
+            widget.trajectorySelectionChanged(QString::fromStdString(imported.plan.id));
             // A long result must export every stored row, not only sampled table rows.
             auto exportPlan = *plan;
             const auto solvedPoints = exportPlan.trajectory.points;
@@ -2398,6 +2569,7 @@ namespace
                 point.time = i * 0.125;
                 exportPlan.trajectory.points.push_back(std::move(point));
             }
+            exportPlan.optimizationMetadata = R"({"motion":"cartesian_linear","joint_convention":"irb4600_stored"})";
             auto exportDocument = session.document();
             require(MotionPlanningProjectStore::upsertPlan(exportDocument, exportPlan, &error), "Long export fixture stores");
             session.setDocument(exportDocument, projectPath, false, false);
@@ -2422,11 +2594,17 @@ namespace
             const auto exported = ProjectCdfJointAngleImporter::importFile(output);
             require(exported.success && exported.points.size() == exportPlan.trajectory.points.size(),
                 "TXT exports all 2001 rows and can be read by the degree-format importer");
-            bool valuesMatch = exported.points.size() == exportPlan.trajectory.points.size();
+            require(exported.hasMotionMetadata && CartesianMotionSampler::isMoveL(exported.plan) &&
+                exported.plan.jointNames == exportPlan.jointNames,
+                "Actual GUI TXT export retains the MoveL law and exact joint names");
+            bool valuesMatch = exported.points.size() == exportPlan.trajectory.points.size() &&
+                exported.plan.trajectory.points.size() == exportPlan.trajectory.points.size();
             for(std::size_t i = 0; valuesMatch && i < exported.points.size(); ++i) {
                 const auto& expectedPoint = exportPlan.trajectory.points[i];
                 const auto& actualPoint = exported.points[i];
-                valuesMatch = std::abs(expectedPoint.time - actualPoint.timeSeconds) < 0.00000051 &&
+                valuesMatch = exported.plan.trajectory.points[i].q == expectedPoint.q &&
+                    exported.plan.trajectory.points[i].time == expectedPoint.time &&
+                    std::abs(expectedPoint.time - actualPoint.timeSeconds) < 0.00000051 &&
                     actualPoint.jointAnglesDegrees.size() == expectedPoint.q.size();
                 for(std::size_t j = 0; valuesMatch && j < expectedPoint.q.size(); ++j) {
                     valuesMatch = std::abs(actualPoint.jointAnglesDegrees[j] - expectedPoint.q[j] * 180.0 / 3.141592653589793) < 0.00000051;
