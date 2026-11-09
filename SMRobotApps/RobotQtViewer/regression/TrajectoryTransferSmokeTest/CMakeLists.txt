@@ -23,11 +23,22 @@ set_target_properties(${TEST_TARGET} PROPERTIES FOLDER tests/SMRobotApps
     DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX} RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX})
 copy_runtime_dlls(${TEST_TARGET})
 deploy_qt(${TEST_TARGET})
-foreach(MODE data workbenches cdf receiving freeform-transitions)
+target_compile_definitions(${TEST_TARGET} PRIVATE SECTION_SWEEP_FIXTURE="${CMAKE_SOURCE_DIR}/SMRobotSpray/SprayFreeformTrajPlan/SectionSweepTrajPlan/regression/data/plate_tube.stl")
+target_compile_definitions(${TEST_TARGET} PRIVATE XYZR_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+foreach(MODE data workbenches cdf receiving freeform-transitions section-sweep xyzr fanuc)
     add_test(NAME RobotQtViewerTrajectoryTransfer-${MODE} COMMAND ${TEST_TARGET} --${MODE})
     set_tests_properties(RobotQtViewerTrajectoryTransfer-${MODE} PROPERTIES
         LABELS "RobotQtViewer;Regression;TrajectoryTransfer"
         TIMEOUT 180 WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET}>)
+    if(MODE STREQUAL "xyzr")
+        set_tests_properties(RobotQtViewerTrajectoryTransfer-${MODE} PROPERTIES TIMEOUT 300)
+    endif()
+    if(MODE STREQUAL "section-sweep")
+        # The full UI case generates five dense trajectories, including two
+        # re-publications into motion/coating after parameter edits and clears.
+        set_tests_properties(RobotQtViewerTrajectoryTransfer-${MODE} PROPERTIES
+            TIMEOUT "$<IF:$<CONFIG:Debug>,300,180>")
+    endif()
     if(MODE STREQUAL "cdf")
         # Production GA evaluates 5000 initial postures per source control.
         set_tests_properties(RobotQtViewerTrajectoryTransfer-${MODE} PROPERTIES TIMEOUT 1800)

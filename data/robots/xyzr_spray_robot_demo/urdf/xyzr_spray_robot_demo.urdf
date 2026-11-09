@@ -1,0 +1,180 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="xyzr_spray_robot_no_workpiece">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.00212874073885532 -0.130865690898382 0.0523099416676217" rpy="0 0 0" />
+      <mass value="154.123862648637" />
+      <inertia ixx="6.77427124923454" ixy="-0.0795548036370097" ixz="0.0114634135993223" iyy="13.3313764410997" iyz="-0.473818406698655" izz="18.3661294825599" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/base_link.STL" />
+      </geometry>
+      <material name="base_link_material">
+        <color rgba="0.23 0.31 0.23 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="x_carriage">
+    <inertial>
+      <origin xyz="0.000112034769962837 -0.0174951282817269 0.0260558107551005" rpy="0 0 0" />
+      <mass value="12.9929949468621" />
+      <inertia ixx="0.146952951879436" ixy="-2.40114171995025E-05" ixz="-2.46651005143925E-05" iyy="0.0350455041664839" iyz="0.00654039045130469" izz="0.172421915644891" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/x_carriage.STL" />
+      </geometry>
+      <material name="x_carriage_material">
+        <color rgba="0.38 0.41 0.39 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/x_carriage.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="x_joint" type="prismatic">
+    <origin xyz="0 -0.24 0.11" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="x_carriage" />
+    <axis xyz="1 0 0" />
+    <limit lower="-1" upper="1" effort="300" velocity="0.1" />
+    <dynamics damping="10" friction="3" />
+  </joint>
+  <link name="y_carriage">
+    <inertial>
+      <origin xyz="0.00585188215328289 0.00689128631292131 0.27525642253792" rpy="0 0 0" />
+      <mass value="34.2139088729502" />
+      <inertia ixx="1.24963834291351" ixy="0.00448032896150786" ixz="-0.00671550457127509" iyy="1.31268564329652" iyz="-0.0203192647989584" izz="0.0973014309949518" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/y_carriage.STL" />
+      </geometry>
+      <material name="y_carriage_material">
+        <color rgba="0.23 0.31 0.23 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/y_carriage.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="y_joint" type="prismatic">
+    <origin xyz="0 0 0.08" rpy="0 0 0" />
+    <parent link="x_carriage" />
+    <child link="y_carriage" />
+    <axis xyz="0 1 0" />
+    <limit lower="-1" upper="1" effort="300" velocity="0.1" />
+    <dynamics damping="10" friction="3" />
+  </joint>
+  <link name="z_carriage">
+    <inertial>
+      <origin xyz="0.000108747422139081 0.0415845853780063 -0.0363558302615825" rpy="0 0 0" />
+      <mass value="1.76975229586464" />
+      <inertia ixx="0.00711741391366376" ixy="-1.10499410364904E-05" ixz="1.2787103311769E-06" iyy="0.00365749674727132" iyz="0.00271600083682015" izz="0.00539203853386506" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/z_carriage.STL" />
+      </geometry>
+      <material name="z_carriage_material">
+        <color rgba="0.38 0.41 0.39 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/z_carriage.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="z_joint" type="prismatic">
+    <origin xyz="0 0.06 0.28" rpy="0 0 0" />
+    <parent link="y_carriage" />
+    <child link="z_carriage" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1" upper="1" effort="300" velocity="0.05" />
+    <dynamics damping="10" friction="3" />
+  </joint>
+  <link name="yaw_wrist">
+    <inertial>
+      <origin xyz="-0.00136971773902342 -0.00029296647013609 0.0236548233630209" rpy="0 0 0" />
+      <mass value="0.272833444881852" />
+      <inertia ixx="0.000188947844350245" ixy="9.30583572230541E-07" ixz="1.11990977966299E-05" iyy="0.000232443991505699" iyz="3.04431471678835E-06" izz="0.000115740357962921" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/yaw_wrist.STL" />
+      </geometry>
+      <material name="yaw_wrist_material">
+        <color rgba="0.65 0.56 0.28 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/yaw_wrist.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="yaw_joint" type="continuous">
+    <origin xyz="0 0.1 -0.05" rpy="0 0 0" />
+    <parent link="z_carriage" />
+    <child link="yaw_wrist" />
+    <axis xyz="0 0 1" />
+    <limit effort="8" velocity="1.0471975511966" />
+    <dynamics damping="0.2" friction="0.05" />
+  </joint>
+  <link name="spray_gun">
+    <inertial>
+      <origin xyz="0.000126065927337668 0.00131788390631048 0.000179036157342896" rpy="0 0 0" />
+      <mass value="0.746354836424836" />
+      <inertia ixx="0.000769572838573611" ixy="2.75851719231878E-06" ixz="-7.35873819864247E-07" iyy="0.000130440175085833" iyz="3.91758763455746E-06" izz="0.000781386030495413" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/spray_gun.STL" />
+      </geometry>
+      <material name="spray_gun_material">
+        <color rgba="0.65 0.68 0.67 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/spray_gun.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="spray_gun_fixed" type="fixed">
+    <origin xyz="0 0 0.05" rpy="0 0 0" />
+    <parent link="yaw_wrist" />
+    <child link="spray_gun" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="tool0" />
+  <joint name="tool0_fixed" type="fixed">
+    <origin xyz="0 0.08 0" rpy="0 0 0" />
+    <parent link="spray_gun" />
+    <child link="tool0" />
+    <axis xyz="0 0 0" />
+  </joint>
+</robot>

@@ -9,6 +9,10 @@
 #include <CoatingAnalysisInfoPanel.h>
 #include <CoatingAnalysisVisibilityBar.h>
 #include <FreeformTrajPlanWorkbenchController.h>
+#include <SectionSweepWorkbench/SectionSweepAdapters.h>
+#include <SectionSweepWorkbench/SectionSweepParameterPanel.h>
+#include <SlicingTrajPlan/STLProcessor.h>
+#include <QStackedWidget>
 #include <RobotQtViewerDocumentContext.h>
 #include <RobotQtViewerDocumentController.h>
 #include <RobotQtViewerDocumentViewRegistry.h>
@@ -20,8 +24,11 @@
 #include <RobotViewport.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
+#include <ProjectMotionPlanning/XyzrKinematics.h>
+#include <ProjectMotionPlanning/TrajectoryImport.h>
 #include <ProjectMotionPlanning/CdfQpTrajectoryRepair.h>
 #include <SimulationProject/ProjectDocumentService.h>
+#include <SimulationProject/ProjectIO.h>
 #include <QApplication>
 #include <QComboBox>
 #include <QCheckBox>
@@ -299,6 +306,182 @@ namespace
             return hasCoatingResult;
         }
     };
+
+    void xyzrTests()
+    {
+        using namespace motion_planning;
+        Workbenches fixture(false,false);
+        const auto root=std::filesystem::u8path(XYZR_SOURCE_ROOT);
+        auto document=fixture.context.document();
+        document.robots[0].sourcePath=(root/"data/robots/xyzr_spray_robot_demo/urdf/xyzr_spray_robot_demo.urdf").generic_u8string();
+        document.robots[0].initialJoints.clear();document.robotMounts.clear();
+        document.attachmentAssets.clear();document.mountedAttachments.clear();document.objects.clear();
+        fixture.session.setDocument(document,fixture.folder/"xyzr.scene.json",false,false);
+        check(fixture.documentViewport.loadProjectDocument(document,fixture.folder).success,"Actual XYZR meshes and four-axis viewport initialize");
+        fixture.selection.selectRobotLink(QStringLiteral("fixture_robot"),QStringLiteral("spray_gun"));
+        fixture.planning=std::make_unique<MotionPlanningModuleController>(fixture.motion,fixture.context);
+        for(const auto kind:{RobotQtViewerEventKind::SelectionChanged,RobotQtViewerEventKind::ProjectDocumentChanged,RobotQtViewerEventKind::ProjectOpened})
+            fixture.hub.subscribe(kind,fixture.planning.get(),[&](const auto& e){fixture.planning->handleEvent(e);});
+        QString status;
+        QObject::connect(fixture.planning.get(),&MotionPlanningModuleController::statusMessageRequested,&fixture.motion,
+            [&](const QString& text,int){status=text;std::cout<<"XYZR UI: "<<text.toStdString()<<std::endl;});
+        TrajectoryImportOptions options;options.robotId="fixture_robot";options.planId="xyzr_real";
+        const auto imported=ProjectTrajectoryImporter::importFile(root/"data/trajectories/xyzr_tongpian.txt",options);
+        check(imported.success,"Full user matrix trajectory imports through production importer");
+        if(!imported.success)return;
+        check(fixture.documents.mutateProject(QStringLiteral("xyzrTestImport"),ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string& error){
+                changed=MotionPlanningProjectStore::upsertPlan(service.document(),imported.plan,&error);return changed;
+            }).success,"Imported 8735-point plan stored through document mutation");
+        fixture.motion.trajectorySelectionChanged(QString::fromStdString(imported.plan.id));
+        fixture.motion.inverseKinematicsRequested(true);QApplication::processEvents();
+        auto plans=MotionPlanningProjectStore::plans(fixture.context.document());
+        const auto solved=std::find_if(plans.begin(),plans.end(),[](const auto& p){return p.id=="xyzr_real";});
+        check(solved!=plans.end() && solved->trajectory.points.size()==8735,"Basic Planning IK button solves all 8735 XYZR targets");
+        if(solved==plans.end() || solved->trajectory.points.size()!=8735)return;
+        check(solved->jointNames==std::vector<std::string>{"x_joint","y_joint","z_joint","yaw_joint"},"Empty saved initial joints discover actual URDF joint names");
+        // Playback uses the controller's actual viewport and waits for presented frames.
+        fixture.motion.sprayMeasurementEnabledChanged(false);
+        fixture.motion.trajectoryPointsVisibilityChanged(false);
+        fixture.motion.trajectoryOrientationsVisibilityChanged(false);
+        fixture.viewport.resize(960,720);
+        fixture.viewport.resetCamera();fixture.viewport.show();QApplication::processEvents();fixture.motion.playbackRequested(1.5);
+        QElapsedTimer timer;timer.start();int changed=0;double last=0;bool finished=false;
+        while(timer.elapsed()<150000) {
+            QApplication::processEvents();QThread::msleep(5);
+            bool ok=false;const double q=fixture.services.robotJointValue(QStringLiteral("fixture_robot"),QStringLiteral("z_joint"),&ok);
+            if(ok && std::abs(q-last)>1e-5){++changed;last=q;}
+            bool stopped=false;
+            for(auto* button:fixture.motion.findChildren<QPushButton*>())if(button->text()==QStringLiteral("Play IK result"))stopped=true;
+            if(timer.elapsed()>100 && stopped){finished=true;break;}
+        }
+        check(finished && changed>4,"Actual Qt viewport presents dynamic four-axis frames and finishes all points");
+        bool final=true;
+        for(std::size_t j=0;j<4;++j) {
+            bool ok=false;double q=fixture.services.robotJointValue(QStringLiteral("fixture_robot"),QString::fromStdString(solved->jointNames[j]),&ok);
+            final &= ok && std::abs(q-solved->trajectory.points.back().q[j])<1e-9;
+        }
+        check(final,"Displayed robot reaches the exact last inverse-kinematics solution");
+        const auto output=QDir::currentPath()+QStringLiteral("/xyzr_qt_playback.png");fixture.viewport.grab().save(output);
+        // The six-axis fixture still enters the untouched actual-model numerical path.
+        Workbenches legacy(true,true,true);legacy.selection.selectRobotLink(QStringLiteral("fixture_robot"),QStringLiteral("Link6"));
+        QObject::connect(legacy.planning.get(),&MotionPlanningModuleController::statusMessageRequested,&legacy.motion,
+            [](const QString& text,int){std::cout<<"Legacy IK UI: "<<text.toStdString()<<std::endl;});
+        auto fk=legacy.services.robotForwardKinematics(QStringLiteral("fixture_robot"),{"j0","j1","j2","j3","j4","j5"},true);
+        check(bool(fk),"Legacy six-axis TCP model remains available");
+        if(fk) {
+            StoredMotionPlan plan;plan.id="legacy_ik";plan.robotId="fixture_robot";plan.name="legacy";
+            for(int i=0;i<3;++i){robottrajectory::TimedCartesianPoint p;p.time=i;p.tcpPose=fk({.2+i*.01,-.4,.5,.2,.6,-.2});plan.cartesianControlPoints.points.push_back(p);}
+            check(legacy.documents.mutateProject(QStringLiteral("legacyTestImport"),ProjectDirtyPolicy::UserEdit,
+                [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string& error){changed=MotionPlanningProjectStore::upsertPlan(service.document(),plan,&error);return changed;}).success,
+                "Legacy Cartesian targets stored through document API");
+            legacy.selection.selectRobotLink(QStringLiteral("fixture_robot"),QStringLiteral("Link6"));
+            RobotQtViewerEvent selected;selected.kind=RobotQtViewerEventKind::SelectionChanged;
+            selected.selection.robotId=QStringLiteral("fixture_robot");
+            legacy.planning->handleEvent(selected);
+            legacy.motion.trajectorySelectionChanged(QStringLiteral("legacy_ik"));legacy.motion.inverseKinematicsRequested(true);
+            const auto stored=MotionPlanningProjectStore::plans(legacy.context.document());
+            const auto old=std::find_if(stored.begin(),stored.end(),[](const auto& p){return p.id=="legacy_ik";});
+            check(old!=stored.end() && old->trajectory.points.size()==3 && old->jointNames.size()==6,"Same Basic Planning IK action still solves legacy six-axis targets");
+            if(old==stored.end() || old->trajectory.points.size()!=3)for(auto* label:legacy.motion.findChildren<QLabel*>())
+                if(label->text().contains(QStringLiteral("IK")) || label->text().contains(QStringLiteral("kinematics")))std::cout<<label->text().toStdString()<<'\n';
+        }
+    }
+
+    void fanucTests()
+    {
+        using namespace motion_planning;
+        Workbenches fixture(false,false);
+        const auto root=std::filesystem::u8path(XYZR_SOURCE_ROOT);
+        simulation_project::ProjectDocument document,original;std::string error;
+        check(simulation_project::loadProjectDocument(root/"config/projects/ABB4600-Aburnner.sys.json",original,&error),"Original Fanuc engineering document loads");
+        document.robots.push_back(original.robots.front());
+        document.robotMounts=original.robotMounts;document.attachmentAssets=original.attachmentAssets;
+        document.mountedAttachments=original.mountedAttachments;
+        for(auto& attachment:document.mountedAttachments)attachment.sourceObjectId.clear();
+        const auto robotId=document.robots.front().id;
+        document.robots.front().sourcePath=(root/"data/fanuc_m710ic50/m710ic_50_drake.urdf").generic_u8string();
+        // Keep the real saved TCP and robot; avoid unrelated workpiece collision queries.
+        document.robots.resize(1);document.objects.clear();document.collision.detectors.clear();
+        document.attachmentAssets.front().visualPath=(root/"data/Spray420/A2(1).STL").generic_u8string();
+        fixture.session.setDocument(document,fixture.folder/"fanuc.scene.json",false,false);
+        check(fixture.documentViewport.loadProjectDocument(document,root/"data").success,"Actual M-710iC/50 viewport loads with original saved tool");
+        fixture.planning=std::make_unique<MotionPlanningModuleController>(fixture.motion,fixture.context);
+        for(const auto kind:{RobotQtViewerEventKind::SelectionChanged,RobotQtViewerEventKind::ProjectDocumentChanged,RobotQtViewerEventKind::ProjectOpened})
+            fixture.hub.subscribe(kind,fixture.planning.get(),[&](const auto& e){fixture.planning->handleEvent(e);});
+        QObject::connect(fixture.planning.get(),&MotionPlanningModuleController::statusMessageRequested,&fixture.motion,
+            [](const QString& text,int){std::cout<<"Fanuc UI: "<<text.toStdString()<<std::endl;});
+        TrajectoryImportOptions import;import.robotId=robotId;import.planId="fanuc_real";
+        for(const auto& joint:document.robots.front().initialJoints)import.jointNames.push_back(joint.jointName);
+        const auto input=ProjectTrajectoryImporter::importFile(root/
+            "SMRobotMotionPlanning/ProjectMotionPlanning/regression/ProjectMotionPlanningHeadless/fanuc_limit_branches.txt",import);
+        check(input.success,"Original failing Fanuc poses import");if(!input.success)return;
+        const auto solve=[&](StoredMotionPlan plan,bool expected) {
+            const auto mutation=fixture.documents.mutateProject(QStringLiteral("fanucTestImport"),ProjectDirtyPolicy::UserEdit,
+                [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string& e){
+                    changed=MotionPlanningProjectStore::upsertPlan(service.document(),plan,&e);return changed;
+                });
+            if(!mutation.success)std::cout<<"Fanuc mutation: "<<mutation.message.toStdString()<<std::endl;
+            check(mutation.success,"Fanuc Cartesian targets stored by document mutation");
+            fixture.selection.selectRobotLink(QString::fromStdString(robotId),QStringLiteral("ee_link"));
+            RobotQtViewerEvent selected;selected.kind=RobotQtViewerEventKind::SelectionChanged;
+            selected.selection.robotId=QString::fromStdString(robotId);fixture.planning->handleEvent(selected);
+            fixture.motion.trajectorySelectionChanged(QString::fromStdString(plan.id));
+            fixture.motion.inverseKinematicsRequested(true);
+            const auto plans=MotionPlanningProjectStore::plans(fixture.context.document());
+            const auto found=std::find_if(plans.begin(),plans.end(),[&](const auto& p){return p.id==plan.id;});
+            const auto count=found==plans.end()?0:found->trajectory.points.size();
+            check(expected?count==plan.cartesianControlPoints.points.size():count==0,
+                expected?"Real Fanuc Basic Planning action solves reachable target(s)":"Real Fanuc action rejects original-limit violation without storing partial path");
+            if(expected && count>0) {
+                std::vector<double> displayed;
+                for(const auto& name:found->jointNames)displayed.push_back(fixture.services.robotJointValue(
+                    QString::fromStdString(robotId),QString::fromStdString(name)));
+                const auto fk=fixture.services.robotForwardKinematics(QString::fromStdString(robotId),found->jointNames,true);
+                const auto actual=fk(displayed);const auto& target=plan.cartesianControlPoints.points.front().tcpPose;
+                check((actual.translation()-target.translation()).norm()<1e-6 &&
+                    Eigen::AngleAxisd(actual.linear()*target.linear().transpose()).angle()<1e-6,
+                    "Displayed Fanuc joints reach original target, including positions beyond URDF limits");
+            }
+            return count;
+        };
+        auto legal=input.plan;legal.cartesianControlPoints.points.clear();
+        for(std::size_t i=0;i<input.plan.cartesianControlPoints.points.size();++i) {
+            auto one=input.plan;one.cartesianControlPoints.points={input.plan.cartesianControlPoints.points[i]};
+            solve(one,true);
+            legal.cartesianControlPoints.points.push_back(input.plan.cartesianControlPoints.points[i]);
+        }
+        solve(input.plan,true);
+        fixture.motion.multiIkRequested(true,QVector<double>(6,-360),QVector<double>(6,360),64);
+        QElapsedTimer multiTimer;multiTimer.start();QComboBox* pointList=nullptr;
+        while(multiTimer.elapsed()<120000) {
+            QApplication::processEvents();QThread::msleep(5);
+            pointList=fixture.motion.findChild<QComboBox*>(QStringLiteral("multiIkPoint"));
+            if(pointList && pointList->count()==8)break;
+        }
+        check(pointList && pointList->count()==8,"Real Fanuc All IK action finishes all original failing fixtures");
+        if(pointList && pointList->count()==8)for(int i=0;i<8;++i) {
+            const bool hasRoot=!pointList->itemText(i).contains(QStringLiteral("| 0 "));
+            check(hasRoot==(i<4 || i==7),"All IK agrees with single IK and original physical limits");
+        }
+        solve(legal,true);
+        fixture.motion.sprayMeasurementEnabledChanged(false);
+        fixture.motion.trajectoryPointsVisibilityChanged(false);
+        fixture.motion.trajectoryOrientationsVisibilityChanged(false);
+        fixture.viewport.resize(960,720);fixture.viewport.resetCamera();fixture.viewport.show();QApplication::processEvents();
+        fixture.motion.playbackRequested(1.0);
+        QElapsedTimer timer;timer.start();bool finished=false;int changes=0;double last=0;
+        while(timer.elapsed()<60000) {
+            QApplication::processEvents();QThread::msleep(5);
+            const auto q=fixture.services.robotJointValue(QString::fromStdString(robotId),QStringLiteral("J3"));
+            if(std::abs(q-last)>1e-5){last=q;++changes;}
+            for(auto* button:fixture.motion.findChildren<QPushButton*>())
+                if(timer.elapsed()>100 && button->text()==QStringLiteral("Play IK result"))finished=true;
+            if(finished)break;
+        }
+        check(finished && changes>2,"Fanuc unbounded basic IK animates through all regression targets");
+    }
+
     void receivingTests()
     {
         // Use the application's real factory and event subscriptions, with the
@@ -410,6 +593,163 @@ namespace
         fixture.viewport.grab().save(QStringLiteral("trajectory-transfer-preview.png"));
         fixture.source.clear();
         check(fixture.coating->waypoints().empty(),"Clearing shared source invalidates dependent analysis input");
+    }
+
+
+    void sectionSweepTests()
+    {
+        QElapsedTimer stages;stages.start();
+        const auto stage=[&](const char* name) {std::cout<<"[section-sweep ms="<<stages.elapsed()<<"] "<<name<<std::endl;};
+        Workbenches fixture(true,true);
+        using namespace smrobot::workbench::freeform;
+        using spray_freeform_traj_plan::WorkflowAction;
+        FreeformTrajPlanWorkflowPanel workflow;
+        FreeformTrajPlanParameterPanel parameters;
+        FreeformTrajPlanWorkbenchController controller(workflow,parameters,fixture.context,&fixture.source,{},{});
+        auto* method=workflow.findChild<QComboBox*>(QStringLiteral("freeformPlanningMethod"));
+        auto* scanPanel=parameters.findChild<SectionSweepParameterPanel*>();
+        check(method && method->count()==3 && scanPanel,"Third planning mode and separate parameter panel exist");
+        if(!method||!scanPanel)return;
+        check(scanPanel->parameters().maximumTiltDegrees==88. && scanPanel->parameters().transferSpeed==.200,
+            "UI selects the new 88-degree coverage method and 200 mm/s transfer limit");
+        method->setCurrentIndex(2);
+        check(scanPanel->isVisibleTo(&parameters),"Selecting third mode switches parameter UI");
+        QTimer unitTimer;
+        bool meters=true;
+        QObject::connect(&unitTimer,&QTimer::timeout,&workflow,[&] {
+            auto* box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if(!box)return;
+            for(auto* button:box->buttons()) {
+                if(button->text()==(meters?QStringLiteral("米 (m)"):QStringLiteral("毫米 (mm)"))) {
+                    unitTimer.stop();button->click();return;
+                }
+            }
+        });
+        const QString input=qEnvironmentVariable("RS2026_SECTION_SWEEP_MODEL",QString::fromUtf8(SECTION_SWEEP_FIXTURE));
+        unitTimer.start(30);workflow.importModelRequested(input);
+        check(fixture.source.snapshot().hasModel(),"Shared import loads the metre-valued plate/tube STL");
+        auto* generate=workflow.findChild<QPushButton*>(QStringLiteral("sectionSweepWorkflowGenerate"));
+        if(!generate){check(false,"Third workflow generate button missing");return;}
+        generate->click();
+        stage("first UI generation and downstream publication");
+        auto snapshot=fixture.source.snapshot();
+        auto points=snapshot.trajectory.flattenedPoints();
+        check(!points.empty(),"Actual Qt third-mode action produces shared trajectory");
+        if(points.empty())return;
+        std::cout<<"Section shared points="<<points.size()<<" segments="<<snapshot.trajectory.segments.size()<<std::endl;
+        bool spray=false,air=false,samplerCorrect=true;
+        for(const auto& segment:snapshot.trajectory.segments) {
+            spray|=segment.sprayEnabled;air|=!segment.sprayEnabled;
+            if(segment.points.size()<2)continue;
+            const double t=.5*(segment.points.front().time+segment.points[1].time);
+            if(t>segment.points.front().time)
+                samplerCorrect &= spraytrajectory::SprayTrajectorySampler::evaluate(snapshot.trajectory,t).sprayEnabled==segment.sprayEnabled;
+        }
+        check(spray&&air&&samplerCorrect,"Shared sampler sprays only on scan strokes, including entry/exit transitions");
+        check(snapshot.sprayAxis==4 && snapshot.feedAxis==2,"Tool +Z spraying and +Y footprint major axis match the webpage coverage model");
+        check(fixture.panel.sprayDirectionLocal().isApprox(Eigen::Vector3d::UnitZ()) &&
+            fixture.panel.powderFeedDirectionLocal().isApprox(Eigen::Vector3d::UnitY()),
+            "Actual coating panel receives the same spray/footprint frame as native coverage fitting");
+        auto world=snapshot;QString error;
+        check(planningDataToWorld(snapshot,fixture.context.document(),world,&error),"Third-mode trajectory converts through common world transfer");
+        const auto plans=motion_planning::MotionPlanningProjectStore::plans(fixture.context.document());
+        const auto plan=std::find_if(plans.begin(),plans.end(),[&](const auto& item) {
+            return item.cartesianControlPoints.points.size()==points.size();
+        });
+        check(plan!=plans.end(),"Third-mode result automatically reaches the Motion Planning document");
+        check(fixture.coating->waypoints().size()==points.size(),"Third-mode result reaches coating analysis with air flags");
+        ModelTrajPlan::ModelData model;ModelTrajPlan::STLProcessor reader;
+        check(reader.preprocessSTL(input.toStdString(),model),"Independent planner source loads");
+        const auto mesh=sectionMeshInMeters(model.mainModelData_,1.);
+        const auto domain=section_sweep::SingleSideScanPlanner::generate(mesh,scanPanel->parameters());
+        stage("independent domain generation");
+        check(domain.success && domain.passCount==36 && domain.exteriorSamples>5000 &&
+            domain.coveredSamples==domain.exteriorSamples && domain.maximumUsedTiltDegrees>87.9,
+            "Actual third-mode settings fit the existing 36 passes for pipe/root coverage without extra passes");
+        const auto exported=sectionExportPoints(domain);
+        check(domain.success&&!exported.empty(),"Independent domain generation succeeds");
+        if(exported.empty())return;
+        check((exported.front().pose.block<3,1>(0,3)*.001-points.front().tcpPose.translation()).norm()<1.e-10,
+            "Export millimetres and shared metres agree without double scaling");
+        auto mmModel=model.mainModelData_;for(auto& value:mmModel.m_vertices)value*=1000.f;
+        const auto mmDomain=section_sweep::SingleSideScanPlanner::generate(sectionMeshInMeters(mmModel,.001),scanPanel->parameters());
+        stage("millimetre input generation");
+        check(mmDomain.success && mmDomain.passCount==domain.passCount &&
+            (mmDomain.points.front().pose.translation()-domain.points.front().pose.translation()).norm()<1.e-7,
+            "Millimetre and metre input adapters generate the same geometry");
+        const auto interpolated=sectionExportPoints(domain,.04);
+        bool metadata=true;
+        for(const auto& point:interpolated) {
+            if(point.point_type==2)metadata &= point.spray_distance==0.&&
+                (std::abs(point.velocity-200.)<1.e-9 || std::abs(point.velocity-20.)<1.e-9);
+            else metadata &= std::abs(point.spray_distance-100.)<1.e-9&&std::abs(point.velocity-20.)<1.e-9;
+        }
+        check(metadata,"Optional export sampling preserves each move's speed, spray mask and standoff");
+        const QString output=qEnvironmentVariable("RS2026_SECTION_SWEEP_OUTPUT",fixture.temporary.path());
+        std::filesystem::create_directories(std::filesystem::path(output.toStdWString()));
+        std::ofstream coverage(std::filesystem::path((output+QStringLiteral("/coverage_summary.json")).toStdWString()));
+        coverage<<"{\"passes\":"<<domain.passCount<<",\"points\":"<<domain.points.size()
+            <<",\"exterior_samples\":"<<domain.exteriorSamples<<",\"covered_samples\":"<<domain.coveredSamples
+            <<",\"maximum_tilt_degrees\":"<<domain.maximumUsedTiltDegrees
+            <<",\"footprint_peak_threshold\":0.05,\"minimum_incidence_cosine\":0.02}";
+        const auto paq=output+QStringLiteral("/tongban_single_side_paq.txt");
+        const auto matrix=output+QStringLiteral("/tongban_single_side_matrix.txt");
+        workflow.exportTrajectoryRequested(paq,FreeformTrajPlanExportFormat::Paq,0.);
+        workflow.exportTrajectoryRequested(matrix,FreeformTrajPlanExportFormat::Matrix,0.);
+        std::ifstream file(std::filesystem::path(paq.toStdWString()));
+        bool roundTrip=true;
+        for(const auto& point:exported) {
+            double row[12];for(auto& x:row)if(!(file>>x)){roundTrip=false;break;}
+            if(!roundTrip)break;
+            Eigen::Quaterniond q(row[3],row[4],row[5],row[6]);q.normalize();
+            roundTrip &= (Eigen::Vector3d(row[0],row[1],row[2])-point.pose.block<3,1>(0,3)).norm()<1.e-5;
+            roundTrip &= (q.toRotationMatrix()-point.pose.block<3,3>(0,0)).norm()<1.e-5;
+            roundTrip &= std::abs(row[9]-point.timestamp)<1.e-6 && row[10]==point.point_type;
+        }
+        check(roundTrip&&std::filesystem::file_size(std::filesystem::path(matrix.toStdWString()))>0,
+            "Common TXT and matrix exports retain poses, times and air labels");
+        stage("exports and round-trip verification");
+        fixture.viewport.resize(1000,800);
+        fixture.viewport.focusCoatingObject(snapshot.modelObjectId,0.);
+        QApplication::processEvents();
+        fixture.viewport.grab().save(output+QStringLiteral("/tongban_single_side_preview.png"));
+        workflow.resize(320,1000);parameters.resize(360,1000);
+        workflow.grab().save(output+QStringLiteral("/planning_method_ui.png"));
+        parameters.grab().save(output+QStringLiteral("/scan_parameters_ui.png"));
+        workflow.workflowActionRequested(WorkflowAction::TransformTrajectory);
+        auto* transform=workflow.findChild<QDialog*>(QStringLiteral("trajectoryTransformDialog"));
+        check(transform!=nullptr,"Common pose transform dialog supports the third mode");
+        if(transform) {
+            transform->findChild<QDoubleSpinBox*>(QStringLiteral("transformPose0"))->setValue(10.);
+            transform->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            const auto transformed=fixture.source.snapshot();PlanningDataSnapshot transformedWorld;
+            check(planningDataToWorld(transformed,fixture.context.document(),transformedWorld,&error) &&
+                (transformed.trajectory.flattenedPoints().front().tcpPose.translation()-points.front().tcpPose.translation()).norm()<1.e-10 &&
+                (transformedWorld.trajectory.flattenedPoints().front().tcpPose.translation()-
+                    (points.front().tcpPose.translation()+Eigen::Vector3d(.01,0,0))).norm()<1.e-10,
+                "Moving model and scan by 10 mm applies translation once in world coordinates");
+            const auto transformedPath=output+QStringLiteral("/transformed_paq.txt");
+            workflow.exportTrajectoryRequested(transformedPath,FreeformTrajPlanExportFormat::Paq,0.);
+            std::ifstream moved(std::filesystem::path(transformedPath.toStdWString()));double x=0.;
+            check(bool(moved>>x)&&std::abs(x-exported.front().pose(0,3)-10.)<1.e-5,
+                "Third-mode TXT exports the displayed transformed position in millimetres");
+        }
+        method->setCurrentIndex(1);check(fixture.source.snapshot().trajectory.empty(),"UV mode does not publish the section scan as UV data");
+        method->setCurrentIndex(0);check(fixture.source.snapshot().trajectory.empty(),"Slicing mode owns independent output");
+        method->setCurrentIndex(2);check(fixture.source.snapshot().trajectory.flattenedPoints().size()==points.size(),"Returning to scan mode restores its generated trajectory");
+        scanPanel->findChild<QDoubleSpinBox*>(QStringLiteral("sectionPassSpacing"))->setValue(6.);
+        check(fixture.source.snapshot().trajectory.empty(),"Parameter edit invalidates stale shared trajectory");
+        workflow.exportTrajectoryRequested(output+QStringLiteral("/stale.txt"),FreeformTrajPlanExportFormat::Paq,0.);
+        check(!std::filesystem::exists(std::filesystem::path((output+QStringLiteral("/stale.txt")).toStdWString())),"Stale or empty trajectory cannot be exported");
+        stage("transforms, mode switching and invalidation");
+        generate->click();stage("regeneration after parameter edit");
+        workflow.workflowActionRequested(WorkflowAction::ClearTrajectoryData);
+        stage("clear trajectory");
+        check(fixture.source.snapshot().hasModel()&&fixture.source.snapshot().trajectory.empty(),"Common clear-trajectory retains model and clears third-mode output");
+        generate->click();stage("regeneration after clear");
+        workflow.workflowActionRequested(WorkflowAction::ClearAllData);
+        stage("clear all");
+        check(!fixture.source.snapshot().hasModel()&&fixture.source.snapshot().trajectory.empty(),"Common clear-all clears third-mode model, output and downstream source");
     }
 
     void freeformTransitionTests()
@@ -577,6 +917,9 @@ int main(int argc,char** argv)
     const std::string mode=argc>1?argv[1]:"--data";
     if(mode=="--data") dataTests();
     else if(mode=="--workbenches") workbenchTests();
+    else if(mode=="--xyzr") xyzrTests();
+    else if(mode=="--fanuc") fanucTests();
+    else if(mode=="--section-sweep") sectionSweepTests();
     else if(mode=="--freeform-transitions") freeformTransitionTests();
     else if(mode=="--cdf") cdfTests();
     else if(mode=="--receiving") receivingTests();

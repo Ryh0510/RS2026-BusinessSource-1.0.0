@@ -323,3 +323,9 @@ rs2026_catalog_entry(
     PACKAGE SMRobotMotionPlanning COMPONENT ProjectMotionPlanning
     CATEGORY Regression STATUS unreviewed ORIGIN unknown COST normal)
 
+
+rs2026_catalog_entry(
+    PATH "SMRobotSpray/SprayFreeformTrajPlan/SectionSweepTrajPlan/regression"
+    PACKAGE SMRobotSpray COMPONENT SprayFreeformTrajPlan
+    CATEGORY Regression STATUS candidate ORIGIN ai COST normal
+    CONTRACT_FILE "docs/section_sweep_planning.md")

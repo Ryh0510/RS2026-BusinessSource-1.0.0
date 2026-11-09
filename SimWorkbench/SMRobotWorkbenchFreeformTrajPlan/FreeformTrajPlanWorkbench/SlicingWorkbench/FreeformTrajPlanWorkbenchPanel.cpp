@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSizePolicy>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -60,14 +61,17 @@ namespace smrobot::workbench::freeform
         auto* planningMethodGroup = new QGroupBox(QStringLiteral("规划方法"), this);
         auto* planningMethodLayout = new QVBoxLayout(planningMethodGroup);
         auto* planningMethod = new QComboBox(planningMethodGroup);
-        planningMethod->addItem(QStringLiteral("切片规划"), false);
-        planningMethod->addItem(QStringLiteral("UV 规划"), true);
+        m_planningMethod = planningMethod;
+        planningMethod->setObjectName(QStringLiteral("freeformPlanningMethod"));
+        planningMethod->addItem(QStringLiteral("切片规划"), 0);
+        planningMethod->addItem(QStringLiteral("UV 规划"), 1);
+        planningMethod->addItem(QStringLiteral("等截面单侧扫描"), 2);
         planningMethodLayout->addWidget(planningMethod);
         connect(planningMethod, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [planningMethod, this](int index) {
-                const bool uv = planningMethod->itemData(index).toBool();
-                m_workflowStack->setCurrentIndex(uv ? 1 : 0);
-                emit planningMethodRequested(uv);
+                const int mode = planningMethod->itemData(index).toInt();
+                m_workflowStack->setCurrentIndex(mode);
+                emit planningModeRequested(static_cast<spray_freeform_traj_plan::PlanningMethod>(mode));
             });
         layout->addWidget(planningMethodGroup);
 
@@ -132,6 +136,16 @@ namespace smrobot::workbench::freeform
         uvLayout->addWidget(uvActions);
         uvLayout->addStretch(1);
         m_workflowStack->addWidget(uvPage);
+        auto* scanPage = new QWidget(m_workflowStack);
+        scanPage->setObjectName(QStringLiteral("sectionSweepWorkflow"));
+        auto* scanLayout = new QVBoxLayout(scanPage);
+        scanLayout->setContentsMargins(0, 0, 0, 0);
+        auto* scanDescription = new QLabel(QStringLiteral("截面规划 → 沿轴扫描 → 退让空移。适用于板管等截面组合件，工件无需旋转。"), scanPage);
+        scanDescription->setWordWrap(true);
+        scanLayout->addWidget(scanDescription);
+        addActionButton(*scanLayout, scanPage, QStringLiteral("生成单侧扫描轨迹"),
+            spray_freeform_traj_plan::WorkflowAction::GenerateSectionSweep, *this)->setObjectName("sectionSweepWorkflowGenerate");
+        m_workflowStack->addWidget(scanPage);
         layout->addWidget(m_workflowStack);
 
         auto* outputGroup = new QGroupBox(QStringLiteral("轨迹数据"), this);
@@ -229,8 +243,9 @@ namespace smrobot::workbench::freeform
     void FreeformTrajPlanWorkflowPanel::setPlanningMethod(
         spray_freeform_traj_plan::PlanningMethod method)
     {
-        m_workflowStack->setCurrentIndex(
-            method == spray_freeform_traj_plan::PlanningMethod::Uv ? 1 : 0);
+        const QSignalBlocker blocker(m_planningMethod);
+        m_planningMethod->setCurrentIndex(static_cast<int>(method));
+        m_workflowStack->setCurrentIndex(static_cast<int>(method));
     }
 
     FreeformTrajPlanParameterPanel::FreeformTrajPlanParameterPanel(QWidget* parent)
@@ -283,15 +298,18 @@ namespace smrobot::workbench::freeform
         auto* visibilityLayout = new QVBoxLayout(visibilityGroup);
         auto* modelVisible = new QCheckBox(QStringLiteral("显示模型"), visibilityGroup);
         auto* slicesVisible = new QCheckBox(QStringLiteral("显示切片"), visibilityGroup);
+        slicesVisible->setObjectName(QStringLiteral("freeformSlicesVisible"));
         auto* trajectoriesVisible = new QCheckBox(QStringLiteral("显示轨迹"), visibilityGroup);
         auto* connectionsVisible = new QCheckBox(QStringLiteral("显示连线"), visibilityGroup);
+        connectionsVisible->setObjectName(QStringLiteral("freeformConnectionsVisible"));
         auto* referenceLinesVisible = new QCheckBox(QStringLiteral("显示参考线"), visibilityGroup);
+        referenceLinesVisible->setObjectName(QStringLiteral("freeformReferenceLinesVisible"));
         for(QCheckBox* checkBox : { modelVisible, slicesVisible, trajectoriesVisible, connectionsVisible,
                 referenceLinesVisible }) {
             checkBox->setChecked(true);
             visibilityLayout->addWidget(checkBox);
         }
-        slicingLayout->addWidget(visibilityGroup);
+
 
         auto* tcpGroup = new QGroupBox(QStringLiteral("导出 TCP"), slicingPage);
         auto* tcpLayout = new QVBoxLayout(tcpGroup);
@@ -357,7 +375,7 @@ namespace smrobot::workbench::freeform
         fanucTcpGrid->addWidget(m_tcpR, 2, 3);
         m_tcpInputStack->addWidget(fanucTcpPage);
         tcpLayout->addWidget(m_tcpInputStack);
-        slicingLayout->addWidget(tcpGroup);
+
         m_tcpFormat->setEnabled(false);
         m_tcpInputStack->setEnabled(false);
         slicingLayout->addStretch(1);
@@ -394,7 +412,16 @@ namespace smrobot::workbench::freeform
         uvLayout->addWidget(uvGroup);
         uvLayout->addStretch(1);
         m_parameterStack->addWidget(uvPage);
+        auto* scanParameters = new SectionSweepParameterPanel(m_parameterStack);
+        connect(scanParameters, &SectionSweepParameterPanel::generateRequested, this, [this]() {
+            emit workflowActionRequested(spray_freeform_traj_plan::WorkflowAction::GenerateSectionSweep);
+        });
+        connect(scanParameters, &SectionSweepParameterPanel::parametersEdited,
+            this, &FreeformTrajPlanParameterPanel::sectionSweepParametersEdited);
+        m_parameterStack->addWidget(scanParameters);
         layout->addWidget(m_parameterStack);
+        layout->addWidget(visibilityGroup);
+        layout->addWidget(tcpGroup);
 
         const auto publishSlicing = [this]() {
             emit parametersChanged(m_trajectorySpacing->value(), m_chordError->value(),
@@ -478,10 +505,19 @@ namespace smrobot::workbench::freeform
         }
     }
 
+    section_sweep::Parameters FreeformTrajPlanParameterPanel::sectionSweepParameters() const
+    {
+        return findChild<SectionSweepParameterPanel*>()->parameters();
+    }
+
     void FreeformTrajPlanParameterPanel::setPlanningMethod(
         spray_freeform_traj_plan::PlanningMethod method)
     {
-        m_parameterStack->setCurrentIndex(
-            method == spray_freeform_traj_plan::PlanningMethod::Uv ? 1 : 0);
+        m_parameterStack->setCurrentIndex(static_cast<int>(method));
+        const bool section=method==spray_freeform_traj_plan::PlanningMethod::SectionSweep;
+        if(auto* slices=findChild<QCheckBox*>(QStringLiteral("freeformSlicesVisible")))
+            slices->setText(section?QStringLiteral("显示截面"):QStringLiteral("显示切片"));
+        if(auto* reference=findChild<QCheckBox*>(QStringLiteral("freeformReferenceLinesVisible")))
+            reference->setVisible(!section);
     }
 }

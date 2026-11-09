@@ -48,6 +48,19 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/SlicingTrajPlan" FILES
     ${PUBLIC_HEADERS}
 )
 
+target_sources(${TARGET_NAME} PRIVATE
+    SectionSweepTrajPlan/src/SectionCoverage.cpp
+    SectionSweepTrajPlan/src/SectionCoverage.h
+    SectionSweepTrajPlan/src/SingleSideScanPlanner.cpp
+    SectionSweepTrajPlan/include/SectionSweepTrajPlan/SingleSideScanPlanner.h)
+source_group("SectionSweepTrajPlan" FILES
+    SectionSweepTrajPlan/src/SectionCoverage.cpp
+    SectionSweepTrajPlan/src/SectionCoverage.h
+    SectionSweepTrajPlan/src/SingleSideScanPlanner.cpp
+    SectionSweepTrajPlan/include/SectionSweepTrajPlan/SingleSideScanPlanner.h)
+target_include_directories(${TARGET_NAME} PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/SectionSweepTrajPlan/include>)
+
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_17)
 target_compile_definitions(${TARGET_NAME}
     PRIVATE
@@ -87,6 +100,7 @@ endif()
 
 if(BUILD_TESTING)
     add_subdirectory(SlicingTrajPlan/regression)
+    rs2026_add_test_unit(SectionSweepTrajPlan/regression)
 endif()
 
 # UV planning is a separate algorithm module.  It owns the OptCuts build

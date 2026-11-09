@@ -1,5 +1,6 @@
 #include "FreeformTrajPlanWorkbenchController.h"
 #include "TrajectoryExportSampling.h"
+#include "SectionSweepWorkbench/SectionSweepAdapters.h"
 #include <UVTrajPlan/TrajectoryExporter.h>
 #include "FreeformTrajPlanWorkbenchPanel.h"
 #include "RobotQtViewerEvents.h"
@@ -124,7 +125,8 @@ namespace
     {
         for(const QString& overlayId : { QStringLiteral("connections"), QStringLiteral("slices"),
                 QStringLiteral("slicePlanes"), QStringLiteral("sliceSurfaces"),
-                QStringLiteral("trajectoryFrames"), QStringLiteral("referenceLines"), QStringLiteral("frameConfiguration") }) {
+                QStringLiteral("trajectoryFrames"), QStringLiteral("referenceLines"), QStringLiteral("frameConfiguration"),
+                QStringLiteral("sectionSweep"),QStringLiteral("sectionProfile"),QStringLiteral("uvTrajectory") }) {
             clearOverlay(viewport, overlayId);
         }
     }
@@ -291,6 +293,20 @@ namespace
         viewport->upsertCustomMesh(overlay, handle);
     }
 
+    Eigen::Isometry3d sectionModelFrame(const simulation_project::ProjectDocument& document,const QString& id)
+    {
+        Eigen::Isometry3d frame=Eigen::Isometry3d::Identity();
+        for(const auto& object:document.objects) if(object.id==id.toStdString()) {
+            const auto& t=object.transform;
+            frame.translation()=Eigen::Vector3d(t.x,t.y,t.z);
+            frame.linear()=(Eigen::AngleAxisd(t.yaw,Eigen::Vector3d::UnitZ())*
+                Eigen::AngleAxisd(t.pitch,Eigen::Vector3d::UnitY())*
+                Eigen::AngleAxisd(t.roll,Eigen::Vector3d::UnitX())).toRotationMatrix();
+            break;
+        }
+        return frame;
+    }
+
     Eigen::Vector3d transformPoint(const Eigen::Matrix4d& transform, const Eigen::Vector3d& point)
     {
         return (transform * Eigen::Vector4d(point.x(), point.y(), point.z(), 1.0)).head<3>();
@@ -390,8 +406,19 @@ namespace smrobot::workbench::freeform
         }
         connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::importModelRequested,
             this, &FreeformTrajPlanWorkbenchController::importModel);
-        connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::planningMethodRequested,
+        connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::planningModeRequested,
             this, &FreeformTrajPlanWorkbenchController::setPlanningMethod);
+        connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::planningMethodRequested,
+            this, [this](bool uv) { setPlanningMethod(uv ? spray_freeform_traj_plan::PlanningMethod::Uv
+                : spray_freeform_traj_plan::PlanningMethod::Slicing); });
+        connect(&parameterPanel, &FreeformTrajPlanParameterPanel::sectionSweepParametersEdited,
+            this, [this]() {
+                m_sectionResult = {};
+                if(m_sectionPlanning) {
+                    refreshSectionSweepOverlay();publishSharedData();
+                    showResult(true, QStringLiteral("扫描参数已修改，请重新生成轨迹。"));
+                }
+            });
         connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::slicingMethodRequested,
             this, &FreeformTrajPlanWorkbenchController::setSlicingMethod);
         connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::exportTrajectoryRequested,
@@ -423,7 +450,7 @@ namespace smrobot::workbench::freeform
             m_modelObjectId.clear();
             m_modelPath.clear();
             m_uvPipeline.clearModel();
-            m_uvPlanning=false;
+            m_uvPlanning=false;m_sectionPlanning=false;m_sectionResult={};
             if(m_dataSource != nullptr) {
                 m_dataSource->clear();
             }
@@ -435,19 +462,72 @@ namespace smrobot::workbench::freeform
             m_workflowPanel.setPlanningMethod(spray_freeform_traj_plan::PlanningMethod::Slicing);
             m_parameterPanel.setPlanningMethod(spray_freeform_traj_plan::PlanningMethod::Slicing);
             m_workflowPanel.setStatus(QStringLiteral("等待导入曲面模型。"), true);
+        } else if(m_sectionPlanning && (event.kind==robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged ||
+            event.kind==robot_qt_viewer::RobotQtViewerEventKind::ViewportReloaded)) {
+            refreshSectionSweepOverlay();
         }
     }
-    void FreeformTrajPlanWorkbenchController::setPlanningMethod(bool uv)
+    void FreeformTrajPlanWorkbenchController::setPlanningMethod(spray_freeform_traj_plan::PlanningMethod method)
     {
-        const auto method = uv ? spray_freeform_traj_plan::PlanningMethod::Uv
-                               : spray_freeform_traj_plan::PlanningMethod::Slicing;
-        m_uvPlanning = uv;
+        m_uvPlanning = method == spray_freeform_traj_plan::PlanningMethod::Uv;
+        m_sectionPlanning = method == spray_freeform_traj_plan::PlanningMethod::SectionSweep;
         m_workflowPanel.setPlanningMethod(method);
         m_parameterPanel.setPlanningMethod(method);
-        showResult(true, uv ? QStringLiteral("UV 轨迹规划已启用。")
-                            : QStringLiteral("切片轨迹规划已启用。"));
+        if(m_previewCleared) m_previewCleared();
+        clearAllOverlays(m_context.visualizationViewport());
+        setVisualizationVisibility(m_modelVisible,m_slicesVisible,m_trajectoriesVisible,m_connectionsVisible,m_referenceLinesVisible);
+        showResult(true, m_sectionPlanning ? QStringLiteral("等截面单侧扫描已启用。选择扫描轴与喷涂侧后生成轨迹。")
+            : (m_uvPlanning ? QStringLiteral("UV 轨迹规划已启用。") : QStringLiteral("切片轨迹规划已启用。")));
         publishSharedData();
     }
+
+    void FreeformTrajPlanWorkbenchController::generateSectionSweep()
+    {
+        if(!m_sectionPlanning) { showResult(false,QStringLiteral("请先选择等截面单侧扫描模式。"));return; }
+        try {
+            m_sectionResult = section_sweep::SingleSideScanPlanner::generate(
+                sectionMeshInMeters(m_generalData.modelDataManager_.mainModelData_,m_algorithmToSceneScale),
+                m_parameterPanel.sectionSweepParameters());
+            refreshSectionSweepOverlay();publishSharedData();
+            showResult(m_sectionResult.success, m_sectionResult.success
+                ? QStringLiteral("已生成 %1 道、%2 个位姿；有限喷幅覆盖采样 %3/%4，最大倾角 %5°。上下端外关枪过渡。")
+                    .arg(m_sectionResult.passCount).arg(m_sectionResult.points.size())
+                    .arg(m_sectionResult.coveredSamples).arg(m_sectionResult.exteriorSamples)
+                    .arg(m_sectionResult.maximumUsedTiltDegrees,0,'f',1)
+                : QStringLiteral("单侧扫描生成失败：%1").arg(QString::fromStdString(m_sectionResult.message)));
+        } catch(const std::exception& error) {
+            m_sectionResult={};refreshSectionSweepOverlay();publishSharedData();
+            showResult(false,QString::fromUtf8(error.what()));
+        }
+    }
+
+    void FreeformTrajPlanWorkbenchController::refreshSectionSweepOverlay()
+    {
+        for(const auto& id:{QStringLiteral("sectionSweep"),QStringLiteral("sectionProfile"),QStringLiteral("connections")})
+            clearOverlay(m_context.visualizationViewport(),id);
+        if(!m_sectionPlanning) return;
+        const auto frame=sectionModelFrame(m_context.document(),m_modelObjectId);
+        const auto worldLines=[&](FreeformTrajPlanLinePreview lines) {
+            for(auto& line:lines) {
+                const Eigen::Vector3d a=frame*Eigen::Vector3d(line.startX,line.startY,line.startZ);
+                const Eigen::Vector3d b=frame*Eigen::Vector3d(line.endX,line.endY,line.endZ);
+                line.startX=a.x();line.startY=a.y();line.startZ=a.z();
+                line.endX=b.x();line.endY=b.y();line.endZ=b.z();
+            }
+            return lines;
+        };
+        if(m_trajectoriesVisible) submitLineOverlay(m_context.visualizationViewport(),QStringLiteral("sectionSweep"),
+            worldLines(sectionTrajectoryLines(m_sectionResult,true)),1.);
+        if(m_connectionsVisible) submitLineOverlay(m_context.visualizationViewport(),QStringLiteral("connections"),
+            worldLines(sectionTrajectoryLines(m_sectionResult,false)),1.);
+        if(m_slicesVisible) {
+            FreeformTrajPlanLinePreview lines;
+            for(const auto& line:m_sectionResult.section)
+                lines.push_back({line.a.x(),line.a.y(),line.a.z(),line.b.x(),line.b.y(),line.b.z(),.2,.6,1.,1.});
+            submitLineOverlay(m_context.visualizationViewport(),QStringLiteral("sectionProfile"),worldLines(std::move(lines)),1.);
+        }
+    }
+
     void FreeformTrajPlanWorkbenchController::importModel(const QString& path)
     {
         for(auto* dialog : m_workflowPanel.findChildren<QDialog*>(QStringLiteral("slicingAdjustDialog"))) dialog->reject();
@@ -548,6 +628,7 @@ namespace smrobot::workbench::freeform
             }
         }
         m_modelPath = path;
+        m_sectionResult = {};
         m_algorithmToSceneScale = scaleToMeters;
         // Import creates a fresh algorithm document. Preserve values owned by
         // the persistent parameter panel; otherwise its displayed settings
@@ -597,9 +678,15 @@ namespace smrobot::workbench::freeform
             return;
         }
         auto exportPoints = m_generalData.trajData_.trajectoryPoints_;
-        const bool preparedExport = interpolationInterval > 0 || format == FreeformTrajPlanExportFormat::Matrix;
+        const bool preparedExport = m_sectionPlanning || interpolationInterval > 0 || format == FreeformTrajPlanExportFormat::Matrix;
         if(preparedExport) {
             try {
+                if(m_sectionPlanning) {
+                    auto worldResult=m_sectionResult;
+                    const auto frame=sectionModelFrame(m_context.document(),m_modelObjectId);
+                    for(auto& point:worldResult.points) point.pose=frame*point.pose;
+                    exportPoints=sectionExportPoints(worldResult,interpolationInterval);
+                }
                 if(m_uvPlanning) {
                     exportPoints.clear();
                     const auto& mesh = m_uvPipeline.getOptCutsResult();
@@ -620,7 +707,7 @@ namespace smrobot::workbench::freeform
                         point.trajectory_index = static_cast<int>(source.segmentIndex);
                         exportPoints.push_back(point);
                     }
-                } else {
+                } else if(!m_sectionPlanning) {
                     // Same time calculation as the existing slicing PAQ exporter (mm and mm/s).
                     double elapsed = 0.0;
                     for(std::size_t i = 0; i < exportPoints.size(); ++i) {
@@ -634,7 +721,7 @@ namespace smrobot::workbench::freeform
                     }
                 }
                 if(exportPoints.empty()) throw std::runtime_error("No trajectory to export");
-                if(interpolationInterval > 0)
+                if(interpolationInterval > 0 && !m_sectionPlanning)
                     exportPoints = resampleExportTrajectory(exportPoints, interpolationInterval);
                 if(format == FreeformTrajPlanExportFormat::Paq || format == FreeformTrajPlanExportFormat::Matrix) {
                     QSaveFile file(path);
@@ -772,6 +859,7 @@ namespace smrobot::workbench::freeform
             }
         }
 
+        if(m_sectionPlanning) {refreshSectionSweepOverlay();return;}
         refreshSlicingOverlays();
         clearOverlay(m_context.visualizationViewport(), QStringLiteral("trajectoryFrames"));
         clearOverlay(m_context.visualizationViewport(), QStringLiteral("uvTrajectory"));
@@ -830,6 +918,8 @@ namespace smrobot::workbench::freeform
         bool success = true;
         QString message;
         switch(action) {
+        case spray_freeform_traj_plan::WorkflowAction::GenerateSectionSweep:
+            generateSectionSweep();return;
         case spray_freeform_traj_plan::WorkflowAction::StartSlicing:
             success = m_plan.generateCuttingPlanes(m_generalData);
             if(success) {
@@ -886,22 +976,27 @@ namespace smrobot::workbench::freeform
         case spray_freeform_traj_plan::WorkflowAction::ConfigureTrajectoryFrame:
             showTrajectoryFrameDialog(); return;
         case spray_freeform_traj_plan::WorkflowAction::ClearModelData:
-            m_plan.clear(m_generalData); m_uvPipeline.clearModel(); m_modelPath.clear();
+            m_plan.clear(m_generalData); m_uvPipeline.clearModel(); m_modelPath.clear();m_sectionResult={};
             message = QStringLiteral("模型数据已清除。"); break;
         case spray_freeform_traj_plan::WorkflowAction::ClearTrajectoryData:
             m_generalData.trajData_.trajectoryPoints_.clear();
             m_generalData.trajData_.connectionData_ = {};
             m_generalData.processingState_.isTrajectoryGenerated = false;
-            m_uvPipeline.clearTrajectory();
+            m_uvPipeline.clearTrajectory();m_sectionResult={};
             message = QStringLiteral("轨迹数据已清除。"); break;
         case spray_freeform_traj_plan::WorkflowAction::ClearConnectionData:
             m_generalData.trajData_.connectionData_ = {}; m_uvPipeline.clearConnection();
-            message = QStringLiteral("轨迹连线已清除。"); break;
+            if(m_sectionPlanning) {
+                m_connectionsVisible=false;
+                if(auto* check=m_parameterPanel.findChild<QCheckBox*>(QStringLiteral("freeformConnectionsVisible")))
+                    check->setChecked(false);
+            }
+            message = m_sectionPlanning ? QStringLiteral("空移连线已隐藏；完整轨迹中的空移指令保留。") : QStringLiteral("轨迹连线已清除。"); break;
         case spray_freeform_traj_plan::WorkflowAction::ClearOtherData:
-            m_plan.clearCuttingPlanes(m_generalData); message = QStringLiteral("切片数据已清除。"); break;
+            m_plan.clearCuttingPlanes(m_generalData);m_sectionResult.section.clear(); message = QStringLiteral("切片数据已清除。"); break;
         case spray_freeform_traj_plan::WorkflowAction::ClearAllData:
             m_plan.clear(m_generalData);
-            m_uvPipeline.clearModel();
+            m_uvPipeline.clearModel();m_sectionResult={};
             m_modelPath.clear();
             message = QStringLiteral("全部规划数据已清除。");
             break;
@@ -952,6 +1047,7 @@ namespace smrobot::workbench::freeform
                     m_algorithmToSceneScale);
             }
         }
+        if(m_sectionPlanning) refreshSectionSweepOverlay();
         if(success) publishSharedData();
         showResult(success, message);
     }
@@ -1172,9 +1268,10 @@ namespace smrobot::workbench::freeform
             return false;
         }
 
+        const Eigen::Isometry3d originalFrame=sectionModelFrame(m_context.document(),m_modelObjectId);
         if(transformModel && !m_modelObjectId.isEmpty()) {
             Eigen::Matrix4d sceneTransform = transform;
-            sceneTransform.block<3, 1>(0, 3) *= m_algorithmToSceneScale;
+            sceneTransform.block<3, 1>(0, 3) *= m_sectionPlanning ? .001 : m_algorithmToSceneScale;
             const auto sceneUpdate = m_context.documentController().mutateProject(
                 QStringLiteral("freeformTrajPlan.transformModel"),
                 robot_qt_viewer::ProjectDirtyPolicy::UserEdit,
@@ -1214,7 +1311,7 @@ namespace smrobot::workbench::freeform
         }
 
         const Eigen::Matrix3d rotation = transform.topLeftCorner<3, 3>();
-        if(transformModel) {
+        if(transformModel && !m_sectionPlanning) {
             const auto transformMesh = [&transform, &rotation](ModelTrajPlan::PrivateModel& mesh) {
                 for(std::size_t index = 0; index + 2 < mesh.m_vertices.size(); index += 3) {
                     const Eigen::Vector3d point = transformPoint(transform, Eigen::Vector3d(
@@ -1271,7 +1368,17 @@ namespace smrobot::workbench::freeform
             for(auto& line : slicing.currentSliceResult_.internalBoundaries) transformBoundaryLine(line, transform);
         }
 
-        if(transformTrajectory) {
+        if(m_sectionPlanning) {
+            // The scan document stays model-local; its scene frame is applied once by views/export/transfer.
+            Eigen::Isometry3d delta=Eigen::Isometry3d::Identity();
+            if(transformModel && !transformTrajectory)
+                delta=sectionModelFrame(m_context.document(),m_modelObjectId).inverse()*originalFrame;
+            else if(transformTrajectory && !transformModel) {
+                delta.matrix()=transform;delta.translation()*=.001;
+            }
+            for(auto& point:m_sectionResult.points) point.pose=delta*point.pose;
+        }
+        if(transformTrajectory && !m_sectionPlanning) {
             auto& trajectory = m_generalData.trajData_;
             for(auto& point : trajectory.trajectoryPoints_) point.pose = transform * point.pose;
             for(auto& point : trajectory.connectionData_.connectedTrajectory_) point.pose = transform * point.pose;
@@ -1301,14 +1408,17 @@ namespace smrobot::workbench::freeform
         auto* dialog = new QDialog(&m_workflowPanel);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->setWindowTitle(QStringLiteral("位姿转换"));
+        dialog->setObjectName(QStringLiteral("trajectoryTransformDialog"));
         dialog->setMinimumWidth(620);
         auto* layout = new QVBoxLayout(dialog);
         auto* targetGroup = new QGroupBox(QStringLiteral("转换对象"), dialog);
         auto* targetLayout = new QHBoxLayout(targetGroup);
         auto* modelCheck = new QCheckBox(QStringLiteral("转换导入模型"), targetGroup);
         auto* trajectoryCheck = new QCheckBox(QStringLiteral("转换导入轨迹"), targetGroup);
+        modelCheck->setObjectName(QStringLiteral("transformModel"));
+        trajectoryCheck->setObjectName(QStringLiteral("transformTrajectory"));
         modelCheck->setChecked(!m_generalData.modelDataManager_.mainModelData_.m_vertices.empty());
-        trajectoryCheck->setChecked(!m_generalData.trajData_.trajectoryPoints_.empty());
+        trajectoryCheck->setChecked(m_sectionPlanning ? !m_sectionResult.points.empty() : !m_generalData.trajData_.trajectoryPoints_.empty());
         targetLayout->addWidget(modelCheck); targetLayout->addWidget(trajectoryCheck); targetLayout->addStretch(1);
         layout->addWidget(targetGroup);
 
@@ -1319,6 +1429,7 @@ namespace smrobot::workbench::freeform
             QStringLiteral("旋转 X (deg)"), QStringLiteral("旋转 Y (deg)"), QStringLiteral("旋转 Z (deg)") };
         for(int index = 0; index < 6; ++index) {
             poseValues[index] = new QDoubleSpinBox(poseGroup);
+            poseValues[index]->setObjectName(QStringLiteral("transformPose%1").arg(index));
             poseValues[index]->setRange(-1000000.0, 1000000.0); poseValues[index]->setDecimals(6);
             poseLayout->addWidget(new QLabel(labels[index], poseGroup), index / 3, (index % 3) * 2);
             poseLayout->addWidget(poseValues[index], index / 3, (index % 3) * 2 + 1);
@@ -1957,12 +2068,14 @@ namespace smrobot::workbench::freeform
         snapshot.modelPath = m_modelPath;
         snapshot.modelName = QFileInfo(m_modelPath).completeBaseName();
         snapshot.sceneScale = m_algorithmToSceneScale;
-        snapshot.sprayAxis=m_uvPlanning?4:m_generalData.trajData_.generationParams_.normalAxis;
+        snapshot.sprayAxis=(m_uvPlanning||m_sectionPlanning)?4:m_generalData.trajData_.generationParams_.normalAxis;
         snapshot.feedAxis=m_uvPlanning?2:m_generalData.trajData_.generationParams_.forwardAxis;
         snapshot.trajectory.name = snapshot.modelName.toStdString();
 
         if(!snapshot.hasModel()) { m_dataSource->clear(); return; }
-        if(m_uvPlanning) {
+        if(m_sectionPlanning) {
+            publishSectionTrajectory(m_sectionResult,snapshot);
+        } else if(m_uvPlanning) {
             const auto& mesh=m_uvPipeline.getOptCutsResult();
             const auto points=SprayTrajPlan::TrajectoryExporter::prepareExportTrajectory(mesh.mesh_vertices,mesh.mesh_faces,m_uvPipeline.getTrajectory(),m_uvParameters.trajectory_speed,m_uvParameters.spray_distance,m_uvParameters.arc_speed_loss_pct);
             std::size_t previous=std::numeric_limits<std::size_t>::max();

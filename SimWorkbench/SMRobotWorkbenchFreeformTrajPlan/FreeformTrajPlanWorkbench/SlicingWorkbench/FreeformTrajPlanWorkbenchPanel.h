@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include "SectionSweepWorkbench/SectionSweepParameterPanel.h"
 #include "FreeformTrajPlanWorkbenchExport.h"
 #include <SlicingTrajPlan/FreeformTrajPlanTypes.h>
 
@@ -56,12 +57,14 @@ namespace smrobot::workbench::freeform
 
     signals:
         void importModelRequested(const QString& path);
-        void planningMethodRequested(bool uv);
+        void planningMethodRequested(bool uv); // Existing external callers.
+        void planningModeRequested(spray_freeform_traj_plan::PlanningMethod method);
         void slicingMethodRequested(bool adaptive);
         void exportTrajectoryRequested(const QString& path, FreeformTrajPlanExportFormat format, double interpolationInterval);
         void workflowActionRequested(spray_freeform_traj_plan::WorkflowAction action);
 
     private:
+        QComboBox* m_planningMethod = nullptr;
         QLineEdit* m_modelPath = nullptr;
         QLabel* m_status = nullptr;
         QStackedWidget* m_workflowStack = nullptr;
@@ -73,6 +76,10 @@ namespace smrobot::workbench::freeform
 
     public:
         explicit FreeformTrajPlanParameterPanel(QWidget* parent = nullptr);
+        section_sweep::Parameters sectionSweepParameters() const;
+    signals:
+        void sectionSweepParametersEdited();
+    public:
         void setPlanningMethod(spray_freeform_traj_plan::PlanningMethod method);
 
     signals:

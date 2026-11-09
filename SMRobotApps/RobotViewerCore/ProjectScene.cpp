@@ -117,6 +117,8 @@ namespace
             setFilter(traceFilter);
         }
 
+        void setColor(const glm::vec4& color) { m_trace.color = color; }
+
         void clear()
         {
             m_trace.points.clear();
@@ -3096,6 +3098,7 @@ struct ProjectScene::Impl
     bool endEffectorTraceVisible = false;
     std::vector<collision::Vec3> endEffectorTracePoints;
     std::shared_ptr<EndEffectorTracePass> endEffectorTracePass;
+    std::shared_ptr<EndEffectorTracePass> trajectoryLinePass, trajectoryHighlightPass;
     struct SpraySurfaceMesh
     {
         std::string linkName;
@@ -3189,6 +3192,7 @@ struct ProjectScene::Impl
         const std::string& robotId,
         collision::Transform3& tcp, std::string* referenceLink = nullptr) const;
     void drawTrajectoryControlPointOverlay();
+    void rebuildTrajectoryLines();
     void drawRobotCollisionModelVariantPreview();
     void drawObjectCollisionModelVariantPreview();
     void updateObjectCollisionModelVariantPreviewMeshes();
@@ -3388,6 +3392,13 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     endEffectorTracePass = std::make_shared<EndEffectorTracePass>();
     for(const auto& point : endEffectorTracePoints) { endEffectorTracePass->append(toGlmVec3(point)); }
     renderer.addPass(endEffectorTracePass);
+    trajectoryLinePass = std::make_shared<EndEffectorTracePass>();
+    trajectoryLinePass->setColor(glm::vec4(1.0f, 0.55f, 0.10f, 1.0f));
+    trajectoryHighlightPass = std::make_shared<EndEffectorTracePass>();
+    trajectoryHighlightPass->setColor(glm::vec4(0.95f, 0.12f, 0.85f, 1.0f));
+    renderer.addPass(trajectoryLinePass);
+    renderer.addPass(trajectoryHighlightPass);
+    rebuildTrajectoryLines();
     trajectoryOrientationPass = std::make_shared<ProjectTrajectoryOrientationOverlayPass>();
     trajectoryOrientationPass->setPoints(trajectoryControlPointOverlay);
     trajectoryOrientationPass->setEnabled(trajectoryControlPointOrientationsVisible);
@@ -4906,9 +4917,25 @@ void ProjectScene::Impl::drawEndEffectorTrace()
     }
 }
 
+void ProjectScene::Impl::rebuildTrajectoryLines()
+{
+    if(!trajectoryLinePass || !trajectoryHighlightPass) { return; }
+    trajectoryLinePass->clear();
+    trajectoryHighlightPass->clear();
+    // Rebuild only when controls or the highlighted range change. Every original
+    // vertex remains present; no per-frame DebugDraw allocation per segment.
+    for(std::size_t i = 0; i < trajectoryControlPointOverlay.size(); ++i) {
+        const auto p = toGlmVec3(trajectoryControlPointOverlay[i].translation());
+        trajectoryLinePass->append(p);
+        if(int(i) >= trajectoryHighlightFirst && int(i) <= trajectoryHighlightLast) {
+            trajectoryHighlightPass->append(p);
+        }
+    }
+}
+
 void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
 {
-    if(trajectoryControlPointOverlay.empty()) {
+    if(trajectoryControlPointOverlay.empty() || !trajectoryControlPointMarkersVisible) {
         return;
     }
 
@@ -4926,7 +4953,6 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
     const glm::vec4 markerColor(1.0f, 0.82f, 0.15f, 1.0f);
     const glm::vec4 startColor(0.1f, 0.85f, 1.0f, 1.0f);
     const glm::vec4 endColor(1.0f, 0.25f, 0.15f, 1.0f);
-    const glm::vec4 lineColor(1.0f, 0.55f, 0.10f, 1.0f);
     const scenecore::RenderTag tag{
         scenecore::RenderLayer::Gizmo,
         scenecore::RenderCategory::Debug,
@@ -4935,15 +4961,6 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
     scenecore::DebugDraw& debug = renderer.debug();
     for(std::size_t index = 0; index < trajectoryControlPointOverlay.size(); ++index) {
         const collision::Transform3& point = trajectoryControlPointOverlay[index];
-        if(index > 0) {
-            debug.drawLine(
-                toGlmVec3(trajectoryControlPointOverlay[index - 1].translation()),
-                toGlmVec3(point.translation()),
-                (int(index)>trajectoryHighlightFirst && int(index)<=trajectoryHighlightLast) ? glm::vec4(0.95f,0.12f,0.85f,1.0f) : lineColor,
-                tag);
-        }
-
-        if(!trajectoryControlPointMarkersVisible) { continue; }
         const bool isStart = index == 0;
         const bool isEnd = index + 1 == trajectoryControlPointOverlay.size();
         const collision::Vec3 position = point.translation();
@@ -6878,6 +6895,7 @@ void ProjectScene::setTrajectoryControlPointOverlay(
     for(const simulation_project::TransformDesc& point : controlPoints) {
         m_impl->trajectoryControlPointOverlay.push_back(ProjectRuntimeBuilder::makeTransform(point));
     }
+    m_impl->rebuildTrajectoryLines();
     if(m_impl->trajectoryOrientationPass) {
         m_impl->trajectoryOrientationPass->setPoints(m_impl->trajectoryControlPointOverlay);
         m_impl->trajectoryOrientationPass->setEnabled(showOrientations);
@@ -6892,6 +6910,7 @@ void ProjectScene::clearTrajectoryControlPointOverlay(const std::string& traject
 
     m_impl->trajectoryControlPointOverlayId.clear();
     m_impl->trajectoryControlPointOverlay.clear();
+    m_impl->rebuildTrajectoryLines();
     if(m_impl->trajectoryOrientationPass) {
         m_impl->trajectoryOrientationPass->setPoints({});
         m_impl->trajectoryOrientationPass->setEnabled(false);
@@ -9558,4 +9577,8 @@ void ProjectScene::setSprayReferencePaths(const std::vector<Eigen::Vector3d>& in
     store("surfaceTargets",targets,{0.15,1.0,0.3,1});
 }
 
-void ProjectScene::setTrajectoryHighlightRange(int first,int last) { m_impl->trajectoryHighlightFirst=first; m_impl->trajectoryHighlightLast=last; }
+void ProjectScene::setTrajectoryHighlightRange(int first,int last)
+{
+    m_impl->trajectoryHighlightFirst=first; m_impl->trajectoryHighlightLast=last;
+    m_impl->rebuildTrajectoryLines();
+}

@@ -1,0 +1,7 @@
+add_executable(FreeformSectionSweepTest main.cpp)
+target_link_libraries(FreeformSectionSweepTest PRIVATE SMRobotSpray::SprayFreeformTrajPlan)
+target_compile_features(FreeformSectionSweepTest PRIVATE cxx_std_17)
+target_compile_definitions(FreeformSectionSweepTest PRIVATE SECTION_SWEEP_TEST_STL="${CMAKE_CURRENT_SOURCE_DIR}/data/plate_tube.stl")
+set_target_properties(FreeformSectionSweepTest PROPERTIES FOLDER tests/SMRobotSpray)
+add_test(NAME FreeformSectionSweep COMMAND FreeformSectionSweepTest)
+set_tests_properties(FreeformSectionSweep PROPERTIES WORKING_DIRECTORY $<TARGET_FILE_DIR:FreeformSectionSweepTest> TIMEOUT 120)

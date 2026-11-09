@@ -24,6 +24,17 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/SlicingWorkbench" FILES
     ${WORKBENCH_HEADERS}
 )
 
+target_sources(${TARGET_NAME} PRIVATE
+    SectionSweepWorkbench/SectionSweepParameterPanel.cpp
+    SectionSweepWorkbench/SectionSweepParameterPanel.h
+    SectionSweepWorkbench/SectionSweepAdapters.cpp
+    SectionSweepWorkbench/SectionSweepAdapters.h)
+source_group("SectionSweepWorkbench" FILES
+    SectionSweepWorkbench/SectionSweepParameterPanel.cpp
+    SectionSweepWorkbench/SectionSweepParameterPanel.h
+    SectionSweepWorkbench/SectionSweepAdapters.cpp
+    SectionSweepWorkbench/SectionSweepAdapters.h)
+
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_17)
 target_compile_definitions(${TARGET_NAME} PRIVATE FREEFORM_TRAJ_PLAN_WORKBENCH_BUILD)
 target_include_directories(${TARGET_NAME}

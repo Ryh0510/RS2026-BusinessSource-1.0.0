@@ -14,7 +14,8 @@ namespace spray_freeform_traj_plan
     enum class PlanningMethod
     {
         Slicing,
-        Uv
+        Uv,
+        SectionSweep
     };
 
     enum class WorkflowAction
@@ -33,7 +34,8 @@ namespace spray_freeform_traj_plan
         ClearTrajectoryData,
         ClearConnectionData,
         ClearOtherData,
-        ClearAllData
+        ClearAllData,
+        GenerateSectionSweep
     };
 
     struct FreeformTrajPlanParameters

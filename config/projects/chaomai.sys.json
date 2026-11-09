@@ -42,17 +42,17 @@
             {
                 "collisionEnabled": true,
                 "collisionScale": 1.0,
-                "id": "01__________________________________",
-                "name": "01_铜板与不锈钢管钎焊模型",
+                "id": "tongban",
+                "name": "tongban",
                 "objectFrames": [],
                 "objectType": "workpiece",
-                "sourcePath": "C:/Users/14390/Desktop/超迈项目/模型/01_铜板与不锈钢管钎焊模型.STL",
+                "sourcePath": "C:/Users/14390/Desktop/tongban.STL",
                 "transform": {
                     "pitch": 0.0,
                     "roll": 0.0,
                     "x": 0.0,
                     "y": 0.14,
-                    "yaw": 3.141592653589793,
+                    "yaw": -3.141592653589793,
                     "z": 0.375
                 },
                 "visible": true,
@@ -122,7 +122,7 @@
             "assets": {},
             "attachments": {},
             "objects": {
-                "01__________________________________": {
+                "tongban": {
                     "visible": true
                 }
             },

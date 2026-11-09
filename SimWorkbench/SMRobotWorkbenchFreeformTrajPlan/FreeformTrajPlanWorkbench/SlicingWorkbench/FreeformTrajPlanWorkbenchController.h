@@ -35,7 +35,9 @@ namespace smrobot::workbench::freeform
     private:
         void importModel(const QString& path);
         void exportTrajectory(const QString& path, FreeformTrajPlanExportFormat format, double interpolationInterval);
-        void setPlanningMethod(bool uv);
+        void setPlanningMethod(spray_freeform_traj_plan::PlanningMethod method);
+        void generateSectionSweep();
+        void refreshSectionSweepOverlay();
         void setSlicingMethod(bool adaptive);
         void setParameters(double trajectorySpacingMm, double chordErrorTolerance,
             double minimumSpacingMm, double largeEndOffsetMm, double smallEndOffsetMm,
@@ -73,6 +75,8 @@ namespace smrobot::workbench::freeform
         ModelTrajPlan::GeneralData m_generalData;
         ModelTrajPlan::BurTrajPlan m_plan;
         bool m_uvPlanning = false;
+        bool m_sectionPlanning = false;
+        section_sweep::Result m_sectionResult;
         QString m_modelPath;
         SprayTrajPlan::TrajectoryParams m_uvParameters;
         SprayTrajPlan::TrajPlanPipeline m_uvPipeline;
