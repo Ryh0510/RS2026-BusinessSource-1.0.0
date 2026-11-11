@@ -118,6 +118,9 @@ namespace
         if(actionId == QStringLiteral("coatingAnalysisWorkbench")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/coating_analysis_workbench.png");
         }
+        if(actionId == QStringLiteral("trajectoryOptimizationWorkbench")) {
+            return QStringLiteral(":/RobotQtViewer/icons/ribbon/trajectory_optimization_workbench.png");
+        }
         if(actionId == QStringLiteral("digitalTwinWorkbench")) {
             return QStringLiteral(":/RobotQtViewer/icons/ribbon/digital_twin_workbench.png");
         }

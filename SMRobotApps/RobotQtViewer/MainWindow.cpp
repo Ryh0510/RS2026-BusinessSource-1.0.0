@@ -1,5 +1,8 @@
 #include <QRegularExpression>
 #include "CoatingAnalysisModuleController.h"
+#include "CoatingAnalysisPanel.h"
+#include "TrajectoryOptimizationWorkbench.h"
+#include <QJsonArray>
 #include "MainWindow.h"
 #include "RobotQtViewerEnvironmentController.h"
 #include <QWheelEvent>
@@ -1921,7 +1924,9 @@ void MainWindow::updateTaskPanel()
     }
     const bool isCoating = m_workbenchManager.activeWorkbenchId() == robot_qt_viewer::robotQtViewerWorkbenchId(robot_qt_viewer::RobotQtViewerWorkbenchKind::CoatingAnalysis);
     if(auto* dock=findChild<QDockWidget*>(QStringLiteral("coatingAnalysisDetailsDock"))) dock->setVisible(isCoating);
-    if(m_sceneExplorerDock) m_sceneExplorerDock->setVisible(!isFreeformTrajPlan && !isCoating);
+    const bool isOptimization = activeWorkbenchId == QStringLiteral("smrobot.mode.trajectory-optimization");
+    if(auto* dock=findChild<QDockWidget*>(QStringLiteral("trajectoryOptimizationInputDock"))) dock->setVisible(isOptimization);
+    if(m_sceneExplorerDock) m_sceneExplorerDock->setVisible(!isFreeformTrajPlan && !isCoating && !isOptimization);
     if(m_freeformTrajPlanDock != nullptr) {
         m_freeformTrajPlanDock->setVisible(isFreeformTrajPlan);
     }
@@ -3439,6 +3444,35 @@ void MainWindow::initializeWorkbenchContributions()
         registerFactory(
             robot_qt_viewer::makeOwnedPaintingAnalysisWorkbenchRuntimeContributionFactory(
                 std::move(composition)));
+    }
+    const QString optimizationId = QStringLiteral("smrobot.mode.trajectory-optimization");
+    if(m_workbenchPackageRegistry.hasWorkbench(optimizationId)) {
+        robot_qt_viewer::TrajectoryOptimizationComposition composition;
+        composition.registry = &m_documentViewRegistry;
+        composition.installLeftPanel = [this](QWidget* panel) {
+            auto* dock = new QDockWidget(QStringLiteral("轨迹优化输入"), this);
+            dock->setObjectName(QStringLiteral("trajectoryOptimizationInputDock"));
+            auto* scroll = new QScrollArea(dock); scroll->setWidgetResizable(true); scroll->setWidget(panel);
+            dock->setWidget(scroll); addDockWidget(Qt::LeftDockWidgetArea, dock); dock->hide();
+        };
+        composition.coatingSettings = [this]() {
+            QJsonObject snapshot;
+            const auto* panel = findChild<robot_qt_viewer::CoatingAnalysisPanel*>();
+            snapshot.insert(QStringLiteral("available"), panel != nullptr);
+            if(panel) {
+                snapshot.insert(QStringLiteral("model"), QString::fromLatin1(spraythickness::thicknessModelId(panel->thicknessModel())));
+                snapshot.insert(QStringLiteral("history"), panel->historyCorrectionEnabled());
+                snapshot.insert(QStringLiteral("bvh"), panel->bvhOcclusionEnabled());
+                snapshot.insert(QStringLiteral("auto_flip"), panel->autoFlipBackFacingNormalsEnabled());
+                snapshot.insert(QStringLiteral("time_step_s"), panel->timeStepSeconds());
+                const auto spray = panel->sprayDirectionLocal();
+                const auto feed = panel->powderFeedDirectionLocal();
+                snapshot.insert(QStringLiteral("spray_axis"), QJsonArray{spray.x(), spray.y(), spray.z()});
+                snapshot.insert(QStringLiteral("feed_axis"), QJsonArray{feed.x(), feed.y(), feed.z()});
+            }
+            return snapshot;
+        };
+        registerFactory(robot_qt_viewer::makeTrajectoryOptimizationWorkbenchFactory(std::move(composition)));
     }
     const QString calibrationTranslationWorkbenchId =
         QStringLiteral("smrobot.mode.calibration-translation");

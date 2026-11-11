@@ -329,3 +329,9 @@ rs2026_catalog_entry(
     PACKAGE SMRobotSpray COMPONENT SprayFreeformTrajPlan
     CATEGORY Regression STATUS candidate ORIGIN ai COST normal
     CONTRACT_FILE "docs/section_sweep_planning.md")
+
+rs2026_catalog_entry(
+    PATH "SimWorkbench/SMRobotWorkbenchPaintingAnalysis/PaintingAnalysisWorkbench/regression/TrajectoryOptimizationWorkbenchTest"
+    PACKAGE SMRobotWorkbenchPaintingAnalysis COMPONENT PaintingAnalysisWorkbench
+    CATEGORY Regression STATUS candidate ORIGIN ai COST normal
+    CONTRACT_FILE "SimWorkbench/SMRobotWorkbenchPaintingAnalysis/TrajectoryOptimizationWorkbench/tests/contract.md")

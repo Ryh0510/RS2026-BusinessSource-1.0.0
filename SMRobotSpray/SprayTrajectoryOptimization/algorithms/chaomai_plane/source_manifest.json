@@ -1,0 +1,23 @@
+{
+  "source": "XYZR喷涂网页/planning",
+  "method": "original_shape_v2",
+  "original_sha256": {
+    "efficient_spray.py": "4afa4881ad606c554023e2440ae8c4787a806a5609738801926da419c535812f",
+    "uniformity_plan.py": "e5293d21534db9e43a61627d09f80df7fcce6f65fd5af024e1b3b3cdb244461f",
+    "rs2026_thickness.py": "512ba927128b3f775e33b7701d14d39248bd102c60decb3b0821ff2149802093",
+    "uniformity_solution.json": "cdd4600d534170efe6801102d21f332d113d818b4b0048b135be05e33838c8e1",
+    "rs2026_kernel.cpp": "83d445de49c69a33b1aa7dd074c1d65cf8eeff5ce3e144d204b3be48ecfd50b9"
+  },
+  "adaptations": [
+    "Imported model digest checked by service",
+    "Kernel library built/deployed by CMake; no runtime compiler invocation",
+    "Retained pass metadata distinguishes crown scans with zero yaw from the 20 planar source slots",
+    "New service validates actual imported inputs, snapshots process parameters, refits when needed and gates acceptance on dense/time-step verification",
+    "2026-11-09: exact fixed-XY row rejection, per-row invariant exponentials, exact adjacent-time cooling reuse and balanced independent-vertex workers; model equations and acceptance grids unchanged",
+    "2026-11-09: content-addressed prediction fields bind all geometry, timeline/spray flags, Gaussian/history parameters, grid, timestep and code/DLL hashes; checksummed atomic cache; explicit comparison always recomputes",
+    "2026-11-09: Python orchestration, geometry/trajectory construction, bounded axial dwell fitting and plotting ported to native C++; immutable solution compiled into target; BVLS active-set solve checks projected KKT residual.",
+    "2026-11-09: Qt adapter owns immutable input snapshots, SHA256 atomic native field cache and PNG/PDF; GUI invokes an in-process cancellable worker. Original Python source hashes above describe provenance only; retired sources preserved outside project in migration evidence."
+  ],
+  "implementation": "native_cpp",
+  "runtime_dependencies": "C++17, existing Eigen/nlohmann_json; Qt only in file/UI/chart adapter. No interpreter or external scripts."
+}

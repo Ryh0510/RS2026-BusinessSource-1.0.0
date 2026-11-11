@@ -10,7 +10,8 @@
     "smrobot.mode.collision-config",
     "smrobot.mode.motion-planning",
     "smrobot.mode.spray-process",
-    "smrobot.mode.coating-analysis"
+    "smrobot.mode.coating-analysis",
+    "smrobot.mode.trajectory-optimization"
   ],
   "defaultWorkbench": "smrobot.mode.project-assembly"
 }

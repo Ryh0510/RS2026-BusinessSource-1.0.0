@@ -12,6 +12,7 @@
     "smrobot.mode.spray-process",
     "smrobot.mode.freeform-trajectory-planning",
     "smrobot.mode.coating-analysis",
+    "smrobot.mode.trajectory-optimization",
     "smrobot.mode.calibration-translation",
     "smrobot.mode.digital-twin"
   ],

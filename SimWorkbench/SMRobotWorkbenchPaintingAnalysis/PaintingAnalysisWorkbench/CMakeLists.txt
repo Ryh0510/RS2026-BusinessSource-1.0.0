@@ -49,6 +49,19 @@ set(SOURCES
 )
 
 add_library(${TARGET_NAME} STATIC ${SOURCES})
+target_sources(${TARGET_NAME} PRIVATE
+    ../TrajectoryOptimizationWorkbench/TrajectoryOptimizationWorkbench.h
+    ../TrajectoryOptimizationWorkbench/TrajectoryOptimizationPanel.cpp
+    ../TrajectoryOptimizationWorkbench/TrajectoryOptimizationService.cpp
+    ../TrajectoryOptimizationWorkbench/TrajectoryOptimizationService.h
+    ../TrajectoryOptimizationWorkbench/TrajectoryOptimizationController.cpp
+    ../TrajectoryOptimizationWorkbench/TrajectoryOptimizationContribution.cpp)
+target_include_directories(${TARGET_NAME} PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../TrajectoryOptimizationWorkbench>)
+set(_optimization_algorithm_dir "${PROJECT_SOURCE_DIR}/SMRobotSpray/SprayTrajectoryOptimization/algorithms/chaomai_plane")
+add_subdirectory("${_optimization_algorithm_dir}" "${CMAKE_CURRENT_BINARY_DIR}/chaomai_plane_kernel")
+target_sources(${TARGET_NAME} PRIVATE $<TARGET_OBJECTS:ChaomaiPlaneOptimizer>)
+target_include_directories(${TARGET_NAME} PRIVATE "${_optimization_algorithm_dir}")
 add_library(SMRobotWorkbenchPaintingAnalysis::${TARGET_NAME} ALIAS ${TARGET_NAME})
 
 target_include_directories(${TARGET_NAME}
@@ -91,6 +104,7 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 )
 
 if(BuildTests)
+    rs2026_add_test_unit(regression/TrajectoryOptimizationWorkbenchTest)
     rs2026_add_test_unit(regression/PaintingAnalysisMeshAdapterTest)
     rs2026_add_test_unit(regression/ThicknessUniformityAnalysisTest)
 endif()

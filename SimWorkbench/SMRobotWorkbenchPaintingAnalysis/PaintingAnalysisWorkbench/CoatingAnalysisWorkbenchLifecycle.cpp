@@ -1,4 +1,5 @@
 #include "CoatingAnalysisWorkbenchLifecycle.h"
+#include "TrajectoryOptimizationWorkbench.h"
 
 #include "CoatingAnalysisModuleController.h"
 #include "CoatingAnalysisPanel.h"
@@ -226,7 +227,7 @@ namespace robot_qt_viewer
                { robotQtViewerWorkbenchId(RobotQtViewerWorkbenchKind::Browse) }))) {
             return false;
         }
-        return catalog.registerFeature(makeRobotQtViewerWorkbenchFeature(
+        return registerTrajectoryOptimizationWorkbench(catalog) && catalog.registerFeature(makeRobotQtViewerWorkbenchFeature(
             QStringLiteral("smrobot.feature.coating-analysis"),
             QStringLiteral("Coating Analysis"),
             packageId,

@@ -229,6 +229,9 @@ add_custom_target(${APP_TARGET_NAME}RuntimeConfig
 )
 add_dependencies(${APP_TARGET_NAME} ${APP_TARGET_NAME}RuntimeConfig)
 
+# Plane optimization and its initial solution are linked into the application.
+# Visual Studio F5 and normal startup require no external optimization runtime.
+
 rs_example_category_enabled(_build_regression Regression ${PACKAGE_NAME})
 if(_build_regression)
     add_subdirectory(regression)
