@@ -49,6 +49,12 @@ namespace robot_qt_viewer
         virtual void clearEndEffectorTrace() = 0;
         virtual void appendEndEffectorTraceSample() = 0;
         virtual SprayMeasurementResult sprayMeasurement(const QString& robotId) const = 0;
+        virtual SprayMeasurementResult sprayMeasurement(const QString& robotId, const QString& targetId) const
+        {
+            Q_UNUSED(robotId);
+            Q_UNUSED(targetId);
+            return {false, 0.0, 0.0, QStringLiteral("Explicit spray target measurement unavailable")};
+        }
         virtual void setTrajectoryControlPointOverlay(const QString& trajectoryId,
             const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true, bool showOrientations = false) = 0;
         virtual void setTrajectoryHighlightRange(int first, int last) { (void)first; (void)last; }

@@ -1181,6 +1181,14 @@ namespace robot_qt_viewer
             QString::fromStdString(measurement.errorMessage) };
     }
 
+    SprayMeasurementResult RobotQtViewerMotionPlanningViewportAdapter::sprayMeasurement(
+        const QString& robotId, const QString& targetId) const
+    {
+        const auto measurement = m_viewport.sprayMeasurement(robotId, targetId);
+        return { measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
+            QString::fromStdString(measurement.errorMessage) };
+    }
+
     void RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints, bool showOrientations)

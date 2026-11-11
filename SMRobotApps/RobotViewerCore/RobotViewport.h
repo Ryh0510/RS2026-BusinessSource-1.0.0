@@ -243,6 +243,7 @@ public:
     void clearEndEffectorTrace();
     void appendEndEffectorTraceSample();
     ProjectScene::SprayMeasurement sprayMeasurement(const QString& robotId) const;
+    ProjectScene::SprayMeasurement sprayMeasurement(const QString& robotId, const QString& targetId) const;
     std::vector<ProjectScene::RobotLinkMaterialInfo> robotLinkMaterials(
         const QString& robotId,
         const QString& linkName) const;

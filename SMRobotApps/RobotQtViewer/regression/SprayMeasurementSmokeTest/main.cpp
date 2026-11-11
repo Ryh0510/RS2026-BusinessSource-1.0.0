@@ -51,6 +51,7 @@
 #include <QCheckBox>
 #include <QTabWidget>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QImage>
 #include <QFileDialog>
 #include <QOffscreenSurface>
@@ -2632,16 +2633,17 @@ namespace
         auto document = session.document();
         simulation_project::RobotDesc gun;
         gun.id = "gun";
+        gun.name = "Spray gun";
         gun.sourceType = "urdf";
         gun.sourcePath = (folder / "gun.urdf").generic_string();
-        gun.collisionEnabled = false;
+        gun.collisionEnabled = true;
         document.robots.push_back(gun);
         simulation_project::SceneObjectDesc target;
         target.id = "A"; target.name = "A.STL"; target.objectType = "workpiece";
         target.sourcePath = (folder / "surface.stl").generic_string();
         target.visualScale = target.collisionScale = 1.0;
         target.transform.z = 0.3;
-        target.collisionEnabled = false;
+        target.collisionEnabled = true;
         document.objects.push_back(target);
         motion_planning::StoredMotionPlan plan;
         plan.id = "spray-test";
@@ -2897,6 +2899,21 @@ int main(int argc, char** argv)
     if(argc >= 2 && (std::string(argv[1]) == "--cdf-progress" || std::string(argv[1]) == "--cdf-analysis" || std::string(argv[1]) == "--cdf-reference" || std::string(argv[1]) == "--cdf-shape" || std::string(argv[1]) == "--cdf-alternative"))
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication application(argc, argv);
+    QTimer collisionConditions;
+    QObject::connect(&collisionConditions, &QTimer::timeout, &application, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if(!dialog || dialog->objectName() != QStringLiteral("motionPlanningCollisionDialog")) return;
+        auto* list = dialog->findChild<QListWidget*>(QStringLiteral("planningCollisionDetectors"));
+        auto* target = dialog->findChild<QComboBox*>(QStringLiteral("planningCollisionTarget"));
+        int index = target->findData(QStringLiteral("A"));
+        if(index < 0 && target->count() > 1) index = 1;
+        target->setCurrentIndex(index);
+        if(list->count()) { list->clearSelection(); list->item(0)->setSelected(true); }
+        else dialog->findChild<QCheckBox*>(QStringLiteral("createPlanningCollisionDetector"))->setChecked(true);
+        dialog->findChild<QCheckBox*>(QStringLiteral("enablePlanningCollisionQueries"))->setChecked(true);
+        dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+    });
+    collisionConditions.start(20);
     std::cout.setf(std::ios::unitbuf);
     if(argc >= 2 && std::string(argv[1]) == "--configuration-tabs") {
         verifyGraphResultTabs(application, argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString{});

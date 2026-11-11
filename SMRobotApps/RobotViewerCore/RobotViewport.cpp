@@ -1339,6 +1339,16 @@ ProjectScene::SprayMeasurement RobotViewport::sprayMeasurement(const QString& ro
     return result;
 }
 
+ProjectScene::SprayMeasurement RobotViewport::sprayMeasurement(const QString& robotId, const QString& targetId) const
+{
+    if(m_scene && !targetId.isEmpty()) {
+        return m_scene->sprayMeasurement(robotId.toStdString(), targetId.toStdString());
+    }
+    ProjectScene::SprayMeasurement result;
+    result.errorMessage = "Scene or explicit spray target unavailable";
+    return result;
+}
+
 std::vector<ProjectScene::RobotLinkMaterialInfo> RobotViewport::robotLinkMaterials(
     const QString& robotId,
     const QString& linkName) const

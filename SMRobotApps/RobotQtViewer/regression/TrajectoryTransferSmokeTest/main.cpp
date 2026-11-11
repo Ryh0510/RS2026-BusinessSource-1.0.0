@@ -34,6 +34,8 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
+#include <QListWidget>
+#include <ProjectMotionPlanning/ProjectMotionPlanning.h>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QPushButton>
@@ -306,6 +308,318 @@ namespace
             return hasCoatingResult;
         }
     };
+
+    void chooseCollisionConditions(Workbenches& fixture, bool create, const QString& targetId,
+        const QString& detectorId = {}, bool cancel = false)
+    {
+        QTimer::singleShot(0, &fixture.motion, [&]() {
+            auto* dialog = fixture.motion.findChild<QDialog*>(QStringLiteral("motionPlanningCollisionDialog"));
+            check(dialog != nullptr, "Collision prerequisites are presented in a modal task dialog");
+            if(!dialog) return;
+            if(cancel) { dialog->reject(); return; }
+            auto* target = dialog->findChild<QComboBox*>(QStringLiteral("planningCollisionTarget"));
+            auto* list = dialog->findChild<QListWidget*>(QStringLiteral("planningCollisionDetectors"));
+            dialog->findChild<QCheckBox*>(QStringLiteral("createPlanningCollisionDetector"))->setChecked(create);
+            dialog->findChild<QCheckBox*>(QStringLiteral("enablePlanningCollisionQueries"))->setChecked(true);
+            target->setCurrentIndex(target->findData(targetId));
+            if(!create) {
+                list->clearSelection();
+                for(int i = 0; i < list->count(); ++i)
+                    list->item(i)->setSelected(list->item(i)->data(Qt::UserRole).toString() == detectorId);
+            }
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            if(dialog->isVisible()) { check(false, "Test collision selection is accepted"); dialog->reject(); }
+        });
+        fixture.motion.collisionConditionsRequested();
+    }
+
+    void collisionConditionTests()
+    {
+        using namespace motion_planning;
+        Workbenches fixture;
+        check(fixture.context.document().collision.detectors.empty(), "Opening Motion Planning creates no implicit detector");
+        const bool queries = fixture.context.document().collision.query.enabled;
+        chooseCollisionConditions(fixture, false, {}, {}, true);
+        check(fixture.context.document().collision.detectors.empty() &&
+            fixture.context.document().collision.query.enabled == queries, "Cancelling prerequisites leaves the scene unchanged");
+        check(fixture.documents.mutateProject(QStringLiteral("customWorkpiece"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
+                auto& object = service.document().objects.front();
+                object.id = "custom_panel"; object.name = "Custom panel"; object.transform.x = 0; object.transform.z = .5;
+                changed = true; return true;
+            }).success, "The scene uses an arbitrary workpiece ID without A or burnner");
+        chooseCollisionConditions(fixture, true, QStringLiteral("custom_panel"));
+        check(fixture.context.document().collision.detectors.size() == 1, "Explicit creation stores one detector through document mutation");
+        if(fixture.context.document().collision.detectors.empty()) return;
+        const auto created = fixture.context.document().collision.detectors.front();
+        check(created.pairGenerators.size() == 1 && created.pairGenerators.front().objectId == "custom_panel" &&
+            created.pairGenerators.front().robotId == "fixture_robot", "Created detector binds the actual robot and user-selected workpiece");
+        chooseCollisionConditions(fixture, false, QStringLiteral("custom_panel"), QString::fromStdString(created.id));
+        check(fixture.context.document().collision.detectors.size() == 1 &&
+            fixture.context.document().collision.detectors.front().id == created.id, "Selecting an existing detector does not rewrite or duplicate it");
+        check(fixture.documentViewport.loadProjectDocument(fixture.context.document(), fixture.folder).success,
+            "Arbitrary scene reloads after detector creation");
+        const auto measurement = fixture.services.sprayMeasurement(QStringLiteral("fixture_robot"), QStringLiteral("custom_panel"));
+        check(measurement.valid && measurement.distanceMeters > 0, "Viewport adapter measures the explicit target without the legacy A target");
+        check(!fixture.services.sprayMeasurement(QStringLiteral("fixture_robot"), QStringLiteral("A")).valid,
+            "A missing target is not silently substituted");
+        ProjectCdfQpRepairOptions options; options.detectorIds = {created.id};
+        auto document = fixture.context.document();
+        check(ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(document, "fixture_robot", options),
+            "The generic domain precondition accepts selected robot detectors");
+        document.collision.detectors.front().nearestPoints = false;
+        check(!ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document, "fixture_robot", options),
+            "Explicit selection rejects missing nearest-point capability without rewriting the detector");
+        document = fixture.context.document(); document.collision.query.enabled = false;
+        check(!ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(document, "fixture_robot", options),
+            "Global collision disable invalidates the run prerequisite");
+        check(!ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(fixture.context.document(), "another_robot", options),
+            "A detector selected for a different robot cannot be reused");
+        ProjectPlanningRequest query; query.robotId = "fixture_robot"; query.jointNames = {"slide"};
+        query.collisionDetectorIds = {created.id};
+        std::string error;
+        auto scene = ProjectPlanningSceneBuilder::build(fixture.context.document(), fixture.folder, query, &error);
+        check(scene != nullptr, "The selected detector builds an independent planning snapshot");
+        if(scene) {
+            const auto distance = scene->nearestDistance({0.});
+            check(distance.valid && distance.distanceMeters > 0 && distance.detectorId == created.id,
+                "Nearest distance is computed against exactly the selected detector");
+        }
+        document = fixture.context.document();
+        document.collision.detectors.front().pairFilters.push_back({});
+        document.collision.detectors.front().pairFilters.back().type = "ExcludeAll";
+        document.collision.detectors.front().pairGenerators.clear();
+        document.collision.detectors.front().targets.clear();
+        check(!ProjectPlanningSceneBuilder::build(document, fixture.folder, query, &error),
+            "A detector with no effective pairs cannot pass planning preflight");
+        StoredMotionPlan plan; plan.id = "custom_path"; plan.robotId = "fixture_robot"; plan.jointNames = {"slide"};
+        plan.trajectory.points = {{0., {0.}}, {1., {.01}}};
+        check(fixture.documents.mutateProject(QStringLiteral("testPlan"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& message) {
+                changed = MotionPlanningProjectStore::upsertPlan(service.document(), plan, &message); return changed;
+            }).success, "A solved generic trajectory is available for the distance entry point");
+        fixture.motion.trajectorySelectionChanged(QStringLiteral("custom_path"));
+        fixture.motion.plotNearestDistancesRequested();
+        auto* plot = fixture.motion.findChild<QDialog*>(QStringLiteral("nearestDistancePlot"));
+        bool selectedOnly = false;
+        if(plot) {
+            for(auto* label : plot->findChildren<QLabel*>())
+                selectedOnly |= label->text().contains(QString::fromStdString(created.id));
+            plot->close();
+        }
+        check(plot && selectedOnly, "The real nearest-distance action plots the selected detector for the generic trajectory");
+        fixture.motion.playbackRequested(.03);
+        QElapsedTimer playback; playback.start();
+        auto* plotSpray = fixture.motion.findChild<QPushButton*>(QStringLiteral("plotSprayMeasurements"));
+        while(plotSpray && !plotSpray->isEnabled() && playback.elapsed() < 10000) {
+            QApplication::processEvents(); QThread::msleep(5);
+        }
+        check(plotSpray && plotSpray->isEnabled(), "Playback records spray measurements using the configured generic target");
+        fixture.motion.plotSprayMeasurementsRequested();
+        QDialog* sprayPlot = nullptr;
+        for(auto* dialog : fixture.motion.findChildren<QDialog*>())
+            if(dialog->windowTitle().contains(QStringLiteral("custom_panel"))) sprayPlot = dialog;
+        check(sprayPlot != nullptr,
+            "The spray plot identifies the chosen workpiece instead of A.STL");
+        if(sprayPlot) sprayPlot->close();
+        check(fixture.documents.mutateProject(QStringLiteral("removeDetector"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
+                service.document().collision.detectors.clear(); changed = true; return true;
+            }).success, "The selected scene detector can be removed");
+        bool asked = false;
+        QTimer::singleShot(0, &fixture.motion, [&]() {
+            auto* dialog = fixture.motion.findChild<QDialog*>(QStringLiteral("motionPlanningCollisionDialog"));
+            asked = dialog != nullptr; if(dialog) dialog->reject();
+        });
+        fixture.motion.plotNearestDistancesRequested();
+        check(asked && fixture.context.document().collision.detectors.empty(),
+            "Distance query requests new prerequisites after deletion and cancellation creates nothing");
+        std::ofstream(fixture.folder / "alternate.urdf") << R"(<robot name="alternate">
+<link name="root"/><link name="tip"><collision><geometry><sphere radius="0.02"/></geometry></collision></link>
+<joint name="travel" type="prismatic"><parent link="root"/><child link="tip"/>
+<axis xyz="0 1 0"/><limit lower="-2" upper="2" effort="100" velocity="1"/></joint></robot>)";
+        check(fixture.documents.mutateProject(QStringLiteral("alternateRobot"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
+                auto robot = service.document().robots.front(); robot.id = "alternate_robot";
+                robot.sourcePath = (fixture.folder / "alternate.urdf").generic_u8string();
+                robot.initialJoints = {{"travel", 0.}}; service.document().robots.push_back(robot);
+                changed = true; return true;
+            }).success, "A second robot with different model and joint names is present");
+        fixture.selection.selectRobotLink(QStringLiteral("alternate_robot"), QStringLiteral("tip"));
+        chooseCollisionConditions(fixture, true, QStringLiteral("custom_panel"));
+        const auto& alternate = fixture.context.document().collision.detectors.back();
+        check(alternate.pairGenerators.front().robotId == "alternate_robot", "After switching robots creation binds the new robot");
+        query.robotId = "alternate_robot"; query.jointNames = {"travel"}; query.collisionDetectorIds = {alternate.id};
+        scene = ProjectPlanningSceneBuilder::build(fixture.context.document(), fixture.folder, query, &error);
+        check(scene && scene->nearestDistance({0.}).valid, "The replacement robot uses its actual model in the distance snapshot");
+        fixture.selection.selectRobotLink(QStringLiteral("fixture_robot"), QStringLiteral("Link6"));
+        bool filtered = false;
+        QTimer::singleShot(0, &fixture.motion, [&]() {
+            auto* dialog = fixture.motion.findChild<QDialog*>(QStringLiteral("motionPlanningCollisionDialog"));
+            if(dialog) {
+                filtered = dialog->findChild<QListWidget*>(QStringLiteral("planningCollisionDetectors"))->count() == 0;
+                dialog->reject();
+            }
+        });
+        fixture.motion.collisionConditionsRequested();
+        check(filtered, "After switching back the other robot's detector is excluded from the choices");
+    }
+
+    void collisionMountTests()
+    {
+        using namespace motion_planning;
+        Workbenches fixture;
+        ProjectCdfQpRepairOptions bodyOptions;
+        bodyOptions.obstacleId = "burnner"; bodyOptions.detectorId = "body_only";
+        check(fixture.documents.mutateProject(QStringLiteral("mountFixture"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string&) {
+                auto& document = service.document();
+                if(!ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document, "fixture_robot", bodyOptions)) return false;
+                document.objects.front().transform.x = 0; document.objects.front().transform.z = .55;
+                simulation_project::RobotMountDesc mount;
+                mount.id = "tool_mount"; mount.robotId = "fixture_robot"; mount.linkName = "Link6";
+                mount.linkToMount.z = .5; document.robotMounts.push_back(mount);
+                simulation_project::AttachmentAssetDesc asset;
+                asset.id = "tool_asset"; asset.name = "Tool mesh";
+                asset.visualPath = (fixture.folder / "cube.stl").generic_u8string(); asset.visualScale = .001;
+                document.attachmentAssets.push_back(asset);
+                simulation_project::MountedAttachmentDesc tool;
+                tool.id = "hidden_tool"; tool.name = "Hidden active tool"; tool.mountFrameId = mount.id;
+                tool.assetId = asset.id; tool.visible = false; document.mountedAttachments.push_back(tool);
+                tool.id = "second_tool"; tool.name = "Second active tool"; tool.mountToAssetMount.x = .2;
+                document.mountedAttachments.push_back(tool);
+                tool.id = "disabled_tool"; tool.name = "Disabled tool"; tool.enabled = false;
+                document.mountedAttachments.push_back(tool);
+                auto other = document.robots.front(); other.id = "other_robot"; other.name = "Other robot";
+                other.baseTransform.x = 2; document.robots.push_back(other);
+                mount.id = "other_mount"; mount.robotId = other.id; document.robotMounts.push_back(mount);
+                tool.id = "other_tool"; tool.name = "Other robot tool"; tool.mountFrameId = mount.id; tool.enabled = true;
+                document.mountedAttachments.push_back(tool);
+                changed = true; return true;
+            }).success, "Mount fixture includes hidden active, multiple, disabled and other-robot tools");
+        ProjectCdfQpRepairOptions bodySelected; bodySelected.detectorIds = {"body_only"};
+        check(!ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(fixture.context.document(), "fixture_robot", bodySelected),
+            "A body-only detector does not cover enabled mounted tools");
+        bool rejected = false;
+        QTimer::singleShot(0, &fixture.motion, [&]() {
+            auto* dialog = fixture.motion.findChild<QDialog*>(QStringLiteral("motionPlanningCollisionDialog"));
+            if(!dialog) return;
+            auto* list = dialog->findChild<QListWidget*>(QStringLiteral("planningCollisionDetectors"));
+            for(int i = 0; i < list->count(); ++i)
+                list->item(i)->setSelected(list->item(i)->data(Qt::UserRole).toString() == QStringLiteral("body_only"));
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+            rejected = dialog->isVisible(); dialog->reject();
+        });
+        fixture.motion.collisionConditionsRequested();
+        check(rejected && fixture.context.document().collision.detectors.size() == 1,
+            "The real dialog retains an incomplete mount selection without mutating the project");
+        chooseCollisionConditions(fixture, true, QStringLiteral("burnner"));
+        auto document = fixture.context.document();
+        check(document.collision.detectors.size() == 2, "The dialog creates one complete robot and tool detector");
+        if(document.collision.detectors.size() != 2) return;
+        const auto full = document.collision.detectors.back();
+        ProjectCdfQpRepairOptions selected; selected.detectorIds = {full.id};
+        check(full.queryPolicy == "BetweenSets" && full.targets.empty() && full.pairGenerators.empty() &&
+            ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(document, "fixture_robot", selected),
+            "Mounted-tool creation uses active selection sets and passes the shared prerequisite");
+        const auto setA = std::find_if(document.collision.selectionSets.begin(), document.collision.selectionSets.end(),
+            [&](const auto& set) { return set.id == full.selectionSetAId; });
+        check(setA != document.collision.selectionSets.end() && setA->members.size() == 3 &&
+            setA->members.front().robotId == "fixture_robot" && setA->members[1].attachmentId == "hidden_tool" &&
+            setA->members[2].attachmentId == "second_tool",
+            "Only the planning body and its enabled tools are included, irrespective of visibility");
+        ProjectPlanningRequest query; query.robotId = "fixture_robot"; query.jointNames = {"slide"};
+        query.collisionDetectorIds = {"body_only"}; std::string error;
+        auto bodyScene = ProjectPlanningSceneBuilder::build(document, fixture.folder, query, &error);
+        check(bodyScene && bodyScene->validateState({0.}).valid && bodyScene->nearestDistance({0.}).distanceMeters > .4,
+            "The reference robot body is clear of the workpiece");
+        query.collisionDetectorIds = {full.id};
+        auto scene = ProjectPlanningSceneBuilder::build(document, fixture.folder, query, &error);
+        check(bool(scene), "A selection-set detector builds actual mounted-tool geometry");
+        if(scene) {
+            const auto distance = scene->nearestDistance({0.});
+            std::cout << "Mount contact distance=" << distance.distanceMeters << " valid=" << distance.valid
+                << " collision=" << distance.inCollision << " message=" << distance.message << std::endl;
+            check(distance.valid && distance.inCollision && distance.distanceMeters == 0 && !scene->validateState({0.}).valid,
+                "Tool-only contact changes both the nearest distance and state collision verdict");
+            scene->setState({0.}); const auto before = scene->attachmentWorldTransform("hidden_tool");
+            scene->setState({.3}); const auto after = scene->attachmentWorldTransform("hidden_tool");
+            check(std::abs(after.translation().x() - before.translation().x() - .3) < 1e-9,
+                "Hidden mounted collision geometry follows the robot joint");
+            MotionValidationOptions validation; validation.maxJointStep = .01;
+            check(scene->validateState({-.4}).valid && scene->validateState({.4}).valid &&
+                !scene->validateMotion({-.4}, {.4}, validation).valid,
+                "Clear endpoints cannot hide an intermediate mounted-tool collision");
+        }
+        const auto saved = fixture.folder / "mounted.scene.json";
+        simulation_project::ProjectDocument reloaded;
+        check(simulation_project::saveProjectDocument(saved, document, &error) &&
+            simulation_project::loadProjectDocument(saved, reloaded, &error) &&
+            ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(reloaded, "fixture_robot", selected),
+            "Mounted collision selection and prerequisite survive project save and load");
+        auto reloadedScene = ProjectPlanningSceneBuilder::build(reloaded, fixture.folder, query, &error);
+        check(reloadedScene && !reloadedScene->validateState({0.}).valid,
+            "Reloaded mounted-tool geometry retains the actual collision");
+
+        auto split = document;
+        auto toolDetector = full; toolDetector.id = "tools_only";
+        split.collision.detectors = {split.collision.detectors.front(), toolDetector};
+        auto& toolSet = *std::find_if(split.collision.selectionSets.begin(), split.collision.selectionSets.end(),
+            [&](const auto& set) { return set.id == full.selectionSetAId; });
+        toolSet.members.erase(toolSet.members.begin());
+        selected.detectorIds = {"body_only", "tools_only"};
+        const auto originalFilterCount = split.collision.detectors.front().pairFilters.size();
+        check(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(split, "fixture_robot", selected) &&
+            split.collision.detectors.front().pairFilters.size() == originalFilterCount && toolSet.members.size() == 2,
+            "Existing body and tool detectors can jointly cover all mounts without rewriting their rules");
+        toolSet.enabled = false;
+        check(!ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(split, "fixture_robot", selected),
+            "A disabled tool selection set invalidates coverage");
+        auto disabled = document;
+        for(auto& tool : disabled.mountedAttachments) if(tool.mountFrameId == "tool_mount") tool.enabled = false;
+        check(ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(disabled, "fixture_robot", bodySelected),
+            "Disabled mounts and another robot's tools do not impose planning-tool coverage");
+
+        ProjectCdfQpRepairOptions recreate; recreate.detectorId = full.id; recreate.obstacleId = "burnner";
+        const auto count = document.collision.selectionSets.size();
+        check(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document, "fixture_robot", recreate) &&
+            ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document, "fixture_robot", recreate) &&
+            document.collision.selectionSets.size() == count &&
+            ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(document, "fixture_robot", recreate),
+            "Repeated domain setup reuses private selection sets and recognizes mounted configuration");
+        auto sharedDetector = full; sharedDetector.id = "shared_user_detector";
+        document.collision.detectors.push_back(sharedDetector);
+        auto extraTool = document.mountedAttachments.front(); extraTool.id = "later_tool";
+        document.mountedAttachments.push_back(extraTool);
+        check(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(document, "fixture_robot", recreate),
+            "Rebuilding a detector after adding a mount succeeds");
+        const auto originalSet = std::find_if(document.collision.selectionSets.begin(), document.collision.selectionSets.end(),
+            [&](const auto& set) { return set.id == full.selectionSetAId; });
+        check(originalSet != document.collision.selectionSets.end() && originalSet->members.size() == 3,
+            "Rebuilding does not overwrite a selection set shared by another detector");
+
+        auto robotPairDocument = fixture.context.document();
+        ProjectCdfQpRepairOptions robotPair; robotPair.detectorId = "robot_pair"; robotPair.obstacleId = "other_robot";
+        check(ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(robotPairDocument, "fixture_robot", robotPair) &&
+            ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(robotPairDocument, "fixture_robot", robotPair),
+            "Robot-to-robot setup includes mounts on both robots");
+        const auto pairPlanDocument = robotPairDocument;
+        robotPairDocument.collision.detectors.erase(robotPairDocument.collision.detectors.begin(), robotPairDocument.collision.detectors.end() - 1);
+        const auto pairPlan = simulation_runtime::ProjectCollisionDetectorBuilder::collectBuildPlan(robotPairDocument);
+        check(pairPlan.requiresAttachment("hidden_tool", "", "tool") && pairPlan.requiresAttachment("other_tool", "", "tool"),
+            "Both moving and target robot tools enter the collision build plan");
+        query.collisionDetectorIds = {"robot_pair"};
+        auto pairScene = ProjectPlanningSceneBuilder::build(pairPlanDocument, fixture.folder, query, &error);
+        check(pairScene && pairScene->nearestDistance({0.}).valid, "Robot-to-robot mount sets build a working distance scene");
+        auto all = fixture.context.document(); all.collision.detectors = {full};
+        all.collision.detectors.front().type = "SceneAll"; all.collision.detectors.front().queryPolicy = "AllEnabled";
+        all.collision.detectors.front().selectionSetAId.clear(); all.collision.detectors.front().selectionSetBId.clear();
+        selected.detectorIds = {full.id}; query.collisionDetectorIds = {full.id};
+        auto allScene = ProjectPlanningSceneBuilder::build(all, fixture.folder, query, &error);
+        check(ProjectCdfQpTrajectoryRepairService::collisionSetupConfigured(all, "fixture_robot", selected) &&
+            allScene && allScene->nearestDistance({0.}).inCollision,
+            "An existing AllEnabled scene detector covers mounted tools using the platform policy");
+    }
 
     void xyzrTests()
     {
@@ -874,6 +1188,16 @@ namespace
         check(optional && !optional->isChecked() && !fixture.motion.cdfQpRepairSettings().useCdf,"CDF/QP starts disabled in both the UI and settings");
         if(optional)optional->setChecked(true);
         check(fixture.motion.cdfQpRepairSettings().useCdf,"Optional CDF/QP can be explicitly enabled");
+        check(fixture.documents.mutateProject(QStringLiteral("unselectedDecoy"),ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service,bool& changed,std::string&) {
+                service.document().objects.front().transform.x = 0;
+                service.document().objects.front().transform.z = .4;
+                motion_planning::ProjectCdfQpRepairOptions decoy;
+                decoy.obstacleId = "burnner"; decoy.detectorId = "unselected_colliding_detector";
+                changed = motion_planning::ProjectCdfQpTrajectoryRepairService::ensureCollisionSetup(
+                    service.document(), "fixture_robot", decoy); return changed;
+            }).success,"An enabled unselected detector covers an overlapping decoy workpiece");
+        chooseCollisionConditions(fixture, true, QStringLiteral("surface"));
         fixture.motion.repairImportedCdfTrajectoryRequested();
         QApplication::processEvents();
         auto* stages=fixture.motion.findChild<QComboBox*>(QStringLiteral("cdfStageSelection"));
@@ -884,12 +1208,14 @@ namespace
         check(output.modelObjectId==QStringLiteral("surface"),"CDF output remains bound to the actual source workpiece");
         check(output.trajectory.flattenedPoints().size()==fixture.coating->waypoints().size() && output.hasTrajectory(),
             "Coating receives every optimized point");
-        const auto detector=std::find_if(fixture.context.document().collision.detectors.begin(),
-            fixture.context.document().collision.detectors.end(),[](const auto& d){return d.id=="cdf_shared_fixture_robot_surface";});
-        check(detector!=fixture.context.document().collision.detectors.end() &&
-            std::any_of(detector->pairGenerators.begin(),detector->pairGenerators.end(),[](const auto& p) {
-                return p.type=="RobotObject" && p.objectId=="surface";
-            }),"CDF collision setup targets the source object rather than the demo obstacle");
+        const auto& detector = fixture.context.document().collision.detectors.back();
+        const auto& sets = fixture.context.document().collision.selectionSets;
+        check(detector.queryPolicy == "BetweenSets" && std::any_of(sets.begin(), sets.end(), [&](const auto& set) {
+            return set.id == detector.selectionSetBId && set.members.size() == 1 && set.members.front().objectId == "surface";
+        }) && std::any_of(sets.begin(), sets.end(), [&](const auto& set) {
+            return set.id == detector.selectionSetAId && std::any_of(set.members.begin(), set.members.end(),
+                [](const auto& member) { return member.attachmentId == "test_attachment"; });
+        }),"CDF collision setup includes the mounted tool against the actual source object");
         auto outputs=motion_planning::MotionPlanningProjectStore::plans(fixture.context.document());
         const auto optimized=std::find_if(outputs.begin(),outputs.end(),[](const auto& p){return p.id.find("_cdf_qp_")!=std::string::npos;});
         PlanningDataSnapshot restored;
@@ -917,6 +1243,8 @@ int main(int argc,char** argv)
     const std::string mode=argc>1?argv[1]:"--data";
     if(mode=="--data") dataTests();
     else if(mode=="--workbenches") workbenchTests();
+    else if(mode=="--collision-conditions") collisionConditionTests();
+    else if(mode=="--collision-mounts") collisionMountTests();
     else if(mode=="--xyzr") xyzrTests();
     else if(mode=="--fanuc") fanucTests();
     else if(mode=="--section-sweep") sectionSweepTests();

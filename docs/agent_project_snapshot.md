@@ -1264,3 +1264,23 @@ whole_v27_resume 于 19:42 从精确的第二轮 GA 检查点接续，恢复两�
 
 
 2026-11-05 12:00 最终完成：原 VS2019 Release/Debug 主程序及关注回归均已编译成功。Release 八项通过（19.10秒）；Debug 原七项通过，其中 XYZR 8735 点完整真实动画41.34秒、Fanuc 实际普通单解/全逆解/应用/动画46.31秒。领域 Fanuc 随机36+实际8点的早期Debug全枚举超时180秒，最终常规回归聚焦用户实际失败的8点（并保留不可达目标拒绝），两配置补测分别1.51/41.97秒全部通过；完整2400点Release整条、逐点独立零初值及原限位全逆解的验证日志保留，生产算法不因测试调整改变。最终8项关注验证已全部通过，Debug证据为七项原运行+领域专项补测，非单次8/8日志。用户“单点不考虑限位”的要求仅调整普通六轴入口；原TrajectoryInverseKinematics接口/实现已与before备份逐字节核对相同，原URDF/工程/输入未改。源码/演示资产、两配置8个EXE、原输入和最终证据已生成delivery_manifest.json；详细验收在verification_final.json及本次修改与验证.md。没有关闭用户程序，没有实机/碰撞认证或手动F5验收声明。
+
+
+## 2026-11-11 Motion Planning 碰撞条件通用化（完成）
+
+- main；内层主仓、SMRobotMotionPlanning 和 MotionPlanning 工作台子仓起始干净。
+- 当前入口会隐式创建默认 A 工件检测器，GA worker 又枚举全部检测器；喷距接口默认 A。目标为显式选择/创建场景检测器及测量工件，运行前复验，取消无副作用。
+- 所有者：ProjectMotionPlanning 负责检测器适配校验/创建及查询场景；工作台 controller 保存临时任务选择并通过 mutateProject 发起创建；viewport adapter 只传递测量目标。保留现有单参数测量接口兼容。
+- 无新依赖、无 schema 修改、无公共 API 重命名。验证外层 build 的 VS2019 Release/Debug 主程序及 TrajectoryTransfer / SprayMeasurement 回归；新增真实场景选择、创建、取消和失效检查。
+
+- 最终：外层正式 VS2019 Release/Debug 主程序及两个 Qt 回归目标、GaApfCdfCheck 均构建成功。Release 相关7项先通过，旧喷涂夹具补全前置条件后专项1/1通过，架构1/1通过；Debug最终单轮9/9（45.51秒）。两配置主程序 --smoke-exit-ms 1800 启动退出0。证据 output/motion_planning_collision_20261111/verification.json（外层）。
+
+2026-11-11 mount 工具覆盖补修（进行中）：用户指出新建规划检测器遗漏挂载工具，已确认 RobotObject/RobotRobot 旧生成器仅覆盖本体，上一轮记录“包含挂载工具选择集”仅代表已有选择集可识别，不代表新建已覆盖。保持现有未提交修改；在 ProjectMotionPlanning 领域层按启用 mount attachment 建立 BetweenSets，并用平台 collectBuildPlan 统一验证已有检测器联合覆盖；Qt 只展示领域校验结果。验证包括隐藏但启用工具、本体清空而工具碰撞、关节移动、运动中间碰撞、保存重载、已有检测器拒绝/联合选择和 Release/Debug 构建回归。无新依赖/schema/公共 API 重命名。
+
+
+2026-11-11 mount 工具补修验收完成：新建BetweenSets覆盖机器人本体和全部启用挂载件，目标机器人也含其挂载件；已有检测器联合覆盖检查进入领域服务/真实对话框。另修复平台工具几何受显示状态限制，仅修改规划私有运行时输入，不改变工程显示。真实仅工具碰撞、中间运动碰撞、随动、隐藏/禁用、多工具、双机器人、保存重载及共享集合保护全部通过。原VS2019 Release/Debug主程序及相关目标构建成功；Release专项1项与相关9项通过，Debug单轮10/10（134.58秒），两配置主程序启动exit0（Debug需22.06秒，首次20秒等待不足已记录）。五个源码/构建文件CRLF/UTF-8、diff whitespace检查通过。无新依赖/API/schema/预编译库修改；详细见最新agent_change_audit和外层output/motion_planning_mounts_20261111/verification.json。此前进行中状态已由本完成记录替代。
+
+
+## 2026-11-11 9.txt / F-Cburnner GA+APF 诊断（只读算法）
+
+用户补充长时间停留在 APF。实际 60/60 日志于1065.481秒自然结束，GA连接修复在零基点14失败，APF未启动；该点独立搜索曾有25个安全姿态，不能断言物理无解。场景副本独立IK对照：原位姿第6～17点所有枚举根在工具对C检查中碰撞，本体单独检查24点通过。100/100上一轮另报apf_cartesian_seed_stale，已定位原始Cartesian参考与GA调整种子精确匹配校验冲突；喷涂APF还会覆盖UI走廊设置，待修复。此次只交付诊断，不改生产算法，不取消用户程序。证据外层output/f_cburnner_9_diagnosis_20261111/诊断说明.md及diagnosis.json。
