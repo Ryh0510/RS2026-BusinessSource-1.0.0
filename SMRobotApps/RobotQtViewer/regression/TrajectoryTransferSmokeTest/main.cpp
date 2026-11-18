@@ -11,6 +11,9 @@
 #include <FreeformTrajPlanWorkbenchController.h>
 #include <SectionSweepWorkbench/SectionSweepAdapters.h>
 #include <SectionSweepWorkbench/SectionSweepParameterPanel.h>
+#include <RegionalWorkbench/RegionalParameterPanel.h>
+#include <BladeFixture.h>
+#include <iomanip>
 #include <SlicingTrajPlan/STLProcessor.h>
 #include <QStackedWidget>
 #include <RobotQtViewerDocumentContext.h>
@@ -910,6 +913,92 @@ namespace
     }
 
 
+    class BladeVisualizationProbe : public RobotQtViewerVisualizationViewportAdapter {
+    public:
+        explicit BladeVisualizationProbe(RobotViewport& v):RobotQtViewerVisualizationViewportAdapter(v){}
+        bool colored=false,lines=false,failed=false;std::size_t vertices=0;
+        smrobot::visualization::CustomMeshResult upsertCustomMesh(const smrobot::visualization::CustomMeshDesc& d,smrobot::visualization::CustomMeshHandle& h)override{
+            auto r=RobotQtViewerVisualizationViewportAdapter::upsertCustomMesh(d,h);failed|=!r.success&&!d.mesh.positions.empty();
+            if(!r.success&&!d.mesh.positions.empty())std::cout<<"overlay rejected "<<d.meshId<<": "<<r.message<<std::endl;
+            if(d.meshId=="regionalMesh"){colored=r.success;vertices=d.mesh.positions.size();}
+            if(d.meshId=="regionalBoundaries")lines=r.success&&!d.mesh.positions.empty();return r;}
+        smrobot::visualization::CustomMeshResult clearCustomMeshes(const std::string& owner)override{
+            if(owner.find("regionalMesh")!=std::string::npos)colored=false;
+            return RobotQtViewerVisualizationViewportAdapter::clearCustomMeshes(owner);}
+    };
+
+    void bladeRegionTests()
+    {
+        Workbenches fixture(true,true);
+        BladeVisualizationProbe probe(fixture.viewport);fixture.context.setVisualizationViewport(&probe);
+        using namespace smrobot::workbench::freeform;
+        using spray_freeform_traj_plan::WorkflowAction;
+        FreeformTrajPlanWorkflowPanel workflow;FreeformTrajPlanParameterPanel parameters;
+        FreeformTrajPlanWorkbenchController controller(workflow,parameters,fixture.context,&fixture.source,{},{});
+        fixture.hub.subscribe(RobotQtViewerEventKind::ProjectOpened,&controller,[&](const auto& e){controller.handleEvent(e);});
+        QObject::connect(&controller,&FreeformTrajPlanWorkbenchController::statusMessageRequested,&workflow,[](const QString& s,int){std::cout<<s.toUtf8().constData()<<std::endl;});
+        auto* method=workflow.findChild<QComboBox*>(QStringLiteral("freeformPlanningMethod"));
+        auto* panel=parameters.findChild<RegionalParameterPanel*>();
+        check(method&&method->count()==4&&panel,"Fourth regional mode is integrated");if(!panel||!method)return;
+        method->setCurrentIndex(3);check(panel->isVisibleTo(&parameters),"Regional mode switches the parameter page");
+        std::cout<<"blade fixture preparation"<<std::endl;
+        QString input=qEnvironmentVariable("RS2026_BLADE_MODEL");
+        if(input.isEmpty()){input=fixture.temporary.path()+"/blade.stl";std::ofstream out(std::filesystem::path(input.toStdWString()),std::ios::binary);
+            char header[80]={};out.write(header,80);auto mesh=makeBladeFixture();std::uint32_t count=std::uint32_t(mesh.size());out.write(reinterpret_cast<const char*>(&count),4);
+            for(const auto& tri:mesh){Eigen::Vector3d normal=(tri[1]-tri[0]).cross(tri[2]-tri[0]).normalized();float record[12];
+                for(int i=0;i<3;++i)record[i]=float(normal[i]);for(int k=0;k<3;++k)for(int i=0;i<3;++i)record[3+k*3+i]=float(tri[k][i]*1000);
+                out.write(reinterpret_cast<const char*>(record),48);std::uint16_t attribute=0;out.write(reinterpret_cast<const char*>(&attribute),2);}}
+        std::cout<<"blade fixture prepared"<<std::endl;
+        QTimer units;QObject::connect(&units,&QTimer::timeout,&workflow,[&](){if(auto* box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))if(box->defaultButton()){std::cout<<"unit modal "<<box->windowTitle().toStdString()<<std::endl;units.stop();box->defaultButton()->click();}});
+        units.start(30);std::cout<<"blade import start"<<std::endl;workflow.importModelRequested(input);check(fixture.source.snapshot().hasModel(),"Blade imports with explicit millimetre units");
+        panel->findChild<QDoubleSpinBox*>("regionalValue8")->setValue(qEnvironmentVariable("RS2026_BLADE_DISTANCE_MM",QStringLiteral("80")).toDouble());
+        panel->findChild<QDoubleSpinBox*>("regionalValue5")->setValue(3.);
+        auto* identify=panel->findChild<QPushButton*>("regionalIdentify");
+        auto run=[&](const char* name){auto* button=panel->findChild<QPushButton*>(name);if(!button||!button->isEnabled()){check(false,"Required regional button is enabled");return false;}
+            button->click();QElapsedTimer clock;clock.start();while(!identify->isEnabled()&&clock.elapsed()<180000){QApplication::processEvents();QThread::msleep(5);}QApplication::processEvents();
+            check(identify->isEnabled(),"Background regional job completes");return identify->isEnabled();};
+        run("regionalIdentify");auto* refs=panel->findChild<QPushButton*>("regionalAction1");check(refs->isEnabled(),"Identification unlocks reference fitting");
+        auto* colors=panel->findChild<QPushButton*>("regionalColors");check(colors->isEnabled()&&colors->isChecked(),"Region coloring defaults on after identification");
+        check(probe.colored&&probe.vertices>1000&&!probe.failed,"Registered viewport accepts the complete colored mesh");
+        const QString output=qEnvironmentVariable("RS2026_BLADE_OUTPUT",fixture.temporary.path());std::filesystem::create_directories(std::filesystem::path(output.toStdWString()));
+        fixture.viewport.resize(1100,850);fixture.viewport.focusCoatingObject(fixture.source.snapshot().modelObjectId,0.);
+        QElapsedTimer camera;camera.start();while(camera.elapsed()<250){QApplication::processEvents();QThread::msleep(5);}
+        fixture.viewport.grab().save(output+"/blade_partition.png");colors->click();QApplication::processEvents();
+        bool originalVisible=false;check(!probe.colored&&fixture.viewport.sceneObjectVisible(fixture.source.snapshot().modelObjectId,originalVisible)&&originalVisible,"Colors off clears the colored mesh and restores the original");
+        fixture.viewport.grab().save(output+"/blade_colors_off.png");colors->click();
+        run("regionalAction1");check(probe.lines&&!probe.failed,"Both boundary and reference lines reach the registered viewport");fixture.viewport.grab().save(output+"/blade_references.png");
+        auto* region=panel->findChild<QComboBox*>("regionalSelectedRegion");auto* regionMethod=panel->findChild<QComboBox*>("regionalMethod");region->setCurrentIndex(1);
+        check(regionMethod->currentIndex()==1,"Transition defaults to reference offsets");regionMethod->setCurrentIndex(0);region->setCurrentIndex(0);
+        check(regionMethod->currentIndex()==0,"Body defaults to slicing");region->setCurrentIndex(1);check(regionMethod->currentIndex()==0,"Each region remembers its method");regionMethod->setCurrentIndex(1);
+        run("regionalAction5");run("regionalAction3");auto snapshot=fixture.source.snapshot();auto points=snapshot.trajectory.flattenedPoints();
+        check(!points.empty(),"Connected regional poses publish into the common data source");if(points.empty())return;
+        bool air=false,allRegions[5]={};for(const auto& p:points){air|=!p.sprayEnabled;if(p.workpieceRegionId>=0&&p.workpieceRegionId<5)allRegions[p.workpieceRegionId]=true;}
+        check(air&&std::all_of(std::begin(allRegions),std::end(allRegions),[](bool x){return x;}),"Shared data retains five region IDs and spray-off moves");
+        check(fixture.coating->waypoints().size()==points.size(),"Regional result reaches coating analysis");
+        const auto plans=motion_planning::MotionPlanningProjectStore::plans(fixture.context.document());
+        check(std::any_of(plans.begin(),plans.end(),[&](const auto& plan){return plan.cartesianControlPoints.points.size()==points.size();}),"Regional result reaches the motion document");
+        workflow.exportTrajectoryRequested(output+"/blade_paq.txt",FreeformTrajPlanExportFormat::Paq,0.);
+        workflow.exportTrajectoryRequested(output+"/blade_matrix.txt",FreeformTrajPlanExportFormat::Matrix,0.);
+        std::ifstream in(std::filesystem::path((output+"/blade_paq.txt").toStdWString()));bool roundTrip=true;
+        auto uniquePoints=points;uniquePoints.erase(std::unique(uniquePoints.begin(),uniquePoints.end(),[](const auto& a,const auto& b){return std::abs(a.time-b.time)<1e-10;}),uniquePoints.end());
+        for(const auto& p:uniquePoints){double row[12];for(auto& x:row)if(!(in>>x)){roundTrip=false;break;}if(!roundTrip)break;
+            roundTrip&=(Eigen::Vector3d(row[0],row[1],row[2])*.001-p.tcpPose.translation()).norm()<1e-7&&std::abs(row[9]-p.time)<1e-6&&((row[10]==2)==!p.sprayEnabled);}
+        check(roundTrip,"Regional export preserves SI positions, timestamps and air flags (shared segment boundary duplicates omitted)");
+        fixture.viewport.grab().save(output+"/blade_connected.png");
+        auto* pathView=panel->findChild<QComboBox*>("regionalPathView");check(pathView&&pathView->currentIndex()==0,"Surface targets are the explicit default view");
+        auto beforeView=fixture.source.snapshot().trajectory.flattenedPoints();if(pathView){pathView->setCurrentIndex(1);QApplication::processEvents();
+            fixture.viewport.grab().save(output+"/blade_tcp.png");auto afterView=fixture.source.snapshot().trajectory.flattenedPoints();
+            bool same=beforeView.size()==afterView.size();for(std::size_t i=0;i<beforeView.size()&&same;++i)same&=beforeView[i].tcpPose.matrix().isApprox(afterView[i].tcpPose.matrix(),1e-12)&&beforeView[i].time==afterView[i].time;
+            check(same&&!probe.failed,"Switching surface/TCP display retains the actual computed trajectory");pathView->setCurrentIndex(0);}
+        workflow.resize(320,1000);parameters.resize(380,1250);
+        workflow.grab().save(output+"/blade_workflow.png");parameters.grab().save(output+"/blade_parameters.png");
+        panel->findChild<QDoubleSpinBox*>("regionalValue4")->setValue(9.);
+        check(fixture.source.snapshot().trajectory.empty(),"Changing spacing invalidates shared connected output");
+        identify->click();panel->findChild<QPushButton*>("regionalAction4")->click();
+        RobotQtViewerEvent reset;reset.kind=RobotQtViewerEventKind::ProjectOpened;controller.handleEvent(reset);QApplication::processEvents();
+        check(method->currentIndex()==0&&fixture.source.snapshot().trajectory.empty(),"Project reset cancels, joins and rejects stale background completion");
+    }
+
     void sectionSweepTests()
     {
         QElapsedTimer stages;stages.start();
@@ -922,7 +1011,7 @@ namespace
         FreeformTrajPlanWorkbenchController controller(workflow,parameters,fixture.context,&fixture.source,{},{});
         auto* method=workflow.findChild<QComboBox*>(QStringLiteral("freeformPlanningMethod"));
         auto* scanPanel=parameters.findChild<SectionSweepParameterPanel*>();
-        check(method && method->count()==3 && scanPanel,"Third planning mode and separate parameter panel exist");
+        check(method && method->count()==4 && scanPanel,"Third planning mode and separate parameter panel exist");
         if(!method||!scanPanel)return;
         check(scanPanel->parameters().maximumTiltDegrees==88. && scanPanel->parameters().transferSpeed==.200,
             "UI selects the new 88-degree coverage method and 200 mm/s transfer limit");
@@ -1247,6 +1336,7 @@ int main(int argc,char** argv)
     else if(mode=="--collision-mounts") collisionMountTests();
     else if(mode=="--xyzr") xyzrTests();
     else if(mode=="--fanuc") fanucTests();
+    else if(mode=="--blade-regions") {try{bladeRegionTests();}catch(const std::exception& e){std::cerr<<"blade UI exception: "<<e.what()<<std::endl;return 1;}}
     else if(mode=="--section-sweep") sectionSweepTests();
     else if(mode=="--freeform-transitions") freeformTransitionTests();
     else if(mode=="--cdf") cdfTests();

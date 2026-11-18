@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 set(TARGET_NAME SprayFreeformTrajPlan)
 
 set(SOURCES
+    SlicingTrajPlan/src/BladeRegionPlanner.cpp
     SlicingTrajPlan/src/VirtualBaffle.cpp
     SlicingTrajPlan/src/BoundaryData.cpp
     SlicingTrajPlan/src/BoundaryDetector.cpp
@@ -20,6 +21,7 @@ set(SOURCES
     SlicingTrajPlan/src/UniformSlicer.cpp
 )
 set(PUBLIC_HEADERS
+    SlicingTrajPlan/include/SlicingTrajPlan/BladeRegionPlanner.h
     SlicingTrajPlan/include/SlicingTrajPlan/VirtualBaffle.h
     SlicingTrajPlan/include/SlicingTrajPlan/BoundaryData.h
     SlicingTrajPlan/include/SlicingTrajPlan/BoundaryDetector.h

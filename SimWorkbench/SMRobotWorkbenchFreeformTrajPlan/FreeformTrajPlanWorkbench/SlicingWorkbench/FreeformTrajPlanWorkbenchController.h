@@ -10,6 +10,9 @@
 #include <UVTrajPlan/TrajPlanPipeline.h>
 
 #include <functional>
+#include <SlicingTrajPlan/BladeRegionPlanner.h>
+#include <atomic>
+#include <thread>
 
 namespace robot_qt_viewer { class RobotQtViewerDocumentContext; struct RobotQtViewerEvent; }
 namespace smrobot::workbench::freeform
@@ -29,6 +32,7 @@ namespace smrobot::workbench::freeform
             FreeformTrajPlanPreviewUpdatedCallback previewUpdated,
             FreeformTrajPlanPreviewClearedCallback previewCleared,
             QObject* parent = nullptr);
+        ~FreeformTrajPlanWorkbenchController() override;
         void handleEvent(const robot_qt_viewer::RobotQtViewerEvent& event);
     signals:
         void statusMessageRequested(const QString& message, int timeoutMs);
@@ -37,6 +41,11 @@ namespace smrobot::workbench::freeform
         void exportTrajectory(const QString& path, FreeformTrajPlanExportFormat format, double interpolationInterval);
         void setPlanningMethod(spray_freeform_traj_plan::PlanningMethod method);
         void generateSectionSweep();
+        void regionalAction(int action);
+        void regionalParametersEdited();
+        void refreshRegionalOverlay();
+        void updateRegionalPanel();
+        void startRegionalJob(std::function<blade_region::Report()> job);
         void refreshSectionSweepOverlay();
         void setSlicingMethod(bool adaptive);
         void setParameters(double trajectorySpacingMm, double chordErrorTolerance,
@@ -74,6 +83,13 @@ namespace smrobot::workbench::freeform
         // its algorithm facade. The Workbench only converts it for display.
         ModelTrajPlan::GeneralData m_generalData;
         ModelTrajPlan::BurTrajPlan m_plan;
+        bool m_regionalPlanning = false;
+        bool m_regionalBusy = false;
+        unsigned long long m_regionalEpoch = 0;
+        bool m_regionalParametersValid = true;
+        blade_region::Session m_regionalSession;
+        std::atomic_bool m_regionalCancel{false};
+        std::thread m_regionalThread;
         bool m_uvPlanning = false;
         bool m_sectionPlanning = false;
         section_sweep::Result m_sectionResult;

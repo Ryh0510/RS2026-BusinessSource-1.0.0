@@ -15,6 +15,7 @@ class QStackedWidget;
 
 namespace smrobot::workbench::freeform
 {
+    class RegionalParameterPanel;
     enum class FreeformTrajPlanExportFormat
     {
         Paq,
@@ -77,6 +78,7 @@ namespace smrobot::workbench::freeform
     public:
         explicit FreeformTrajPlanParameterPanel(QWidget* parent = nullptr);
         section_sweep::Parameters sectionSweepParameters() const;
+        RegionalParameterPanel* regionalPanel() const { return m_regionalPanel; }
     signals:
         void sectionSweepParametersEdited();
     public:
@@ -99,6 +101,7 @@ namespace smrobot::workbench::freeform
         void workflowActionRequested(spray_freeform_traj_plan::WorkflowAction action);
 
     private:
+        RegionalParameterPanel* m_regionalPanel = nullptr;
         QDoubleSpinBox* m_trajectorySpacing = nullptr;
         QDoubleSpinBox* m_chordError = nullptr;
         QDoubleSpinBox* m_minimumSpacing = nullptr;

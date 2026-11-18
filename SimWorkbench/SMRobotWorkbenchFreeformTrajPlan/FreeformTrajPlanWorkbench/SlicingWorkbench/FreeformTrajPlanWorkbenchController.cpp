@@ -1,6 +1,7 @@
 #include "FreeformTrajPlanWorkbenchController.h"
 #include "TrajectoryExportSampling.h"
 #include "SectionSweepWorkbench/SectionSweepAdapters.h"
+#include "RegionalWorkbench/RegionalParameterPanel.h"
 #include <UVTrajPlan/TrajectoryExporter.h>
 #include "FreeformTrajPlanWorkbenchPanel.h"
 #include "RobotQtViewerEvents.h"
@@ -106,7 +107,9 @@ namespace
         descriptor.appearance.shading = smrobot::visualization::MeshShadingMode::Unlit;
         descriptor.appearance.cull = smrobot::visualization::MeshCullMode::None;
         descriptor.appearance.blend = smrobot::visualization::MeshBlendMode::AlphaBlend;
-        descriptor.appearance.depthWrite = false;
+        descriptor.appearance.depthWrite = overlayId == QStringLiteral("regionalMesh");
+        if(overlayId == QStringLiteral("regionalMesh"))
+            descriptor.appearance.blend = smrobot::visualization::MeshBlendMode::Opaque;
         if(overlayId == QStringLiteral("referenceLines")) {
             descriptor.appearance.depthTest = false;
             descriptor.appearance.renderOrder = 30;
@@ -126,7 +129,8 @@ namespace
         for(const QString& overlayId : { QStringLiteral("connections"), QStringLiteral("slices"),
                 QStringLiteral("slicePlanes"), QStringLiteral("sliceSurfaces"),
                 QStringLiteral("trajectoryFrames"), QStringLiteral("referenceLines"), QStringLiteral("frameConfiguration"),
-                QStringLiteral("sectionSweep"),QStringLiteral("sectionProfile"),QStringLiteral("uvTrajectory") }) {
+                QStringLiteral("sectionSweep"),QStringLiteral("sectionProfile"),QStringLiteral("uvTrajectory"),
+                QStringLiteral("regionalMesh"),QStringLiteral("regionalPaths"),QStringLiteral("regionalBoundaries"),QStringLiteral("regionalSlices"),QStringLiteral("regionalConnections") }) {
             clearOverlay(viewport, overlayId);
         }
     }
@@ -171,7 +175,25 @@ namespace
         }
         smrobot::visualization::CustomMeshDesc overlay = makeOverlayDescriptor(overlayId);
         overlay.appearance.renderOrder = overlayId == QStringLiteral("referenceLines") ? 30 : 20;
-        for(const auto& segment : preview) {
+        // Fine STL intersections and orientation-only motion knots can create
+        // ribbons below the visualization API's triangle-area tolerance. Merge
+        // only their display segments; the domain/export samples stay exact.
+        auto display=preview;
+        if(overlayId.startsWith(QStringLiteral("regional"))){display.clear();
+            smrobot::workbench::freeform::FreeformTrajPlanLineSegment pending{};bool have=false;
+            auto length=[](const auto& q){return Eigen::Vector3d(q.endX-q.startX,q.endY-q.startY,q.endZ-q.startZ).norm();};
+            auto flush=[&](){if(!have)return;
+                if(length(pending)>=.001)display.push_back(pending);
+                else if(!display.empty()){auto& q=display.back();
+                    if(Eigen::Vector3d(q.endX-pending.startX,q.endY-pending.startY,q.endZ-pending.startZ).norm()<1e-7&&q.red==pending.red&&q.green==pending.green&&q.blue==pending.blue){
+                        auto merged=q;merged.endX=pending.endX;merged.endY=pending.endY;merged.endZ=pending.endZ;if(length(merged)>=.001)q=merged;}}
+                have=false;};
+            for(const auto& q:preview){bool continuous=have&&Eigen::Vector3d(pending.endX-q.startX,pending.endY-q.startY,pending.endZ-q.startZ).norm()<1e-7&&pending.red==q.red&&pending.green==q.green&&pending.blue==q.blue;
+                if(!continuous){flush();pending=q;have=true;}else{pending.endX=q.endX;pending.endY=q.endY;pending.endZ=q.endZ;}
+                if(length(pending)>=.001){display.push_back(pending);have=false;}}
+            flush();
+        }
+        for(const auto& segment : display) {
             appendLine(overlay.mesh,
                 { static_cast<float>(segment.startX * coordinateScale), static_cast<float>(segment.startY * coordinateScale),
                     static_cast<float>(segment.startZ * coordinateScale) },
@@ -199,13 +221,18 @@ namespace
             overlay.appearance.blend = smrobot::visualization::MeshBlendMode::Opaque;
         }
         overlay.appearance.renderOrder = 10;
+        // The mesh validator uses an absolute area tolerance. Store the dense
+        // regional display mesh in millimetres, then transform back to metres;
+        // this retains the original tiny STL triangles without changing SI data.
+        const double storageScale=overlayId==QStringLiteral("regionalMesh")?1e3:1.;
+        if(storageScale!=1.){overlay.transform.columnMajor[0]=float(1./storageScale);overlay.transform.columnMajor[5]=float(1./storageScale);overlay.transform.columnMajor[10]=float(1./storageScale);}
         overlay.mesh.positions.reserve(preview.vertices.size());
         overlay.mesh.colors.reserve(preview.vertices.size());
         overlay.mesh.indices = preview.indices;
         for(const auto& vertex : preview.vertices) {
-            overlay.mesh.positions.push_back({ static_cast<float>(vertex.positionX * coordinateScale),
-                static_cast<float>(vertex.positionY * coordinateScale),
-                static_cast<float>(vertex.positionZ * coordinateScale) });
+            overlay.mesh.positions.push_back({ static_cast<float>(vertex.positionX * coordinateScale * storageScale),
+                static_cast<float>(vertex.positionY * coordinateScale * storageScale),
+                static_cast<float>(vertex.positionZ * coordinateScale * storageScale) });
             overlay.mesh.colors.push_back({ static_cast<float>(vertex.red), static_cast<float>(vertex.green),
                 static_cast<float>(vertex.blue), static_cast<float>(vertex.alpha) });
         }
@@ -404,6 +431,10 @@ namespace smrobot::workbench::freeform
             m_generalData.trajData_.generationParams_.normalAxis = normal;
             m_generalData.trajData_.generationParams_.forwardAxis = forward;
         }
+        auto* regionalPanel = parameterPanel.regionalPanel();
+        connect(regionalPanel, &RegionalParameterPanel::actionRequested, this, &FreeformTrajPlanWorkbenchController::regionalAction);
+        connect(regionalPanel, &RegionalParameterPanel::parametersEdited, this, &FreeformTrajPlanWorkbenchController::regionalParametersEdited);
+        connect(regionalPanel, &RegionalParameterPanel::colorsChanged, this, [this](){ refreshRegionalOverlay(); });
         connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::importModelRequested,
             this, &FreeformTrajPlanWorkbenchController::importModel);
         connect(&workflowPanel, &FreeformTrajPlanWorkflowPanel::planningModeRequested,
@@ -446,6 +477,10 @@ namespace smrobot::workbench::freeform
                     viewport->clearSceneObjectVisibilityOverride(m_modelObjectId);
                 }
             }
+            ++m_regionalEpoch;
+            m_regionalCancel=true;
+            if(m_regionalThread.joinable()) m_regionalThread.join();
+            m_regionalBusy=false;m_regionalPlanning=false;m_regionalSession.clear();updateRegionalPanel();
             m_plan.clear(m_generalData);
             m_modelObjectId.clear();
             m_modelPath.clear();
@@ -462,6 +497,9 @@ namespace smrobot::workbench::freeform
             m_workflowPanel.setPlanningMethod(spray_freeform_traj_plan::PlanningMethod::Slicing);
             m_parameterPanel.setPlanningMethod(spray_freeform_traj_plan::PlanningMethod::Slicing);
             m_workflowPanel.setStatus(QStringLiteral("等待导入曲面模型。"), true);
+        } else if(m_regionalPlanning && !m_regionalBusy && (event.kind==robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged ||
+            event.kind==robot_qt_viewer::RobotQtViewerEventKind::ViewportReloaded)) {
+            refreshRegionalOverlay();publishSharedData();
         } else if(m_sectionPlanning && (event.kind==robot_qt_viewer::RobotQtViewerEventKind::ProjectDocumentChanged ||
             event.kind==robot_qt_viewer::RobotQtViewerEventKind::ViewportReloaded)) {
             refreshSectionSweepOverlay();
@@ -469,6 +507,8 @@ namespace smrobot::workbench::freeform
     }
     void FreeformTrajPlanWorkbenchController::setPlanningMethod(spray_freeform_traj_plan::PlanningMethod method)
     {
+        if(m_regionalBusy) { m_workflowPanel.setPlanningMethod(spray_freeform_traj_plan::PlanningMethod::Regional);showResult(false,QStringLiteral("请等待分区计算或先取消。"));return; }
+        m_regionalPlanning = method == spray_freeform_traj_plan::PlanningMethod::Regional;
         m_uvPlanning = method == spray_freeform_traj_plan::PlanningMethod::Uv;
         m_sectionPlanning = method == spray_freeform_traj_plan::PlanningMethod::SectionSweep;
         m_workflowPanel.setPlanningMethod(method);
@@ -478,6 +518,7 @@ namespace smrobot::workbench::freeform
         setVisualizationVisibility(m_modelVisible,m_slicesVisible,m_trajectoriesVisible,m_connectionsVisible,m_referenceLinesVisible);
         showResult(true, m_sectionPlanning ? QStringLiteral("等截面单侧扫描已启用。选择扫描轴与喷涂侧后生成轨迹。")
             : (m_uvPlanning ? QStringLiteral("UV 轨迹规划已启用。") : QStringLiteral("切片轨迹规划已启用。")));
+        if(m_regionalPlanning){updateRegionalPanel();showResult(true,QStringLiteral("叶片分区规划：识别分区 → 拟合参考线 → 逐区生成 → 平滑连接。"));}
         publishSharedData();
     }
 
@@ -528,8 +569,56 @@ namespace smrobot::workbench::freeform
         }
     }
 
+    void FreeformTrajPlanWorkbenchController::refreshRegionalOverlay()
+    {
+        if(m_regionalBusy)return;
+        auto* viewport=m_context.visualizationViewport();
+        for(const auto& id:{QStringLiteral("regionalMesh"),QStringLiteral("regionalPaths"),QStringLiteral("regionalBoundaries"),QStringLiteral("regionalSlices"),QStringLiteral("regionalConnections"),QStringLiteral("connections")})clearOverlay(viewport,id);
+        if(!m_regionalPlanning)return;
+        const bool colors=m_parameterPanel.regionalPanel()->colorsEnabled()&&m_regionalSession.identified();
+        if(viewport&&!m_modelObjectId.isEmpty())viewport->setSceneObjectVisibilityOverride(m_modelObjectId,m_modelVisible&&!colors);
+        const auto frame=sectionModelFrame(m_context.document(),m_modelObjectId);
+        const std::array<std::array<double,3>,7> palette{{{{.18,.48,.85}},{{1.,.48,.12}},{{.64,.30,.86}},{{.24,.72,.38}},{{.12,.74,.78}},{{.5,.5,.5}},{{.95,.15,.15}}}};
+        if(colors&&m_modelVisible){FreeformTrajPlanMeshPreview mesh;
+            const auto& source=m_regionalSession.mesh();const auto& labels=m_regionalSession.labels();
+            mesh.vertices.reserve(source.size()*3);mesh.indices.reserve(source.size()*3);
+            for(std::size_t i=0;i<source.size();++i){const auto& c=palette[int(labels[i])];
+                Eigen::Vector3d nn=(source[i][1]-source[i][0]).cross(source[i][2]-source[i][0]).normalized();nn=frame.linear()*nn;
+                for(const auto& v:source[i]){Eigen::Vector3d q=frame*v;
+                    mesh.indices.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
+                    mesh.vertices.push_back({q.x(),q.y(),q.z(),nn.x(),nn.y(),nn.z(),c[0],c[1],c[2],1.});}}
+            submitSurfaceOverlay(viewport,QStringLiteral("regionalMesh"),mesh,1.);}
+        auto add=[&](FreeformTrajPlanLinePreview& lines,const blade_region::Curve& curve,const std::array<double,3>& color){
+            for(std::size_t j=1;j<curve.points.size();++j){Eigen::Vector3d a=frame*(curve.points[j-1]+.00015*curve.normals[j-1]),b=frame*(curve.points[j]+.00015*curve.normals[j]);
+                lines.push_back({a.x(),a.y(),a.z(),b.x(),b.y(),b.z(),color[0],color[1],color[2],1.});}};
+        if(m_referenceLinesVisible){FreeformTrajPlanLinePreview lines;
+            for(const auto& band:m_regionalSession.bands()){
+                for(const auto& c:band.bodyBoundary)add(lines,c,{{1.,.3,.1}});
+                for(const auto& c:band.platformBoundary)add(lines,c,{{.9,.75,.1}});
+                for(const auto& c:band.reference)add(lines,c,{{.9,.05,.6}});}
+            submitLineOverlay(viewport,QStringLiteral("regionalBoundaries"),lines,1.);}
+        if(m_slicesVisible){FreeformTrajPlanLinePreview lines;for(const auto& c:m_regionalSession.slices())add(lines,c,{{.3,.3,.3}});submitLineOverlay(viewport,QStringLiteral("regionalSlices"),lines,1.);}
+        const bool tcp=m_parameterPanel.regionalPanel()->tcpPreview();
+        if(m_trajectoriesVisible){FreeformTrajPlanLinePreview lines;
+            if(m_regionalSession.trajectory().success){auto result=m_regionalSession.trajectory();
+                if(!tcp)for(auto& point:result.points)point.pose.translation()+=(result.sprayDistance-.00015)*point.pose.linear().col(2);
+                lines=sectionTrajectoryLines(result,true);
+                for(auto& line:lines){const Eigen::Vector3d a=frame*Eigen::Vector3d(line.startX,line.startY,line.startZ),b=frame*Eigen::Vector3d(line.endX,line.endY,line.endZ);
+                    line.startX=a.x();line.startY=a.y();line.startZ=a.z();line.endX=b.x();line.endY=b.y();line.endZ=b.z();}}
+            else for(const auto& c:m_regionalSession.paths()){
+                auto curve=c;if(tcp)for(std::size_t i=0;i<curve.points.size();++i)curve.points[i]+=(m_regionalSession.parameters().sprayDistance-.00015)*curve.normals[i];
+                add(lines,curve,palette[int(curve.region)]);}
+            submitLineOverlay(viewport,QStringLiteral("regionalPaths"),lines,1.);}
+        if(tcp&&m_connectionsVisible&&m_regionalSession.trajectory().success){
+            auto lines=sectionTrajectoryLines(m_regionalSession.trajectory(),false);
+            for(auto& line:lines){const Eigen::Vector3d a=frame*Eigen::Vector3d(line.startX,line.startY,line.startZ),b=frame*Eigen::Vector3d(line.endX,line.endY,line.endZ);
+                line.startX=a.x();line.startY=a.y();line.startZ=a.z();line.endX=b.x();line.endY=b.y();line.endZ=b.z();}
+            submitLineOverlay(viewport,QStringLiteral("regionalConnections"),lines,1.);}
+    }
+
     void FreeformTrajPlanWorkbenchController::importModel(const QString& path)
     {
+        if(m_regionalBusy){showResult(false,QStringLiteral("请先取消分区计算并等待完成。"));return;}
         for(auto* dialog : m_workflowPanel.findChildren<QDialog*>(QStringLiteral("slicingAdjustDialog"))) dialog->reject();
         if(auto* dialog = m_workflowPanel.findChild<QDialog*>(QStringLiteral("trajectoryFrameDialog"))) dialog->reject();
         if(path.isEmpty()) {
@@ -628,6 +717,7 @@ namespace smrobot::workbench::freeform
             }
         }
         m_modelPath = path;
+        m_regionalSession.clear();updateRegionalPanel();
         m_sectionResult = {};
         m_algorithmToSceneScale = scaleToMeters;
         // Import creates a fresh algorithm document. Preserve values owned by
@@ -672,17 +762,19 @@ namespace smrobot::workbench::freeform
         const QString& path,
         FreeformTrajPlanExportFormat format, double interpolationInterval)
     {
+        if(m_regionalBusy){showResult(false,QStringLiteral("计算中不能导出。"));return;}
+        if(m_regionalPlanning && !m_regionalSession.trajectory().success){showResult(false,QStringLiteral("请先完成分区轨迹平滑连接再导出。"));return;}
         if(m_uvPlanning && (format == FreeformTrajPlanExportFormat::Abb
             || format == FreeformTrajPlanExportFormat::Fanuc)) {
             showResult(false, QStringLiteral("机器人程序导出当前仅支持切片轨迹。"));
             return;
         }
         auto exportPoints = m_generalData.trajData_.trajectoryPoints_;
-        const bool preparedExport = m_sectionPlanning || interpolationInterval > 0 || format == FreeformTrajPlanExportFormat::Matrix;
+        const bool preparedExport = m_sectionPlanning || m_regionalPlanning || interpolationInterval > 0 || format == FreeformTrajPlanExportFormat::Matrix;
         if(preparedExport) {
             try {
-                if(m_sectionPlanning) {
-                    auto worldResult=m_sectionResult;
+                if(m_sectionPlanning || m_regionalPlanning) {
+                    auto worldResult=m_regionalPlanning?m_regionalSession.trajectory():m_sectionResult;
                     const auto frame=sectionModelFrame(m_context.document(),m_modelObjectId);
                     for(auto& point:worldResult.points) point.pose=frame*point.pose;
                     exportPoints=sectionExportPoints(worldResult,interpolationInterval);
@@ -707,7 +799,7 @@ namespace smrobot::workbench::freeform
                         point.trajectory_index = static_cast<int>(source.segmentIndex);
                         exportPoints.push_back(point);
                     }
-                } else if(!m_sectionPlanning) {
+                } else if(!m_sectionPlanning && !m_regionalPlanning) {
                     // Same time calculation as the existing slicing PAQ exporter (mm and mm/s).
                     double elapsed = 0.0;
                     for(std::size_t i = 0; i < exportPoints.size(); ++i) {
@@ -721,7 +813,7 @@ namespace smrobot::workbench::freeform
                     }
                 }
                 if(exportPoints.empty()) throw std::runtime_error("No trajectory to export");
-                if(interpolationInterval > 0 && !m_sectionPlanning)
+                if(interpolationInterval > 0 && !m_sectionPlanning && !m_regionalPlanning)
                     exportPoints = resampleExportTrajectory(exportPoints, interpolationInterval);
                 if(format == FreeformTrajPlanExportFormat::Paq || format == FreeformTrajPlanExportFormat::Matrix) {
                     QSaveFile file(path);
@@ -859,6 +951,7 @@ namespace smrobot::workbench::freeform
             }
         }
 
+        if(m_regionalPlanning) {refreshRegionalOverlay();return;}
         if(m_sectionPlanning) {refreshSectionSweepOverlay();return;}
         refreshSlicingOverlays();
         clearOverlay(m_context.visualizationViewport(), QStringLiteral("trajectoryFrames"));
@@ -882,6 +975,16 @@ namespace smrobot::workbench::freeform
     void FreeformTrajPlanWorkbenchController::requestWorkflowAction(
         spray_freeform_traj_plan::WorkflowAction action)
     {
+        if(m_regionalBusy){showResult(false,QStringLiteral("请等待或取消分区计算。"));return;}
+        if(m_regionalPlanning) {
+            using A=spray_freeform_traj_plan::WorkflowAction;
+            if(action==A::ClearModelData||action==A::ClearAllData){m_regionalSession.clear();}
+            else if(action==A::ClearTrajectoryData){m_regionalSession.clearPaths();refreshRegionalOverlay();publishSharedData();updateRegionalPanel();showResult(true,QStringLiteral("分区轨迹已清除。"));return;}
+            else if(action==A::ClearConnectionData){m_regionalSession.clearConnection();refreshRegionalOverlay();publishSharedData();updateRegionalPanel();return;}
+            else if(action==A::ClearOtherData){m_regionalSession.clear();refreshRegionalOverlay();publishSharedData();updateRegionalPanel();return;}
+            else {showResult(false,QStringLiteral("请使用右侧分区规划按钮；位姿由工件坐标和分区喷距控制。"));return;}
+            updateRegionalPanel();
+        }
         // Adjustment widgets refer to the current slice set. Retire them before
         // any other workflow can replace, clear, or resample that data.
         if(action != spray_freeform_traj_plan::WorkflowAction::AdjustSlicing) {
@@ -1047,6 +1150,7 @@ namespace smrobot::workbench::freeform
                     m_algorithmToSceneScale);
             }
         }
+        if(m_regionalPlanning) refreshRegionalOverlay();
         if(m_sectionPlanning) refreshSectionSweepOverlay();
         if(success) publishSharedData();
         showResult(success, message);
@@ -2059,9 +2163,8 @@ namespace smrobot::workbench::freeform
 
     void FreeformTrajPlanWorkbenchController::publishSharedData()
     {
-        if(m_dataSource == nullptr) {
-            return;
-        }
+        if(m_dataSource == nullptr) { return; }
+        if(m_regionalBusy){m_dataSource->clear();return;}
 
         robot_qt_viewer::PlanningDataSnapshot snapshot;
         snapshot.modelObjectId = m_modelObjectId;
@@ -2073,7 +2176,16 @@ namespace smrobot::workbench::freeform
         snapshot.trajectory.name = snapshot.modelName.toStdString();
 
         if(!snapshot.hasModel()) { m_dataSource->clear(); return; }
-        if(m_sectionPlanning) {
+        if(m_regionalPlanning) {
+            snapshot.sprayAxis=4;snapshot.feedAxis=2;
+            publishSectionTrajectory(m_regionalSession.trajectory(),snapshot);
+            for(auto& segment:snapshot.trajectory.segments)for(auto& point:segment.points){
+                const auto& regions=m_regionalSession.trajectoryRegions();
+                const auto& source=m_regionalSession.trajectory().points;
+                auto at=std::lower_bound(source.begin(),source.end(),point.time,[](const section_sweep::Point& a,double t){return a.time<t;});
+                if(at!=source.end())point.workpieceRegionId=regions[std::size_t(at-source.begin())];
+            }
+        } else if(m_sectionPlanning) {
             publishSectionTrajectory(m_sectionResult,snapshot);
         } else if(m_uvPlanning) {
             const auto& mesh=m_uvPipeline.getOptCutsResult();

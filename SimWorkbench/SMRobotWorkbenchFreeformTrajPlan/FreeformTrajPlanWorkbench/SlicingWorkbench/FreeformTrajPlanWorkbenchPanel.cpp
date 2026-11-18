@@ -1,4 +1,5 @@
 #include "FreeformTrajPlanWorkbenchPanel.h"
+#include "RegionalWorkbench/RegionalParameterPanel.h"
 
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -66,6 +67,7 @@ namespace smrobot::workbench::freeform
         planningMethod->addItem(QStringLiteral("切片规划"), 0);
         planningMethod->addItem(QStringLiteral("UV 规划"), 1);
         planningMethod->addItem(QStringLiteral("等截面单侧扫描"), 2);
+        planningMethod->addItem(QStringLiteral("叶片分区规划"), 3);
         planningMethodLayout->addWidget(planningMethod);
         connect(planningMethod, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [planningMethod, this](int index) {
@@ -146,6 +148,9 @@ namespace smrobot::workbench::freeform
         addActionButton(*scanLayout, scanPage, QStringLiteral("生成单侧扫描轨迹"),
             spray_freeform_traj_plan::WorkflowAction::GenerateSectionSweep, *this)->setObjectName("sectionSweepWorkflowGenerate");
         m_workflowStack->addWidget(scanPage);
+        auto* regionPage = new QLabel(QStringLiteral("在右侧分区规划面板执行：自动识别 → 参考线拟合 → 分区切片/偏移 → 平滑连接。每区可独立选择方法；灰色外侧不生成喷涂轨迹。"), m_workflowStack);
+        regionPage->setWordWrap(true);
+        m_workflowStack->addWidget(regionPage);
         layout->addWidget(m_workflowStack);
 
         auto* outputGroup = new QGroupBox(QStringLiteral("轨迹数据"), this);
@@ -419,6 +424,8 @@ namespace smrobot::workbench::freeform
         connect(scanParameters, &SectionSweepParameterPanel::parametersEdited,
             this, &FreeformTrajPlanParameterPanel::sectionSweepParametersEdited);
         m_parameterStack->addWidget(scanParameters);
+        m_regionalPanel = new RegionalParameterPanel(m_parameterStack);
+        m_parameterStack->addWidget(m_regionalPanel);
         layout->addWidget(m_parameterStack);
         layout->addWidget(visibilityGroup);
         layout->addWidget(tcpGroup);

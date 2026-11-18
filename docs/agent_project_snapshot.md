@@ -1,3 +1,22 @@
+## 2026-11-17 80 mm 喷距轨迹质量修正（完成）
+
+- 用户截图确认喷距80mm且已连接；青色TCP抖动和黄色转移大圈可复现，既有30mm几何/元数据通过不足以验收80mm轨迹质量。
+- 仅在现有分区算法会话修正沿道工艺法向、目标/枪位显示语义与连接选择；保持原始三角面及SI不变量，不新增机器人优化/依赖。保留此前所有未提交修改，补丁前备份外层output/blade_tcp_quality_20261117/before。
+- 检查80mm修正前后曲线/枪位长度、法向二阶波动与转移绕行长度；Release/Debug构建、合成/真实模型、实际Qt80mm流程与旧模式回归。不能仅用5°插值加密掩盖抖动。
+
+- 80mm真实Qt流程Failures:0；170道/20770位姿；独立8294点目标三角面匹配全部通过。法向夹角p99约21.60°→6.27°，关枪转移7.729→2.123m；已加入表面/TCP显式切换，切换不改真实数据。证据在外层output/blade_tcp_quality_20261117。最终测试与部署说明见verification_manifest.json。
+
+- 本轮最终回归：Release 5/5、Debug 2/2（Debug界面162.75s）；两配置主程序新进程退出0。真实80mm界面Failures:0，表面/TCP切换保持共享轨迹不变。
+
+
+## 2026-11-17 叶片分区曲面规划（完成）
+
+- main；完成用户要求的自动分区与颜色开关、逐区方法、双边界/面中点参考线、沿面偏移、叶身切片及平滑连接；没有加入机器人优化。所有权在 SprayFreeformTrajPlan Session，Qt 工作台仅适配与注册视口显示。
+- 保留任务起始的测量烟测、运动规划子仓、F-Cburnner 项目、gun.STL 和已有文档变更。源码备份与初始状态在外层 output/blade_region_implementation_20261117/before。
+- VS2019 Release/Debug 主程序及受影响 DLL 构建、两配置启动退出 0；最终 Release 5/5、Debug 2/2。真实 xiuzheng.stl 的实际视口按钮流程、五区连接、共享及两种导出通过（170 道，喷距30mm）；独立参考线/目标点检查通过，详见 audit 与 verification_manifest.json。
+- 关键不变量：SI 算法/共享数据、场景变换一次、全原网格保留、禁喷/待审查不生成喷道、参数失效、喷阀/时间/区域保留、后台取消与过期回调隔离。渲染单位归一及短线合并只影响显示。
+- 后续入口 docs/blade_region_planning.md。启发式自动分区面向上下平台叶片，展向自动模式在 X/Y/Z 中选择；不把工件网格相交通过等同机器人/喷枪碰撞或膜厚验收。无新依赖或工程schema变更。
+
 ## 2026-11-09 平面轨迹优化原生 C++ 迁移（完成）
 
 - main；保留任务开始时全部未提交变更。前置快照、退出生产的Python源/字节码和旧部署包保存在外层output/trajectory_optimization_cpp_20261109；未强制关闭用户程序，曾占用的EXE/两DLL以.before_native_cpp_20261109保留。
@@ -1284,3 +1303,128 @@ whole_v27_resume 于 19:42 从精确的第二轮 GA 检查点接续，恢复两�
 ## 2026-11-11 9.txt / F-Cburnner GA+APF 诊断（只读算法）
 
 用户补充长时间停留在 APF。实际 60/60 日志于1065.481秒自然结束，GA连接修复在零基点14失败，APF未启动；该点独立搜索曾有25个安全姿态，不能断言物理无解。场景副本独立IK对照：原位姿第6～17点所有枚举根在工具对C检查中碰撞，本体单独检查24点通过。100/100上一轮另报apf_cartesian_seed_stale，已定位原始Cartesian参考与GA调整种子精确匹配校验冲突；喷涂APF还会覆盖UI走廊设置，待修复。此次只交付诊断，不改生产算法，不取消用户程序。证据外层output/f_cburnner_9_diagnosis_20261111/诊断说明.md及diagnosis.json。
+
+## 2026-11-16 当前15点轨迹与MoveL检验（进行中）
+目标：F-Cburnner.sys.json / 新建 文本文档.txt，GA/APF连续连接及六轴动态播放MoveL碰撞采样。GA/APF领域层清除旧导入精确目标，保持源表面/喷距约束及独立复验；Qt适配沿用CartesianMotionSampler，六轴均按MoveL并在IK失败时停止。检查器复用已有检测器，支持60mm喷距。保留用户运行进程及全部未提交文件；Release主程序已链接，检测器工具重建/实际轨迹验证进行中。旧EXE已同目录before_movel备份；DLL部署遇lib_coacd.dll占用，待使用相同文件哈希核对处理。无新依赖或schema变更。
+
+2026-11-16补充：实际为内层主仓及运动规划/工作台子仓，相关变更可用各自git diff审计；主仓F-Cburnner.sys.json已有用户变更，未覆盖。最终补充支持点选项与粗/最终角度差分离，最终版本两配置构建和整条验收进行中。
+
+## 2026-11-16 接续：参考 bf1c0ea 的 APF（仍在验收）
+用户明确要求仅参考 bf1c0ea（获得平滑无碰撞轨迹），不回退。只读 git show 确认主仓 bf1c0ea77b0e982cc8dd73cff972ca3e9a350f5f 指向规划子仓 d8afb685ecc88d5b47edcbd281a61680a9c211d7；当前 HEAD 仍主仓 e4a54e4 / 规划 2c6a389。该版成功方法包含连续实际模型 IK 种子、密集规划节点、提前绕行、完整碰撞后有序 TCP 形状恢复和窗口平滑；旧验收使用关节插值，本次必须保留 MoveL 和喷涂工艺门禁。
+当前增量：GA 允许五个输出子段对应的粗控制跨度，最终仍 0.5rad；完整候选池配对，先选通过稀疏 MoveL 探针的候选链，未找到则保留 APF 绕行种子；直连可行性用于反馈 GA 的适应度和喷距扩张，不再以单点安全阻止扩张。APF 修复扰动场/预测投影失败提前退出、有限差分单侧不可投影时整次退出的问题，使用合法另一侧差分，真实距离查询失败仍拒绝。新增单侧可行场回归，修复前失败、修复后通过。
+引用旧方法：稀疏 APF 失败后增加一次密集规划重试（既有 optimizationMaxJointStep=0.04），不降采样；原始控制顺序保留，独立检查器最大128中间点为有界审计。该重试重新从已接受 GA 的真实 FK 生成精确 TCP 目标并尝试连续 IK，避免旧导入目标与 GA 姿态不一致；显式 startJoints 时不改变端点分支。APF-only 恢复原有受碰撞约束的预 QP 平滑/形状恢复，但不执行 QP，最终仍重新检查完整 MoveL。
+证据外层 output/movel_cburnner_20261116。Release 旧增量5/5通过；密集/平滑增量 APF+External 2/2通过（20.98秒，含 APF-only 平滑无QP新用例）；最终连续IK增量构建中。Debug旧增量有一个2秒尝试次数测试在负载下只跑1次，已将该尝试上限用例改为30秒，独立极短超时用例保留；尚待最终Debug复验。actual/paired/final_60mm为失败对照；detour/preferred/fields已标 superseded，不能当成功。bf_reference_60mm为初版引用方法实跑，当前尚未通过，最终连续IK版本需单列日志，不能冒称成功或连续碰撞证明。用户输入及场景不覆盖。
+## 2026-11-16 F-Cburnner / 参考 bf1c0ea 最终完成
+
+仅只读参考bf1c0ea/d8afb685，没有checkout/reset；主仓HEAD仍e4a54e4、规划子仓2c6a389。除前述连续IK、密集重试、单侧有限差分和平滑修复外，补修TCP辅助走廊为2*(本次选定喷距+1mm)，覆盖已授权表面姿态空间；仍保留1mm瞄准、80度锥、选定喷距锁定、0.5rad输出关节差和完整MoveL验收。
+
+最终原始15点/原F-Cburnner/名义60mm从零运行exit0，1127.274秒，经过4轮GA反馈输出27点，15个原始表面站位全部按序保留，3个原始区间各加4点，没有降采样。前4次密集APF重试均失败；最终GA反馈后的稀疏APF通过，不能称旧版密集APF单独解决。第10点选定74.198792mm、第12点76.500000mm，其余60mm；最大相邻关节差0.429411rad，输出已重定时422.919秒。受约束平滑的路径长度8.61054→4.77345、弯曲指标0.38304→0.103651，不声称C2/加速度认证。完整APF细碰撞（<=0.00025rad）及外部独立MoveL复验（<=0.001rad）通过；本体/挂载工具对C，原检测器及网格保留。
+
+成功证据output/movel_cburnner_20261116/envelope_60mm/report.json及envelope_60mm.log；两种TXT精确关节/时间/MoveL标记往返、78内部帧一致，FK最大残差7.8352e-11。新鲜节点最小净空0.057066mm，余量很小，仅仿真采样无碰撞，不是严格连续碰撞证明/实机认证。accepted_project同目录补齐原gun.STL，重载自身工程的Release审计通过；补修检查器verify-export仍用旧A目标的问题，改用现有检测器，生产算法和已接受路径不变，早期审计失败保留。
+
+原VS2019 Release/Debug主程序及相关目标构建成功。参考主体Release5/5、Debug3/3；最终包络专项Release2/2（26.93秒）、Debug1/1（239.26秒），DebugGUI另已通过265.07秒。最后审计工具一行补修两配置构建通过，最终重载结果及文件SHA见output/movel_cburnner_20261116/verification_final.json和manifest_final.json。原输入/工程/模型SHA未变；用户现有场景修改保留。无新依赖、schema或公共API重命名；新增默认关闭的selectiveSupportMaxJointStep领域选项。Qt普通六轴动态播放采用实际MoveL，并逐段检查内部样本。使用说明及TXT见同输出目录，未声称手动VS F5或实机运行。
+## 2026-11-16 六轴 MoveL 播放暂不考虑关节位置限位
+
+用户授权针对 trajectory-remaining-5-intervals.txt 报 MoveL encoder limit exceeded 暂不考虑限位。根因为 MoveL 段端点预检查及中间 IK/碰撞私有场景沿用物理位置边界，而普通六轴单解 IK 已允许超限。ProjectPlanningRequest 新增 enforceJointPositionLimits=true，私有场景与 CartesianMotionSampler 共用策略；Motion Planning 六轴播放显式关闭，保留原始多圈编码器、实际 TCP 直线/姿态 slerp、连续 IK 与中间碰撞检查。GA/APF 等请求继续默认限位，无 URDF/工程 schema/依赖修改。
+
+本轮4个生产文件、2个回归文件；超限两整圈实际 GUI 播放、TCP/FK、端点圈数、默认拒绝/显式放开、真实碰撞与 NaN 拒绝均有覆盖。Release 原 VS2019 主程序和相关目标构建成功；GUI 10.39秒通过，领域夹具修正后27.05秒通过（分次运行）。Debug 最终主程序及目标构建成功，领域231.29秒通过；GUI总耗时1047.01秒，最后300秒播放截止时4帧/2内部帧、TCP直线成立但未到终点，2个播放完成/统计断言失败，不能记为Debug GUI验收通过。早期失败及重试日志均保留于外层 output/unbounded_movel_20261116。
+
+原2311点候选轨迹和 F-Cburnner 场景 SHA 未变；本次不是整条候选轨迹避障验收。既有 bf1c0ea 参考方法及已验收27点结果均保留。未关闭用户程序；旧 Release EXE/DLL 已同目录保存 before_unbounded_movel_20261116 副本，新版部署原启动路径，需重新启动使用。
+
+## 2026-11-16 GA+APF GPU与30秒目标（开始）
+
+用户要求对桌面原始15点与当前 F-Cburnner 场景从零运行GA+APF，使用本机GPU并优化到30秒。当前轨迹SHA F1142B3DD185DBC39AB9FF0901CC87C9D9A282537839D079ED6BF8A361F742B8；用户当前场景已更新为435DE8F58018E2D23A3E69B8A5A302DE9865B8207A4C3E276843763A1A59DA78，不能沿用旧场景的成功结论。硬件RTX5050 Laptop 8151MiB/591.91，i7-14650HX 16核24线程。旧1127秒记录来自runtime_support启动目录，CUDA报NVRTC缺失；正式build/Release/bin/cuda已有12.8运行库，先验证实际启用后再改算法。
+
+计划：1)当前原场景/原轨迹真实GPU基线与分阶段分析；2)领域层批量GPU IK/候选与连接开销、APF失败重试调度优化，保留MoveL、全模型本体和工具碰撞及工艺最终门禁；3)从零计时与独立验收、相关Release/Debug构建回归。尽量不超过15源码文件，无新依赖/公共API重命名/工程schema变化；如30秒内无可接受路径，必须如实报告，不能以超时返回失败充当成功。沿用此前60mm名义喷距及原约束，不复用已算好的轨迹冒充从零。所有现有APF/六轴播放放开限位修改和用户场景保留，证据独立存外层output/gpu_ga_apf_20261116。
+
+## 2026-11-16 GPU 加速阶段交付：30 秒目标未达成
+
+实际 RTX 5050 Laptop GPU 批量 IK 与 MoveL 中间 IK 已接通；结果逐点 CPU FK 核对到 1e-10，失败回退 CPU。NVRTC PTX 仅进程内共享编译代码，各 owner 保持私有模块、流和查询缓冲。当前 C 工件不适配已有 GPU 挡板拟合，真实网格/工具精确碰撞仍在 CPU。没有声称碰撞全部 GPU 化。
+
+快速搜索显式 opt-in：GaSurfaceSearchOptions.latencyOptimized 默认 false；完整搜索继续作为常规 GUI 默认，仅 GPU 批量采样/编译缓存通用启用。新增反馈配额和 APF field budget 默认均为零（保留完整预算）；快搜采用局部反馈、径向探索、物理姿态去重、提前碰撞拒绝和早期两场/最后完整 APF 尝试。修复预热候选导致 ga_schedule_incomplete 的计数错误。没有降低最终碰撞/工艺门禁。检查器新增 --fast-search、--deadline-seconds 与 Windows Unicode 参数入口。
+
+最终从中文原路径/当前原场景从零实跑：完整模式 30.0559922 秒、快速模式 30.0615567 秒，均到达时限失败；快速完整 8 轮诊断 80.9157866 秒仍失败。困难包括原始第 10→11、12→13 区间，未发布新的合格轨迹。不能将快速失败当成成功加速，也未复用旧 1127 秒路径作为初值或本次验收。
+
+原 VS2019 Release/Debug ProjectMotionPlanning、WholeTrajectoryCheck、相关四个专项、GaApfCdfCheck、MotionPlanningEditor、主程序最终构建成功。Release 4/4 专项 12.7165 秒，Debug 4/4 专项 200.5467 秒；含 13266 组 GPU/CPU merit 对照、96 组 IK、257 点 GPU MoveL/CPU FK、取消与多圈编码器。两配置主程序启动冒烟 exit0，分别 16.07/23.52 秒；不代表用户轨迹全程播放或实机验收。
+
+本任务 16 个源码/测试文件任务前备份在外层 output/gpu_ga_apf_20261116/before，保留此前所有 APF/播放/限位与用户工程修改。Release 初次主程序链接因 PID41872 占用失败，原 EXE 可恢复改名为 RobotQtViewerrx64.exe.before_gpu_ga_apf_20261116，重试成功，没有停止用户程序；旧 CoACD/TBB 备份也保留，新版需重启。原输入 SHA 与本节开始时一致，C++ UTF-8 无 BOM/CRLF 及三个仓 diff --check 通过。完整证据、限制与运行方法见同输出目录 verification.json、run_summary.json、本次结果说明.md；无新依赖、schema 或公共 API 重命名。
+
+## 2026-11-16 修复 GPU 加速后规划失败（进行中）
+用户要求恢复原始15点/当前F-Cburnner从零求解。保留所有工作区修改，任务前局部备份位于外层output/ga_apf_restore_20261116/before。当前完整GPU模式不限时实跑仍在进行（current_full_no_deadline）。原1127秒CPU成功不能用30秒取消证据否定。
+所有者为ProjectMotionPlanning领域：快速尝试耗尽不能冒充完整搜索无解；GPU数值无根/根全部不安全不能阻止CPU多种子补搜。计划局部修改pipeline重试调度与候选补搜，失败时从原始输入执行完整CPU候选搜索，保留GPU MoveL及缓存、完整碰撞和工艺门禁；取消/显式截止及无效输入不重试。以专项回归、Release/Debug构建和真实原输入整条从零MoveL复验验收，不复用旧轨迹。最多4源码文件，无新依赖/schema/公共API重命名；不停止用户GUI。
+
+## 2026-11-16 加速后求解失败修复完成
+
+- 保留全部已有修改，仅本轮4文件：GaApfCdfPipeline.cpp/.h、ExternalTrajectoryEvaluation.cpp、ExternalTrajectoryTests.cpp；任务前逐文件备份在外层output/ga_apf_restore_20261116/before。无新依赖/schema/公共API变更，无整体回退。
+- 根因与边界：快搜缩小候选/跳过密集APF/早期缩短势场，且GPU部分数值根不能保证原CPU分支覆盖；前轮30秒完整模式取消不能证明无解。本轮完整默认恢复CPU多种子候选、保留GPU MoveL；快搜耗尽从原始请求完整重试一次；GPU根全被物理门禁拒绝时补CPU。取消/无效输入/已耗尽阶段预算不重试。
+- 原15点、当前F-Cburnner、名义60mm从零exit0，1740.1257574秒，4轮反馈输出27点，原15站位全部保留，3区间各4支持点。第10点74.1987919mm，第12点76.4999998mm，其余60mm；最大关节差0.429410543rad，重定时422.918765秒。细碰撞0.00025rad及独立MoveL0.001rad复验通过，工程重载和两TXT精确关节/MoveL往返通过，最小节点净空0.057066mm，FK残差7.83524e-11。未放宽工艺/碰撞门禁，非严格连续碰撞认证。
+- Release/Debug领域库、专项和主程序构建通过；ExternalTrajectoryEvaluation Release20.33秒、Debug440.99秒通过，含快搜耗尽只完整重试一次、无效输入/取消不重试；主程序启动Release16.4004秒/Debug27.5384秒exit0。实际w/MotionPlanningWorkbench/Editor为既有静态库，调用领域入口无API变更，主程序已重新链接新领域库。
+- 初次检查器链接成功后部署因现有CoACD/TBB DLL占用失败，使用已部署且已验证的运行库、关闭本轮无变化的postbuild复制后构建成功；初次新增测试局部变量重名，改名后两配置通过。未关闭用户GUI。旧检查器及Release EXE同目录before_ga_apf_restore_20261116备份，新版部署原路径。
+- 旧完整GPU对照在修复版验收后停止，最后第7轮反馈，不能记为自然失败。实测期间有并行对照/编译/回归，耗时不是独占性能基准；30秒目标仍未达成。原轨迹/场景SHA未变，C++四文件UTF-8无BOM/CRLF，原有场景与各仓未提交修改保留。最终证据外层output/ga_apf_restore_20261116/verification_final.json及修复说明.md。
+
+## 2026-11-16 22时至11-17 08时：2311点连续性与APF速度优化（开始）
+用户授权以桌面trajectory-remaining-5-intervals.txt与当前F-Cburnner场景优化到少于3000点，MoveL全程仍无碰撞，并尽可能提速APF，允许持续到北京时间11-17 08:00。该输入是2311个Cartesian矩阵，非此前15点输入，不能沿用27点结果当验收。
+计划：先按六轴GUI单解/暂不限制位置限位、实际TCP和原机器人/工具/C检测器建立全程MoveL基线及几何/时间质量；随后做保留路径顺序的碰撞约束平滑与时间优化，每个候选重新完整MoveL验收，保留最佳已验证结果；分析APF剖面并优先等价的实际模型FK/Jacobian、批量/缓存与GPU开销优化，不能删除搜索覆盖充当提速；最后Release/Debug回归、主程序部署、原输入隔离计时及导入/重载复验。
+所有者ProjectMotionPlanning领域，UI仅复用领域接口。保留所有工作区变更、输入场景及工具；每次修改先按文件备份到外层output/overnight_continuity_20261116/before，不reset。预计不超过20源码/构建文件，无新第三方依赖或API重命名；有必要的新选项/方法仅服务领域通用规则。完成标准：输出<3000、原端点和扫描顺序保留、定量连续性改善、当前场景/挂载工具独立MoveL细碰撞通过、速度有同输入同预算的单独计时证据。达到期限前停止新增长试验，保留并交付已验证最佳版本；未通过候选明确标记。禁止把30秒失败/降低精度当提速，现有用户程序不关闭。
+
+
+## 2026-11-17 凌晨接续：2311点方案已通过，最终提速回归中
+
+已完成的真实输入验证：`output/overnight_continuity_20261116/fair_wide_sigma2_1mm`（路径相对外层工作区）从原始2311矩阵单解开始，允许忽略位置限位，保留每站顺序/时间和原始端点编码器；位置偏离约1mm，姿态最多20度。0.00025rad完整MoveL、独立0.001rad新场景复验及两TXT精确关节/MoveL往返通过。弯曲0.689368->0.219396，关节长度1171.630->604.968，最大角速度1.625737->0.848237，最大角加速度2.747999->1.527777（沿用原时间参数）；不声称C2或保守连续碰撞认证。独立节点最小净空0.035195mm，余量小。优化489.469s，含独立复验和IO总计602.325s，仍有并行编译/测试，不是隔离性能基准。
+
+真实FANUC GUI已播放该关节TXT，`gui_2311_movel_release.log`/`gui_2311_result.json`：2311点，0/87506碰撞、0无效状态、实际末端编码器吻合；793次显示提交全部呈现，无覆盖，95百分位28ms，播放19.292s、含加载总31.922s。此测试仅回归入口改为实际机器人/实际TCP及精确元数据，不改生产UI语义。原轨迹在细采样基线有7段中间碰撞（351、399、402、425、520、1960、2278零基），不能把粗播放无红色当细采样证据。
+
+当前算法增量：领域新增CartesianPathRefinement，局部高斯姿态候选+相邻三站点弯曲DP、失败连接反馈、分两级仅扩展切断处姿态/位置候选、粗筛后完整细验；APF引导使用实际模型校准POE FK及批量等分MoveL（大批GPU、小批预备端点后CPU；GPU失败补CPU），最终原搜索覆盖/碰撞/工艺门禁保留。1mm窄候选版本明确失败，5mm两版已通过，不能互相混记。
+
+最后新增困难区间候选对批量筛查以减少1857次全图重搜：CdfQueryBatch::motions与independentMotions共用evaluateEdges，缓存键/取消/样本预算/端点圈数完全保留；稀疏IK失败必须以细分辨率重试后才能剪枝。新增有序独立候选对/取消/预算回归；修复精化后保留旧qd/qdd的问题并增加用例。这个最终增量还在Release编译，尚未实跑验收，不应把旧1mm已接受轨迹宣称为最终批量版的运行结果。后续需要构建两配置、冻结后相关回归、批量版从原输入重新运行、隔离APF引导/完整规划性能及GUI复验，再交付。
+
+主程序精确路径Release/Debug启动均exit0，18.733/54.322s；早期自动通配符误选旧APF应用和旧Smoke EXE的失败记录在app_smoke_results.json，不能当主程序测试。GUI/External Debug旧目标路径链接LNK1104且文件不存在，改用唯一目标名链接成功；未关闭用户程序。首次GUI回归补include误放文件末尾，已移到顶部，Release最终编译成功。已有OMPL缺PDB/PTrajData编码警告保留。
+
+当前长进程与日志应通过CIM和输出目录重新确认：最终bulk Release domain build、旧版Debug External测试（最终bulk改动前启动，不能当最终通过），下一轮最终测试应单列日志。主程序/GUI需最终重链接新静态领域库。无提交/reset、无原场景或输入覆盖，无新增第三方依赖或API重命名；新增公开精化服务/选项，CdfQueryBatch新增方法仅私有实现层使用。
+
+
+2026-11-17 00:50 补充：bulk版本从原2311矩阵重新求解成功，最终编码器/时间与此前wide成功版完全相同；优化394.893秒、含独立0.001复验和IO总517.547秒（有并行回归，非隔离基准）。131轮有记录搜索、3041候选对批量检查；与旧1852轮/489.469秒对照仅说明重复搜索减少，不冒称整个APF同比。最终交付目录final已经从导出工程+关节TXT另起新场景、无旧缓存完成0.00025rad全MoveL及IO复验exit0，total289.478秒；最终Qt直接启动播放exit0，2311点、0/87506碰撞、0无效、终点正确。之前隐藏启动GUI尝试不完成帧确认已终止本任务测试进程，不影响用户程序，superseded记录保留。检查器首次直接关节TXT复验在物理检查通过后因无TCP控制点导出失败，已在检查器单独从同一FK重建导出表示，两配置构建通过、完整复验通过，初次失败日志保留。生产领域源码未因此改变。主程序最终Release/Debug构建/启动均exit0，25.385/81.278秒（并行细验负载）。
+
+14个本任务C++文件UTF-8无BOM/CRLF、三仓git diff --check通过，原输入和场景SHA未变。Release External最终32.541秒exit0；Debug最终长回归仍在运行，不能提前登记通过。停止新编译，脚本将在最终回归结束后依次单独跑APF引导核、sigma2/sigma3、原15点GA+APF前后完整对照。交付说明目前标进行中，所有最终性能结论需要等待这些新证据。
+
+
+## 2026-11-17 01:31 接续状态（仍未最终交付）
+
+- bulk最终 External Release 32.541秒、Debug 2473.914秒均exit0，含新增独立候选对/取消/预算/导数清理和实际平滑复验。此完整单测在下面显式16 worker上限修改之前；默认<=8的行为不变。
+- 完成无并行编译/回归的测量：APF引导核原始2311/全部2310边，同一0.001均分网格32.3971秒->8.9940秒、判定一致，包含真实GPU启动开销，不是整流程提速。isolated_sigma2_1mm优化304.536秒，总417.483秒，输出与推荐版一致；isolated_sigma3_1mm总385.068秒，成功但bending0.237411、acc1.56101均劣于sigma2的0.219396/1.52778；sigma3长度550.953/速度0.81956/最小净空0.07345mm更好，保留对照，推荐几何仍sigma2。
+- 首次原15点完整对照参数用8个GA workers，被既有1..3门禁拒绝，均未进入APF；isolated_before_ga_apf_15和isolated_after_ga_apf_15是无效基准，不能称算法失败或提速成功。后续脚本已改为3。
+- 为测试长轨迹精确碰撞并行提速，只把CdfQueryBatch.cpp显式requestedWorkers上限8改为16，默认自动/选项仍8，资源不足的降级保留；备份before/CdfQueryBatch_before_explicit16.cpp。没有改GA workers上限。Release/Debug领域、检查器、主程序、Qt回归全部已重新链接。新检查器名字ProjectMotionPlanning-ContinuityParallel.exe及Debug的ProjectMotionPlanning-ContinuityParallelDebug.exe；旧ContinuityBulk.exe仍是cap8快照。
+- 本机Release真实场景16-worker safe32通过、已知碰撞原edge351（2点端点安全）正确以state_in_collision拒绝；query_profile均显示实际16 workers。Debug同样正反检查在执行，safe32从01:24:29开始，初始化很慢，进程PID40248，内存约266MB、CPU约335秒，尚未输出验证进度，不要提前判通过。不要关闭用户进程。
+- 当前唯一活动脚本session89992：output/overnight_continuity_20261116/run_parallel_and_valid_comparison.ps1。顺序为Release/Debug各safe32及colliding_edge351；然后隔离raw2311同sigma2参数的workers12/16完整精化；最后旧before_checker和新Parallel检查器各用合法GA workers3跑原15点完整GA+APF。状态parallel_status.json，结果parallel_results.json。旧isolated脚本session18281已完成。
+- 最新cap16构建日志build_explicit16_domain_release/debug、build_explicit16_tool_release/debug、build_app_explicit16_release/debug、build_gui_explicit16_release/debug都成功；主程序新重链后还需最终启动，Qt也需在安静条件下再播最终交付TXT。此前cap8交付几何/独立fine/真实GUI验证全部有效，文件已放final；GUI旧hidden启动被终止的本任务进程保留superseded，直接启动通过52.877秒、播放36.58秒、0/87506碰撞、0无效、p95 33ms、终点正确，最大心跳13.5秒受当时负载，最后建议安静复验。
+- 后续按12/16真实时间选择是否保留显式16上限；若无收益，仅撤回本任务这一处上限变更，不整体回退。推荐几何sigma2，交付脚本最后使用实测最佳worker与最新Parallel或重新统一构建的检查器名字。最终比较完整APF合法3线程前后结果，必要时修复，不许用无效输入或缩预算冒充提速。更新final说明、最终独立细验/GUI/主程序冒烟、源输入和产物hash、中文审计/快照。原输入/场景不能覆盖，C++必须UTF8无BOM/CRLF，仍禁止主动子代理。允许到08:00，无需耗满，当前01:31。
+
+
+## 2026-11-17 03:41 接续状态：最终几何冻结，旧/新完整 APF 顺序对照中
+
+- 推荐几何仍 sigma2 / bending1000 / 约1mm和20度走廊，2311点。新增显式碰撞查询上限16已在真实CAD的Release/Debug正反例通过：safe32均成功；原351边端点安全但MoveL中间碰撞，均以state_in_collision正确拒绝。Debug初始化16场景约740秒，safe32全流程2217秒、负例1225秒，不能误认死锁或算法性能。
+- 隔离2311完整精化对照：workers8优化304.536s/总417.483s；workers12优化306.171s/总420.407s；workers16优化297.013s/总411.440s。三个版本导出的2311个精确关节角和时间逐值完全一致，物理细验均通过。16仅约1%-3%改善，保留为显式选项、默认自动仍8，尚不宣称统计保证。
+- 唯一重负载脚本session89992仍在run_parallel_and_valid_comparison.ps1：当前isolated_before_ga_apf_15_valid3，02:35:59启动，03:40仍在第四反馈附近GA阶段，未结束；不能拿旧1740秒历史跑过结果冒充这次基线。之后自动跑isolated_after_ga_apf_15_valid3。旧/新均原15矩阵/当前场景/GA workers3/60mm/完整预算，尚不能登记任何整流程提速倍数。当前原15文件SHA f1142b3dd185dbc39ab9ff0901cc87c9d9a282537839d079ed6bf8a361f742b8，原文件mtime11-16 15:15未变，快照original15_comparison_input.json记录于03:30。
+- 已排队最终验证脚本session29006：run_final_verification.ps1。仅每10秒读parallel_status，等待前后完整对照都结束且成功，期间不制造重负载。之后collect_final_evidence.py核对3个线程数输出/安全正反例/原输入源码UTF8 CRLF及3仓whitespace；选最快设置，然后最终TXT+导出工程重新0.00025rad细验到final_latest_fine、安静Qt生产播放final_quiet_gui、最新Release/Debug主程序精确路径启动，最后finalize_delivery.py生成final中文说明、性能和SHA索引。任何失败会停止，不可提前称最终脚本成功。
+- 新增collect_final_evidence.py和finalize_delivery.py仅output内证据脚本，无生产C++新增改动。最终几何及旧完整细验/GUI已通过，final目前说明仍标进行中。最终脚本未执行前请勿用最后版本交付结论。
+- 下一步：继续监看顺序完整APF对照，若加速后失败，按同输入同预算诊断；若旧基线本身失败，不能用成功速度倍数描述，应该如实区分。截止08:00，若基线异常长，最晚05:30考虑限制本任务额外基准并优先跑新版及最终交付检查，不停止用户进程。当前未新增cpp、未回退、无第三方依赖/schema/公共API重命名。
+- 最后需要审阅自动生成说明，补中文agent_change_audit最终条目、刷新源输入/产物SHA及whitespace，确认自己的测试进程退出后交付。实际APF引导核32.397->8.994秒匹配判定已可靠，不能当整个APF倍数。
+
+
+2026-11-17 05:17 追加：旧版原15点合法3线程完整对照成功，pipeline6374.6435秒/含导出6377.7472秒，27点、原控制保留、MoveL及IO复验通过；此前历史1740秒不能与本次单跑混用。新版04:22:20启动，当前第三轮密集APF中，前两次密集约714/690秒，仅小幅改善，不能将3.6倍引导核宣传成整流程倍数。仍在运行session89992。为使用剩余夜间窗口进一步改善当前2311点，已停止仅等待状态的本任务helper PID36328（session29006，未启动重负载，superseded记录已存），改为新session4604执行run_continuity_weight_sweep.ps1：先等完整15点前后对照结束，再从原2311矩阵以16线程依次测权重2000/5000/10000，保持sigma2/1mm/20度/内部.00025和导出.001；每次900秒上限、最晚07:15停止额外候选，超时不计成功。select_smoothness_candidate.py仅在完整通过、端点时间精确、速度/加速度/关节长度/节点净空均不差于权重1000时选弯曲最低者，复制到final并生成新图/实际原矩阵偏差，否则保留baseline16。选择完成后同一helper调用run_final_verification.ps1完成fresh .00025、安静真实GUI、两配置主程序和最终说明/SHA。相关collector/finalizer已适配可能的新权重和动态质量/GUI样本数，尚未执行完成，不可提前认通过。没有新生产C++修改。当前约05:17，至08:00约2小时43分。最后补audit、刷新hash/whitespace、检查所有测试退出。
+
+## 2026-11-17 夜间连续性与 APF 加速：最终验收完成（2026-11-17 06:36）
+
+最终可交付目录为外层 output/overnight_continuity_20261116/final；推荐 optimized_joint_angles.txt，2311点，sigma2/weight1000/workers16。额外2000/5000/10000均成功但未满足预设综合不劣条件，因此不替换。新场景0.00025rad独立MoveL、最终真实Qt播放0/87506碰撞/0无效/终点正确、两配置最新主程序启动全部通过，helper session4604已exit0。所有最终证据、SHA与中文说明已生成，文档追加后重新刷新collector/finalizer索引。
+
+质量：弯曲降68.17%、关节长度降48.37%、按原时间戳计算的离散速度/加速度峰值降47.82%/44.40%；原时间/首尾编码器/圈数/站位对应顺序保留，位置/姿态最多约1mm/20°变化，节点最低净空仅0.035195mm。不是C2、连续碰撞或实机认证。独立基线原输入有7个中间碰撞区间，推荐连接已全部复验。
+
+速度：当前2311原始矩阵从零精化297.013秒，含0.001复验/导出411.440秒；最终额外0.00025新场景复验257.908秒。APF引导核32.397→8.994秒，但原15点完整pipeline6374.644→6298.804秒（仅1.19%），累计APF减少3.55%；两者不可混用。精确网格碰撞仍CPU，无缩预算/降精度。默认自动workers仍8，显式最多16。APF加速进入生产，连续性重算入口为领域服务和脚本，未自动串入全部GUI工艺流程。
+
+原文件/场景hash未变，14任务源码UTF8无BOM/CRLF、三仓whitespace通过，所有已有用户修改保留。没有回退/新依赖/schema/API重命名，新增领域精化服务/采样方法。细节见同日最终agent_change_audit条目与final/优化说明.md；后续不得将旧失败/被替代尝试、无效GA8线程基准或历史并发计时当当前结论。
+
+## 2026-11-18 喷枪尽量水平并保持无碰撞（开始）
+
+用户要求修正 overnight_continuity_20261116/final/optimized_tcp_mm.txt（2311点），当前F-Cburnner场景保持无碰撞。暂按实际喷射轴TCP+Z尽量平行世界XY理解，已询问是否其实指枪体/手柄，等待可选澄清；原喷射轴倾角均值49.639度、最大89.076度。场景SHA仍435de8f...，TCP原文件SHA ca31d197...。原轨迹/场景不覆盖，不丢弃当前其他blade-region工作及以往规划修改。
+
+计划在ProjectMotionPlanning领域已有CartesianPathRefinement中增加默认关闭的水平软目标，固定TCP位置/点数/顺序/时间，允许首尾姿态调整，每点保留原安全关节作为候选。优先保证真实本体/挂载工具对C的原检测器、所有MoveL边0.00025rad细检，失败不得导出成功；然后新场景独立复验和实际Qt播放。仅4个相关源/回归文件，备份在外层output/horizontal_gun_20261118/before；不引入新依赖/schema或公共API重命名，新增可选领域字段。若完全水平不可行，交付已完整通过并量化改善的安全折中，不把未验证候选当成功。

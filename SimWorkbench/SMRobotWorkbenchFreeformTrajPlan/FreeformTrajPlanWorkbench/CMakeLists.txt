@@ -25,11 +25,17 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/SlicingWorkbench" FILES
 )
 
 target_sources(${TARGET_NAME} PRIVATE
+    RegionalWorkbench/RegionalParameterPanel.cpp
+    RegionalWorkbench/RegionalParameterPanel.h
+    RegionalWorkbench/RegionalWorkbenchController.cpp
     SectionSweepWorkbench/SectionSweepParameterPanel.cpp
     SectionSweepWorkbench/SectionSweepParameterPanel.h
     SectionSweepWorkbench/SectionSweepAdapters.cpp
     SectionSweepWorkbench/SectionSweepAdapters.h)
 source_group("SectionSweepWorkbench" FILES
+    RegionalWorkbench/RegionalParameterPanel.cpp
+    RegionalWorkbench/RegionalParameterPanel.h
+    RegionalWorkbench/RegionalWorkbenchController.cpp
     SectionSweepWorkbench/SectionSweepParameterPanel.cpp
     SectionSweepWorkbench/SectionSweepParameterPanel.h
     SectionSweepWorkbench/SectionSweepAdapters.cpp

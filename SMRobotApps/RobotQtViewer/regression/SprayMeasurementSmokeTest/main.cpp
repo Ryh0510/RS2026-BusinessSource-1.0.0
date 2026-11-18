@@ -1,3 +1,5 @@
+#include <ProjectMotionPlanning/GaApfCdfPipeline.h>
+#include <nlohmann/json.hpp>
 #include <ProjectMotionPlanning/CartesianMotion.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectScene.h>
@@ -10,6 +12,7 @@
 #include <CdfTrajectoryAnalysisDialog.h>
 #include "RobotQtViewerTheme.h"
 #include <QListWidget>
+#include <QRegularExpression>
 #include <QPointer>
 #include <MotionPlanningModuleController.h>
 #include <RobotQtViewerDocumentContext.h>
@@ -1831,13 +1834,22 @@ namespace
         require(simulation_project::loadProjectDocument(projectPath, document, &error), "Playback project loads");
         const auto imported = ProjectCdfJointAngleImporter::importFile(trajectoryPath);
         require(imported.success && !imported.points.empty(), "Optimized joint trajectory imports");
-        if(!imported.success || imported.points.empty()) { return; }
-        StoredMotionPlan plan;
+        if(!imported.success || imported.points.empty() || document.robots.empty()) { return; }
+        const auto& robot=document.robots.front();
+        StoredMotionPlan plan=imported.hasMotionMetadata?imported.plan:StoredMotionPlan{};
         plan.id = "playback_cdf_qp_regression";
         plan.name = plan.id;
-        plan.robotId = "ABB4600_urdf";
-        plan.jointNames = ProjectTrajectoryInverseKinematics::defaultIrb4600JointNames();
-        for(const auto& point : imported.points) {
+        plan.robotId = robot.id;
+        plan.jointNames.clear();for(const auto& joint:robot.initialJoints)plan.jointNames.push_back(joint.jointName);
+        const bool abb=robot.sourcePath.find("4600")!=std::string::npos || robot.id.find("4600")!=std::string::npos;
+        if(abb && imported.hasMotionMetadata) {
+            auto metadata=nlohmann::json::parse(plan.optimizationMetadata,nullptr,false);
+            if(metadata.is_object() && metadata.value("joint_convention",std::string{})=="runtime") {
+                for(auto& p:plan.trajectory.points)p.q=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(p.q);
+                metadata["joint_convention"]="irb4600_stored";plan.optimizationMetadata=metadata.dump();
+            }
+        }
+        if(!imported.hasMotionMetadata)for(const auto& point : imported.points) {
             auto q = point.jointAnglesDegrees;
             for(auto& value : q) { value *= 3.141592653589793 / 180.0; }
             plan.trajectory.points.push_back({ point.timeSeconds, std::move(q), {}, {} });
@@ -1867,7 +1879,9 @@ namespace
         OverlayObservingServices services(viewport);
         context.setMotionPlanningViewport(&services);
         context.setCollisionViewport(&collisionViewport);
-        selection.selectRobotLink("ABB4600_urdf", "Link6");
+        std::string tcpLink;Eigen::Isometry3d linkFromTcp;
+        require(resolvePlanningTcp(document,robot.id,tcpLink,linkFromTcp,error),"Playback resolves actual mounted TCP");
+        selection.selectRobotLink(QString::fromStdString(robot.id),QString::fromStdString(tcpLink));
         SceneExplorerWidget explorer;
         SceneExplorerModuleController explorerController(explorer, context);
         hub.subscribe(RobotQtViewerEventKind::RobotRuntimeChanged, &explorerController,
@@ -1939,16 +1953,20 @@ namespace
             << " maxHeartbeatGapMs=" << maxBeatGap << " reloads=" << reloads << " clears=" << clears
             << " summary=" << summary.toStdString() << '\n';
         require(services.samples == static_cast<int>(plan.trajectory.points.size()), "Every optimized trajectory point is played");
-        require(summary.contains(QStringLiteral(" / %1 ").arg(services.samples)), "Every optimized point retains independent collision validation");
+        const auto collisionCounts = QRegularExpression(QStringLiteral("Collision states: (\\d+) / (\\d+)")).match(summary);
+        require(collisionCounts.hasMatch() && collisionCounts.captured(2).toInt() >= services.samples,
+            "Every optimized point and generated MoveL interior retains independent collision validation");
+          require(collisionCounts.hasMatch() && collisionCounts.captured(1).toInt()==0,
+              "Actual optimized MoveL playback has zero robot/tool collision samples");
         require(reloads == 0 && clears == 20, "Real optimized playback survives twenty mode preview clears");
         require(collisionViewport.collisionQueriesEnabled() == queriesBefore, "Playback preserves user viewport query settings");
-        const auto expected = ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(plan.trajectory.points.back().q);
+          const auto expected = abb?ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(plan.trajectory.points.back().q):plan.trajectory.points.back().q;
         bool finalPoseMatches = true;
         for(std::size_t i = 0; i < expected.size(); ++i) {
-            finalPoseMatches = finalPoseMatches && std::abs(viewport.robotJointValue("ABB4600_urdf",
+              finalPoseMatches = finalPoseMatches && std::abs(viewport.robotJointValue(QString::fromStdString(robot.id),
                 QString::fromStdString(plan.jointNames[i])) - expected[i]) < 1e-9;
         }
-        require(finalPoseMatches, "Optimized playback reaches the final pose with existing ABB sign mapping");
+          require(finalPoseMatches, "Optimized playback reaches the actual robot's final encoder pose");
         widget.playbackStopRequested();
         viewport.close();
     }
@@ -2196,7 +2214,13 @@ namespace
             while(multiPlay->text() == QStringLiteral("Stop playback") && playbackWait.elapsed() < 10000) {
                 application.processEvents(QEventLoop::AllEvents, 20);
             }
-            require(services.samples == multiPoints->count(), "Multi playback applies exactly one solution per control point and draws trace");
+            bool missingSavedTcp=false;
+            for(auto* label : widget.findChildren<QLabel*>())
+                missingSavedTcp |= label->property("error").toBool() &&
+                    label->text().contains(QStringLiteral("MoveL playback unavailable:")) &&
+                    label->text().contains(QStringLiteral("saved TCP"));
+            require(services.samples == multiPoints->count() || (services.samples==0 && missingSavedTcp),
+                "Multi playback applies a valid MoveL sequence or explicitly rejects its missing saved TCP without a joint-interpolation fallback");
             const auto afterMulti = MotionPlanningProjectStore::plans(session.document());
             const auto importedAfterMulti=std::find_if(afterMulti.begin(),afterMulti.end(),
                 [&](const auto& plan) { return plan.id==imported.plan.id; });
@@ -2513,7 +2537,19 @@ namespace
             require(cdfRuntimeExact, "Actual GUI CDF runtime TXT import/apply preserves exact endpoint encoder signs");
             application.removeEventFilter(&importAcceptor);
             QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previousNativeDialogs);
-            widget.trajectorySelectionChanged(QString::fromStdString(runtimeTableImport.plan.id));
+            auto playbackStart=expected,playbackEnd=runtimeEnd;
+            playbackStart.back()+=4*std::acos(-1.);playbackEnd.back()+=4*std::acos(-1.);
+            auto basicPlaybackPlan=linearPlan;
+            basicPlaybackPlan.trajectory.points.front().q=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(playbackStart);
+            basicPlaybackPlan.trajectory.points.back().q=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(playbackEnd);
+            basicPlaybackPlan.id="ordinary-six-axis-movel-playback";
+            basicPlaybackPlan.optimizationMetadata=R"({"joint_convention":"irb4600_stored"})";
+            auto basicPlaybackDocument=session.document();
+            require(MotionPlanningProjectStore::upsertPlan(basicPlaybackDocument,basicPlaybackPlan,&error),
+                "Ordinary six-axis playback fixture stores without a MoveL metadata tag");
+            session.setDocument(basicPlaybackDocument,projectPath,false,false);
+            controller.handleEvent(linearChanged);
+            widget.trajectorySelectionChanged(QString::fromStdString(basicPlaybackPlan.id));
             std::vector<std::vector<double>> displayedJoints;
             services.jointObserver = [&](const auto& q) { displayedJoints.push_back(q); };
             widget.playbackRequested(0.5);
@@ -2527,8 +2563,8 @@ namespace
 #endif
             QObject::connect(&linearCompletion, &QTimer::timeout, &linearLoop, [&]() {
                 bool atEnd = !displayedJoints.empty();
-                if(atEnd) for(std::size_t j = 0; j < runtimeEnd.size(); ++j)
-                    atEnd &= std::abs(displayedJoints.back()[j] - runtimeEnd[j]) < 1e-9;
+                if(atEnd) for(std::size_t j = 0; j < playbackEnd.size(); ++j)
+                    atEnd &= std::abs(displayedJoints.back()[j] - playbackEnd[j]) < 1e-9;
                 if((atEnd && services.isFramePresented(services.lastTicket)) || linearElapsed.elapsed() > linearTimeoutMs)
                     linearLoop.quit();
             });
@@ -2537,7 +2573,7 @@ namespace
             linearCompletion.stop();
             widget.playbackStopRequested();
             services.jointObserver = {};
-            const auto fromPose = actualFk(expected), toPose = actualFk(runtimeEnd);
+            const auto fromPose = actualFk(playbackStart), toPose = actualFk(playbackEnd);
             const Eigen::Vector3d chord = toPose.translation() - fromPose.translation();
             bool linearFrames = chord.squaredNorm() > 1e-10;
             int interiorFrames = 0;
@@ -2552,14 +2588,21 @@ namespace
                 if(f > 0.05 && f < 0.95) ++interiorFrames;
             }
             bool endpointMatches = !displayedJoints.empty();
-            if(endpointMatches) for(std::size_t j = 0; j < runtimeEnd.size(); ++j)
-                endpointMatches &= std::abs(displayedJoints.back()[j] - runtimeEnd[j]) < 1e-9;
+            if(endpointMatches) for(std::size_t j = 0; j < playbackEnd.size(); ++j)
+                endpointMatches &= std::abs(displayedJoints.back()[j] - playbackEnd[j]) < 1e-9;
             std::cout << "MoveL GUI frames=" << displayedJoints.size() << " interior=" << interiorFrames
                 << " linear=" << linearFrames << " endpoint=" << endpointMatches << std::endl;
             if(!linearFrames || interiorFrames < 3 || !endpointMatches) for(auto* label : widget.findChildren<QLabel*>())
                 if(label->property("error").toBool()) std::cout << "MoveL GUI diagnostic: " << label->text().toStdString() << std::endl;
             require(linearFrames && interiorFrames >= 3 && endpointMatches,
-                "Actual GUI MoveL frames follow TCP line/slerp and retain ABB encoder signs through the endpoint");
+                "Ordinary six-axis GUI playback accepts out-of-limit turns, follows TCP line/slerp and retains ABB encoder signs");
+            QString moveLSummary;
+            for(auto* label : widget.findChildren<QLabel*>())
+                if(label->text().contains("Collision states:")) moveLSummary=label->text();
+            const auto moveLCounts=QRegularExpression(QStringLiteral("Collision states: (\\d+) / (\\d+)")).match(moveLSummary);
+            require(moveLCounts.hasMatch() && moveLCounts.captured(2).toInt()>2 &&
+                moveLSummary.contains(QStringLiteral("Invalid states: 0.")),
+                "Two sparse GUI controls validate actual MoveL interior IK samples as well as endpoints");
             widget.trajectorySelectionChanged(QString::fromStdString(imported.plan.id));
             // A long result must export every stored row, not only sampled table rows.
             auto exportPlan = *plan;

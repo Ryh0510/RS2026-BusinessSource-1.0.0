@@ -15,7 +15,8 @@ namespace spray_freeform_traj_plan
     {
         Slicing,
         Uv,
-        SectionSweep
+        SectionSweep,
+        Regional
     };
 
     enum class WorkflowAction

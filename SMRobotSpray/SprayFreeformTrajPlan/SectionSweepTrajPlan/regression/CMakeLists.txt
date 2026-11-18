@@ -5,3 +5,9 @@ target_compile_definitions(FreeformSectionSweepTest PRIVATE SECTION_SWEEP_TEST_S
 set_target_properties(FreeformSectionSweepTest PROPERTIES FOLDER tests/SMRobotSpray)
 add_test(NAME FreeformSectionSweep COMMAND FreeformSectionSweepTest)
 set_tests_properties(FreeformSectionSweep PROPERTIES WORKING_DIRECTORY $<TARGET_FILE_DIR:FreeformSectionSweepTest> TIMEOUT 120)
+
+add_executable(FreeformBladeRegionTest blade_regions.cpp)
+target_link_libraries(FreeformBladeRegionTest PRIVATE SMRobotSpray::SprayFreeformTrajPlan)
+target_compile_features(FreeformBladeRegionTest PRIVATE cxx_std_17)
+add_test(NAME FreeformBladeRegions COMMAND FreeformBladeRegionTest)
+set_tests_properties(FreeformBladeRegions PROPERTIES WORKING_DIRECTORY $<TARGET_FILE_DIR:FreeformBladeRegionTest> TIMEOUT 300 LABELS "SMRobotSpray;BladeRegion;Geometry")
