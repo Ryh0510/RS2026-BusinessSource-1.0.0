@@ -658,6 +658,40 @@ bool RobotViewport::setRobotJointValues(const QString& robotId,
     return true;
 }
 
+bool RobotViewport::setRobotJointValuesByDof(const std::vector<double>& values, QString* matchedRobotId)
+{
+    std::string robotId;
+    if(m_scene == nullptr || !m_scene->setRobotJointValuesByDof(values, &robotId)) {
+        if(matchedRobotId) matchedRobotId->clear();
+        return false;
+    }
+    if(matchedRobotId) *matchedRobotId = QString::fromStdString(robotId);
+    m_scene->setRobotAutoMotion(robotId, false, 0.0, 1.0);
+    if(m_sdkPreviewRobot == robotId) m_sdkPreviewRobot.clear();
+    m_manualJointControlExpiry = Clock::now() + std::chrono::seconds(1);
+    m_manualJointControlRobot = robotId;
+    update();
+    return true;
+}
+
+void RobotViewport::setTelemetryEndEffectorTraceVisible(bool visible)
+{
+    if(m_scene) m_scene->setTelemetryEndEffectorTraceVisible(visible);
+    update();
+}
+
+void RobotViewport::clearTelemetryEndEffectorTrace()
+{
+    if(m_scene) m_scene->clearTelemetryEndEffectorTrace();
+    update();
+}
+
+void RobotViewport::appendTelemetryEndEffectorTraceSample(const QString& robotId)
+{
+    if(m_scene) m_scene->appendTelemetryEndEffectorTraceSample(robotId.toStdString());
+    update();
+}
+
 double RobotViewport::robotJointValue(
     const QString& robotId,
     const QString& jointName,
@@ -1297,6 +1331,12 @@ ProjectScene::RobotForwardKinematics RobotViewport::robotForwardKinematics(
         : ProjectScene::RobotForwardKinematics{};
 }
 
+void RobotViewport::setSprayDirectionNegativeZ(bool negativeZ)
+{
+    if(m_scene) { m_scene->setSprayDirectionNegativeZ(negativeZ); }
+    update();
+}
+
 void RobotViewport::setSprayRangeVisible(const QString& robotId, bool visible)
 {
     if(m_scene != nullptr) {
@@ -1344,6 +1384,15 @@ ProjectScene::SprayMeasurement RobotViewport::sprayMeasurement(const QString& ro
     if(m_scene && !targetId.isEmpty()) {
         return m_scene->sprayMeasurement(robotId.toStdString(), targetId.toStdString());
     }
+    ProjectScene::SprayMeasurement result;
+    result.errorMessage = "Scene or explicit spray target unavailable";
+    return result;
+}
+
+ProjectScene::SprayMeasurement RobotViewport::sprayMeasurementAtPose(
+    const Eigen::Isometry3d& tcp, const QString& targetId, bool negativeZ) const
+{
+    if(m_scene && !targetId.isEmpty()) return m_scene->sprayMeasurementAtPose(tcp, targetId.toStdString(), negativeZ);
     ProjectScene::SprayMeasurement result;
     result.errorMessage = "Scene or explicit spray target unavailable";
     return result;
@@ -1453,6 +1502,28 @@ void RobotViewport::setTrajectoryControlPointOverlay(
 {
     if(m_scene != nullptr) {
         m_scene->setTrajectoryControlPointOverlay(trajectoryId.toStdString(), controlPoints, showPoints, showOrientations);
+        update();
+    }
+}
+
+void RobotViewport::setTrajectoryControlPointLineVisible(bool visible)
+{
+    if(m_scene != nullptr) {
+        m_scene->setTrajectoryControlPointLineVisible(visible);
+        update();
+    }
+}
+
+void RobotViewport::setTrajectoryDerivedPointOverlays(
+    const QString& trajectoryId,
+    const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+    bool surfaceLineVisible,
+    const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+    bool offsetLineVisible)
+{
+    if(m_scene != nullptr) {
+        m_scene->setTrajectoryDerivedPointOverlays(trajectoryId.toStdString(), surfacePoints, surfaceVisible,
+            surfaceLineVisible, offsetPoints, offsetVisible, offsetLineVisible);
         update();
     }
 }
@@ -1811,11 +1882,33 @@ bool RobotViewport::isFramePresented(quint64 ticket) const
     return ticket <= m_presentedFrameTicket;
 }
 
+void RobotViewport::setSprayInspectionSample(const QString& robotId, const std::vector<std::string>& names,
+    const std::vector<double>& joints, const ProjectScene::SprayMeasurement& measurement)
+{
+    m_inspectionRobot=robotId; m_inspectionNames=names; m_inspectionJoints=joints;
+    m_inspectionMeasurement=measurement; m_inspectionPending=true; m_inspectionFocusPending=true;
+    update();
+}
+
+void RobotViewport::focusSprayInspection()
+{
+    m_inspectionFocusPending=true; update();
+}
+
 void RobotViewport::paintGL()
 {
     if(m_scene == nullptr || !m_scene->isInitialized()) {
         return;
     }
+
+    if(m_inspectionPending) {
+        m_scene->setCollisionQueriesEnabled(false);
+        m_scene->setRobotJointValues(m_inspectionRobot.toStdString(),m_inspectionNames,m_inspectionJoints);
+        m_scene->setSprayInspectionMeasurement(m_inspectionMeasurement,
+            m_inspectionRobot.toStdString(), m_inspectionNames.empty() || m_inspectionJoints.empty());
+        m_inspectionPending=false;
+    }
+    if(m_inspectionFocusPending) {m_scene->focusSprayInspection();m_inspectionFocusPending=false;}
 
     // Capture before any callbacks: a repaint requested during this paint must
     // not be acknowledged by the frame that was already being rendered.

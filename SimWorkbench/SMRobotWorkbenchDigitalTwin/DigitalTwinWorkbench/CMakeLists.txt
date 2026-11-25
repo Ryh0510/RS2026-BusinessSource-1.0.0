@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.20)
 set(TARGET_NAME DigitalTwinWorkbench)
 
 set(SOURCES
+    DigitalTwinTelemetryPanel.cpp
+    DigitalTwinTelemetryPanel.h
+    DigitalTwinTelemetryController.cpp
+    DigitalTwinTelemetryController.h
     DigitalTwinWorkbenchContribution.cpp
     DigitalTwinWorkbenchContribution.h
 )
@@ -32,6 +36,7 @@ set(${TARGET_NAME}_INSTALL_PUBLIC_DEPENDENCIES
 
 set_target_properties(${TARGET_NAME}
     PROPERTIES
+        AUTOMOC ON
         FOLDER SMRobotWorkbenchDigitalTwin
         DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX}
         RELEASE_POSTFIX ${CMAKE_RELEASE_POSTFIX}

@@ -67,6 +67,7 @@ public:
     void onScroll(float delta);
     void setView(ProjectSceneCameraView view, const Bounds& bounds, bool animate);
     void animateTo(const LookAtState& state, double duration);
+    void focusLocalBounds(const Bounds& bounds, const Eigen::Vector3d& viewDirection);
     void updateAnimation(double timeSeconds);
 
     bool focusMountFrameLink(

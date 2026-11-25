@@ -187,6 +187,15 @@ public:
         double distanceMeters = 0.0;
         double angleDegrees = 0.0;
         std::string errorMessage;
+        // World-space snapshot, retained even when the ray misses the target.
+        bool poseValid = false;
+        Eigen::Vector3d tcpPosition = Eigen::Vector3d::Zero();
+        Eigen::Vector3d sprayDirection = Eigen::Vector3d::UnitZ();
+        Eigen::Vector3d hitPosition = Eigen::Vector3d::Zero();
+        Eigen::Vector3d surfaceNormal = Eigen::Vector3d::Zero();
+        // Complete TCP orientation is needed to display a tool at pose-only samples.
+        bool tcpPoseAvailable = false;
+        Eigen::Isometry3d tcpPose = Eigen::Isometry3d::Identity();
     };
 
     struct CollisionDetectorInfo
@@ -371,6 +380,9 @@ public:
     void onMouseMove(float dx, float dy, int button);
     void onScroll(float delta);
     void setCameraView(ProjectSceneCameraView view);
+    void setSprayInspectionMeasurement(const SprayMeasurement& measurement,
+        const std::string& robotId = {}, bool previewToolAtTcp = false);
+    void focusSprayInspection();
     void focusMountFrameLink(const std::string& robotId, const std::string& linkName);
     void clearMountFrameLinkFocus();
     void focusObjectFrameObject(const std::string& objectId);
@@ -402,6 +414,13 @@ public:
     void setTrajectoryControlPointOverlay(
         const std::string& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true, bool showOrientations = false);
+    void setTrajectoryControlPointLineVisible(bool visible);
+    void setTrajectoryDerivedPointOverlays(
+        const std::string& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+        bool surfaceLineVisible,
+        const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+        bool offsetLineVisible);
     void setTrajectoryHighlightRange(int first, int last);
     void clearTrajectoryControlPointOverlay(const std::string& trajectoryId = std::string());
     smrobot::visualization::SurfaceScalarProbeResult probeSurfaceScalarAtScreenPoint(
@@ -474,6 +493,8 @@ public:
         double value);
     bool setRobotJointValues(const std::string& robotId,
         const std::vector<std::string>& jointNames, const std::vector<double>& values);
+    // FANUC native deg/mm to model joints; numbered axes and the shipped M710 serial coupling are resolved here.
+    bool setRobotJointValuesByDof(const std::vector<double>& values, std::string* matchedRobotId = nullptr);
     bool robotJointValue(
         const std::string& robotId,
         const std::string& jointName,
@@ -533,12 +554,20 @@ public:
     RobotForwardKinematics robotForwardKinematics(const std::string& robotId,
         const std::vector<std::string>& jointNames, bool includeTool) const;
     bool endEffectorWorldTransform(const std::string& robotId, Eigen::Isometry3d& pose) const;
+    void setSprayDirectionNegativeZ(bool negativeZ);
     void setSprayRangeVisible(const std::string& robotId, bool visible);
     // Transient playback overlay. Disabling or changing robots discards its samples.
     void setEndEffectorTraceVisible(const std::string& robotId, bool visible);
     void clearEndEffectorTrace();
     void appendEndEffectorTraceSample();
+    void setTelemetryEndEffectorTraceVisible(bool visible);
+    void clearTelemetryEndEffectorTrace();
+    void appendTelemetryEndEffectorTraceSample(const std::string& robotId);
+    std::size_t telemetryEndEffectorTracePointCount() const;
     std::size_t endEffectorTracePointCount() const;
+    // Measures a supplied world TCP without moving any runtime robot.
+    SprayMeasurement sprayMeasurementAtPose(const Eigen::Isometry3d& tcp,
+        const std::string& targetId, bool negativeZ) const;
     SprayMeasurement sprayMeasurement(
         const std::string& robotId,
         const std::string& targetId = "A") const;

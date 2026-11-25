@@ -25,6 +25,7 @@
 #include <RobotQtViewerViewportPreviewState.h>
 #include <RobotQtViewerViewportServicesAdapter.h>
 #include <RobotViewport.h>
+#include <ProjectSceneAttachmentVisualSystem.h>
 #include <ProjectMotionPlanning/TrajectoryControlPointEditing.h>
 #include <ProjectMotionPlanning/TrajectoryInverseKinematics.h>
 #include <ProjectMotionPlanning/XyzrKinematics.h>
@@ -43,6 +44,9 @@
 #include <QTemporaryDir>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTabWidget>
+#include <QSpinBox>
+#include <QRegularExpression>
 #include <QElapsedTimer>
 #include <QThread>
 #include <QTimer>
@@ -334,6 +338,216 @@ namespace
             if(dialog->isVisible()) { check(false, "Test collision selection is accepted"); dialog->reject(); }
         });
         fixture.motion.collisionConditionsRequested();
+    }
+
+    void toolTcpPreviewTests()
+    {
+        ProjectSceneAttachmentVisualSystem system;
+        RuntimeToolAttachmentVisual tool;
+        tool.documentId = "gun"; tool.robotId = "robot"; tool.assetKind = "tool";
+        tool.visual.rootNode = std::make_shared<scenecore::SceneNode>("tool_preview");
+        tool.visual.rootNode->setVisible(false);
+        tool.worldToolMount.translation() = Eigen::Vector3d(.4, .3, .2);
+        tool.assetMountToTcp.translation() = Eigen::Vector3d(.01, -.02, 1.2);
+        tool.assetMountToTcp.linear() = Eigen::AngleAxisd(.7, Eigen::Vector3d::UnitY()).toRotationMatrix();
+        tool.assetMountToVisual.translation() = Eigen::Vector3d(.08, .04, -.1);
+        tool.worldTcp = tool.worldToolMount * tool.assetMountToTcp;
+        tool.worldVisual = tool.worldToolMount * tool.assetMountToVisual;
+        system.visuals().push_back(tool);
+        Eigen::Isometry3d tcp = Eigen::Isometry3d::Identity();
+        tcp.translation() = Eigen::Vector3d(1.5, .6, .7);
+        tcp.linear() = (Eigen::AngleAxisd(1.1, Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(-.8, Eigen::Vector3d::UnitX())).toRotationMatrix();
+        check(system.applyToolTcpPreview("robot", tcp), "TCP-only tool preview accepts the full selected pose");
+        const Eigen::Isometry3d expected = tcp * tool.assetMountToTcp.inverse() * tool.assetMountToVisual;
+        const auto& actual = system.visuals().front();
+        check(actual.visual.rootNode->visible() && (actual.worldVisual.matrix() - expected.matrix()).norm() < 1.e-12 &&
+            (actual.worldTcp.matrix() - tcp.matrix()).norm() < 1.e-12,
+            "Tool stays visible at the measured TCP with its calibrated mount/visual offsets");
+        tcp.linear() = (tcp.linear() * Eigen::AngleAxisd(.9, Eigen::Vector3d::UnitZ()).toRotationMatrix()).eval();
+        check(system.applyToolTcpPreview("robot", tcp) &&
+            (actual.worldVisual.matrix() - (tcp * tool.assetMountToTcp.inverse() * tool.assetMountToVisual).matrix()).norm() < 1.e-12,
+            "Roll around the same TCP Z axis rotates the complete gun correctly");
+        const auto before = actual.worldVisual;
+        check(!system.applyToolTcpPreview("other_robot", tcp) && (actual.worldVisual.matrix() - before.matrix()).norm() == 0.,
+            "Preview never moves an attachment belonging to another robot");
+    }
+
+    void directSprayTests()
+    {
+        using namespace motion_planning;
+        Workbenches fixture;
+        StoredMotionPlan plan; plan.id = "pose_only"; plan.robotId = "fixture_robot";
+        for(int i = 0; i < 2; ++i) {
+            robottrajectory::TimedCartesianPoint point; point.time = 2. + i;
+            point.tcpPose.translation() = Eigen::Vector3d(1.9 + .2 * i, 0., -.1);
+            plan.cartesianControlPoints.points.push_back(point);
+        }
+        check(fixture.documents.mutateProject(QStringLiteral("poseOnly"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                changed = MotionPlanningProjectStore::upsertPlan(service.document(), plan, &error); return changed;
+            }).success, "Store control points without inverse kinematics");
+        fixture.motion.trajectorySelectionChanged(QStringLiteral("pose_only"));
+        fixture.motion.findChild<QCheckBox*>(QStringLiteral("sprayMeasurementEnabled"))->setChecked(false);
+        auto* button = fixture.motion.findChild<QPushButton*>(QStringLiteral("calculateSprayMeasurements"));
+        check(button && button->isEnabled(), "Independent calculation is available with playback measurement off");
+        const double before = fixture.viewport.robotJointValue(QStringLiteral("fixture_robot"), QStringLiteral("slide"));
+        const auto calculate = [&](int direction, bool dense, double interval, bool cancel) {
+            QTimer answer;
+            QObject::connect(&answer, &QTimer::timeout, &fixture.motion, [&] {
+                if(auto* options = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayCalculationOptions"))) {
+                    options->findChild<QComboBox*>(QStringLiteral("sprayCalculationTarget"))->setCurrentIndex(0);
+                    options->findChild<QComboBox*>(QStringLiteral("sprayCalculationDirection"))->setCurrentIndex(direction);
+                    options->findChild<QCheckBox*>(QStringLiteral("sprayCalculationContinuous"))->setChecked(dense);
+                    options->findChild<QDoubleSpinBox*>(QStringLiteral("sprayCalculationInterval"))->setValue(interval);
+                    options->accept();
+                    if(cancel) QTimer::singleShot(0, &fixture.motion, [&] {
+                        if(auto* progress = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayCalculationProgress")))
+                            progress->findChild<QPushButton*>(QStringLiteral("cancelSprayCalculation"))->click();
+                    });
+                    answer.stop();
+                }
+                if(cancel) if(auto* progress = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayCalculationProgress"))) {
+                    progress->findChild<QPushButton*>(QStringLiteral("cancelSprayCalculation"))->click(); answer.stop();
+                }
+            });
+            answer.start(1); button->click(); answer.stop(); QApplication::processEvents();
+        };
+        calculate(0, true, .25, false);
+        auto* plot = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayMeasurementPlotDialog"));
+        check(plot != nullptr, "Independent button calculates and opens the dual-page plot");
+        if(!plot) return;
+        auto* tabs = plot->findChild<QTabWidget*>(QStringLiteral("sprayPlotTabs"));
+        auto* index = plot->findChild<QSpinBox*>(QStringLiteral("sprayPlotSampleIndex"));
+        auto* info = plot->findChild<QLabel*>(QStringLiteral("sprayPlotSelectedInfo"));
+        check(tabs && tabs->count() == 2 && index && index->maximum() == 2 && info && info->text().contains(QStringLiteral("No forward intersection")),
+            "Every original control is preserved, including misses at both endpoints");
+        tabs->setCurrentIndex(1); index->setValue(3); QApplication::processEvents();
+        check(index->maximum() == 5 && info->text().contains(QStringLiteral("100.000000")) &&
+            info->text().contains(QStringLiteral("2.500000")) && info->text().contains(QStringLiteral("50.00%")),
+            "Continuous midpoint hits the workpiece even though both endpoints miss; time/segment/fraction match");
+        QElapsedTimer renderWait; renderWait.start(); while(renderWait.elapsed() < 500) QApplication::processEvents();
+        const QString shot = qEnvironmentVariable("RS_SPRAY_DIRECT_SCREENSHOT");
+        if(!shot.isEmpty()) {
+            check(plot->grab().save(shot), "Save independent spray plot screenshot");
+            if(auto* view = plot->findChild<RobotViewport*>(QStringLiteral("sprayPlotGeometryView")))
+                check(view->grabFramebuffer().save(shot + QStringLiteral(".scene.png")), "Inspection viewport has a rendered framebuffer");
+        }
+        plot->close(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        check(fixture.context.document().collision.detectors.empty() &&
+            std::abs(fixture.viewport.robotJointValue(QStringLiteral("fixture_robot"), QStringLiteral("slide")) - before) < 1.e-12 &&
+            MotionPlanningProjectStore::plans(fixture.context.document()).front().trajectory.empty(),
+            "Direct measurement needs neither collision detectors nor IK and never moves the main scene robot");
+        calculate(0, true, .001, true);
+        fixture.motion.plotSprayMeasurementsRequested(); QApplication::processEvents();
+        plot = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayMeasurementPlotDialog"));
+        check(plot != nullptr, "Cancellation retains the previously completed result");
+        if(plot) {
+            plot->findChild<QTabWidget*>(QStringLiteral("sprayPlotTabs"))->setCurrentIndex(1);
+            check(plot->findChild<QSpinBox*>(QStringLiteral("sprayPlotSampleIndex"))->maximum() == 5,
+                "Cancelled dense run never publishes a partial replacement");
+            plot->close(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+        for(auto& p : plan.cartesianControlPoints.points) { p.tcpPose.translation().x() = 2.; p.tcpPose.translation().z() = .2; }
+        fixture.documents.mutateProject(QStringLiteral("reverseRay"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& error) {
+                changed = MotionPlanningProjectStore::upsertPlan(service.document(), plan, &error); return changed;
+            });
+        calculate(1, false, .25, false);
+        plot = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayMeasurementPlotDialog"));
+        check(plot != nullptr, "Negative TCP Z calculation opens its own result");
+        if(plot) {
+            info = plot->findChild<QLabel*>(QStringLiteral("sprayPlotSelectedInfo"));
+            const auto distance = QRegularExpression(QStringLiteral("([0-9]+\\.[0-9]+) mm")).match(info->text());
+            std::cout << "Z- selected point: " << info->text().toStdString() << '\n';
+            check(distance.hasMatch() && std::abs(distance.captured(1).toDouble() - 100.) < .001,
+                "Z- casts from above to the top surface within mesh float precision");
+            plot->findChild<QTabWidget*>(QStringLiteral("sprayPlotTabs"))->setCurrentIndex(1);
+            check(plot->findChild<QSpinBox*>(QStringLiteral("sprayPlotSampleIndex"))->maximum() == 0,
+                "Discrete-only option clears the old continuous curve");
+            plot->close(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+    }
+
+    void directSprayProjectTest(const std::filesystem::path& project, const std::filesystem::path& trajectory)
+    {
+        using namespace motion_planning;
+        Workbenches fixture;
+        simulation_project::ProjectDocument document; std::string error;
+        if(!simulation_project::loadProjectDocument(project, document, &error)) throw std::runtime_error(error);
+        fixture.session.setDocument(document, project, false, false);
+        fixture.selection.selectRobotLink(QString::fromStdString(document.robots.front().id), QStringLiteral("ee_link"));
+        check(fixture.documentViewport.loadProjectDocument(document, project.parent_path()).success, "Load actual user scene for direct pose measurements");
+        TrajectoryImportOptions settings; settings.robotId = document.robots.front().id;
+        const auto imported = ProjectTrajectoryImporter::importFile(trajectory, settings);
+        check(imported.success && imported.plan.trajectory.empty(), "Actual TXT imports as TCP-only control points");
+        if(!imported.success) return;
+        fixture.documents.mutateProject(QStringLiteral("actualPoseInput"), ProjectDirtyPolicy::UserEdit,
+            [&](simulation_project::ProjectDocumentService& service, bool& changed, std::string& message) {
+                changed = MotionPlanningProjectStore::upsertPlan(service.document(), imported.plan, &message); return changed;
+            });
+        fixture.motion.trajectorySelectionChanged(QString::fromStdString(imported.plan.id));
+        const auto before = fixture.viewport.runtimeDocumentSnapshot().robots.front().initialJoints;
+        QTimer::singleShot(0, &fixture.motion, [&] {
+            auto* options = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayCalculationOptions"));
+            check(options != nullptr, "Actual user trajectory uses the production calculation dialog");
+            if(!options) return;
+            auto* target = options->findChild<QComboBox*>(QStringLiteral("sprayCalculationTarget"));
+            target->setCurrentIndex(target->findData(QStringLiteral("A")));
+            options->findChild<QDoubleSpinBox*>(QStringLiteral("sprayCalculationInterval"))->setValue(.02);
+            options->accept();
+        });
+        fixture.motion.findChild<QPushButton*>(QStringLiteral("calculateSprayMeasurements"))->click();
+        auto* plot = fixture.motion.findChild<QDialog*>(QStringLiteral("sprayMeasurementPlotDialog"));
+        check(plot != nullptr, "Actual F-Aburnner and AX input calculate without IK or animation");
+        if(!plot) return;
+        auto* tabs = plot->findChild<QTabWidget*>(QStringLiteral("sprayPlotTabs"));
+        auto* index = plot->findChild<QSpinBox*>(QStringLiteral("sprayPlotSampleIndex"));
+        auto* info = plot->findChild<QLabel*>(QStringLiteral("sprayPlotSelectedInfo"));
+        check(index->maximum() == static_cast<int>(imported.plan.cartesianControlPoints.points.size()), "All actual user control points reach the discrete plot");
+        int hits = 0;
+        for(int i = 1; i <= index->maximum(); ++i) { index->setValue(i); hits += !info->text().contains(QStringLiteral("No forward intersection")) && !info->text().contains(QStringLiteral("Target workpiece not found")); }
+        check(hits > 0, "Actual trajectory has measured workpiece intersections");
+        tabs->setCurrentIndex(1);
+        check(index->maximum() > static_cast<int>(imported.plan.cartesianControlPoints.points.size()), "Actual continuous plot contains additional measured intermediate poses");
+        std::cout << "Actual direct spray controls=" << imported.plan.cartesianControlPoints.points.size() << " hits=" << hits << " continuous=" << index->maximum() << '\n';
+        index->setValue(std::max(1, index->maximum() / 2));
+        QElapsedTimer wait; wait.start(); while(wait.elapsed() < 500) QApplication::processEvents();
+        if(auto* view = plot->findChild<RobotViewport*>(QStringLiteral("sprayPlotGeometryView"))) {
+            tabs->setCurrentIndex(0);
+            index->setValue(std::min(100, index->maximum()));
+            QElapsedTimer settle; settle.start(); while(settle.elapsed() < 150) QApplication::processEvents();
+            const auto attachments = view->toolAttachments();
+            check(std::any_of(attachments.begin(), attachments.end(), [](const auto& tool) {
+                return tool.id == "gun_attachment" && tool.visible;
+            }), "Actual gun attachment remains visible in the TCP-only plot scene");
+            const auto posed = view->sprayMeasurement(QString::fromStdString(imported.plan.robotId), QStringLiteral("A"));
+            const auto& expectedTcp = imported.plan.cartesianControlPoints.points[index->value()-1].tcpPose;
+            check(posed.tcpPoseAvailable && (posed.tcpPose.matrix() - expectedTcp.matrix()).norm() < 1.e-8,
+                "Selected discrete point places the actual gun TCP at its complete measured pose");
+            tabs->setCurrentIndex(1);
+            index->setValue(std::min(100, index->maximum()));
+            settle.restart(); while(settle.elapsed() < 150) QApplication::processEvents();
+            const auto continuousPose = view->sprayMeasurement(QString::fromStdString(imported.plan.robotId), QStringLiteral("A"));
+            const auto match = QRegularExpression(QStringLiteral("\u65f6\u95f4 ([0-9.]+) s")).match(info->text());
+            check(match.hasMatch(), "Continuous plot exposes the selected source trajectory time");
+            if(match.hasMatch()) {
+                const auto expected = robottrajectory::RobotTrajectorySampler::evaluate(imported.plan.cartesianControlPoints, match.captured(1).toDouble()).tcpPose;
+                check(continuousPose.tcpPoseAvailable && (continuousPose.tcpPose.matrix() - expected.matrix()).norm() < 2.e-6,
+                    "Switching to continuous samples updates the gun without a joint solution");
+            }
+        }
+        const QString screenshot = qEnvironmentVariable("RS_SPRAY_DIRECT_SCREENSHOT");
+        if(!screenshot.isEmpty()) {
+            check(plot->grab().save(screenshot), "Save actual trajectory dual-page plot and scene inspection");
+            if(auto* view = plot->findChild<RobotViewport*>(QStringLiteral("sprayPlotGeometryView")))
+                check(view->grabFramebuffer().save(screenshot + QStringLiteral(".scene.png")), "Actual workpiece inspection framebuffer renders");
+        }
+        const auto after = fixture.viewport.runtimeDocumentSnapshot().robots.front().initialJoints;
+        bool unchanged = before.size() == after.size();
+        for(std::size_t i = 0; unchanged && i < before.size(); ++i) unchanged &= before[i].jointName == after[i].jointName && before[i].value == after[i].value;
+        check(unchanged, "Actual main scene joint positions remain unchanged after batch measurement and inspection");
+        plot->close(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 
     void collisionConditionTests()
@@ -844,6 +1058,14 @@ namespace
             auto* widget=runtime ? runtime->resolvePanel()->findChild<MotionPlanningEditorWidget*>() : nullptr;
             auto* points=widget ? widget->findChild<QTableWidget*>(QStringLiteral("cartesianControlPoints")) : nullptr;
             check(points && points->rowCount()==4,"Received control points are visible in the Motion Planning panel");
+            auto* lineVisible=widget ? widget->findChild<QCheckBox*>(QStringLiteral("trajectoryLineVisible")) : nullptr;
+            auto* surfaceVisible=widget ? widget->findChild<QCheckBox*>(QStringLiteral("spraySurfacePointsVisible")) : nullptr;
+            auto* offsetVisible=widget ? widget->findChild<QCheckBox*>(QStringLiteral("fixedOffsetPointsVisible")) : nullptr;
+            auto* surfaceButton=widget ? widget->findChild<QPushButton*>(QStringLiteral("generateSpraySurfacePoints")) : nullptr;
+            auto* offsetButton=widget ? widget->findChild<QPushButton*>(QStringLiteral("generateFixedOffsetPoints")) : nullptr;
+            check(lineVisible && lineVisible->isChecked() && surfaceVisible && surfaceVisible->isChecked() &&
+                offsetVisible && offsetVisible->isChecked() && surfaceButton && offsetButton,
+                "Basic Planning exposes default-on trajectory line and derived point controls");
             // Repeating publication and robot selection must preserve user edits.
             if(!plans.empty()) {
                 const auto id=plans.front().id;
@@ -1326,6 +1548,7 @@ namespace
 }
 int main(int argc,char** argv)
 {
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QSurfaceFormat format; format.setVersion(4,3); format.setProfile(QSurfaceFormat::CoreProfile);
     QSurfaceFormat::setDefaultFormat(format);
     QApplication application(argc,argv);
@@ -1333,6 +1556,8 @@ int main(int argc,char** argv)
     if(mode=="--data") dataTests();
     else if(mode=="--workbenches") workbenchTests();
     else if(mode=="--collision-conditions") collisionConditionTests();
+    else if(mode=="--spray-direct") { toolTcpPreviewTests(); directSprayTests(); }
+    else if(mode=="--spray-direct-project" && argc >= 4) directSprayProjectTest(std::filesystem::u8path(argv[2]), std::filesystem::u8path(argv[3]));
     else if(mode=="--collision-mounts") collisionMountTests();
     else if(mode=="--xyzr") xyzrTests();
     else if(mode=="--fanuc") fanucTests();

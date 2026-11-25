@@ -1,3 +1,4 @@
+#include <QWindow>
 #include <ProjectMotionPlanning/GaApfCdfPipeline.h>
 #include <nlohmann/json.hpp>
 #include <ProjectMotionPlanning/CartesianMotion.h>
@@ -11,6 +12,8 @@
 #include <ConfigurationSelectionDialog.h>
 #include <CdfTrajectoryAnalysisDialog.h>
 #include "RobotQtViewerTheme.h"
+#include <DigitalTwinTelemetryPanel.h>
+#include <DigitalTwinTelemetryController.h>
 #include <QListWidget>
 #include <QRegularExpression>
 #include <QPointer>
@@ -56,6 +59,8 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QImage>
+#include <QMouseEvent>
+#include <QKeyEvent>
 #include <QFileDialog>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
@@ -80,21 +85,176 @@ namespace
         if(!ok) { ++failures; }
     }
 
+    void verifyTelemetryPanel(QApplication& application)
+    {
+        using namespace robot_qt_viewer;
+        struct Port final : IRobotQtViewerTelemetryPort {
+            TelemetrySnapshot state;
+            int starts = 0, scans = 0, stops = 0;
+            bool discover() override { ++scans; state.endpoints = {{QStringLiteral("station-a"), QStringLiteral("A")}, {QStringLiteral("station-b"), QStringLiteral("B")}}; return true; }
+            bool start(const QString& id, int group, int interval, const QString& path) override {
+                ++starts; state.busy = state.streaming = true; state.source = id;
+                state.sequence = 12; state.receivedUnixNs = 1795320000123456789LL;
+                state.elapsedNs = 240000000; state.readLatencyNs = 2000000;
+                state.joints = {1., -2., 3., 4., 5., 225.2136}; state.csvPath = path;
+                state.tcpPoseValid = true; state.tcpXyzwpr = {2044.2, 906.7, 667.6, -178.9, 5.8, 5.5};
+                state.tcpUserFrame = 0; state.tcpUserTool = 1;
+                require(group == 1 && interval == 20 && !path.isEmpty(), "Telemetry controller forwards requested recording options"); return true;
+            }
+            void stop() override { ++stops; state.busy = state.streaming = false; }
+            TelemetrySnapshot snapshot() const override { return state; }
+            TelemetrySpeedStatistics speedStatistics(double start, double end, TelemetrySpeedCalculationMethod method, double minimumInterval) const override {
+                TelemetrySpeedStatistics result; result.valid = end > start; result.startSeconds = start; result.endSeconds = end;
+                result.method = method; result.minimumIntervalSeconds = minimumInterval;
+                result.sampleCount = result.valid ? 10 : 0; result.tcpLinearAverageMmPerSecond = 12.; result.tcpLinearMaxMmPerSecond = 20.;
+                result.tcpAngularAverageDegPerSecond = 3.; result.tcpAngularMaxDegPerSecond = 5.; result.jointAverageSpeed = {1., 2., 3., 4., 5., 6.}; result.jointMaxSpeed = {2., 4., 6., 8., 10., 12.};
+                for(int i = 0; i < 10; ++i) { TelemetrySpeedPoint point; point.elapsedSeconds = start + (end - start) * i / 9.; point.tcpLinearMmPerSecond = i; point.tcpAngularDegPerSecond = i * .5; point.jointAbsSpeed = {double(i), 2., 3., 4., 5., 6.}; result.points.push_back(point); }
+                if(!result.valid) result.diagnostic = QStringLiteral("bad interval");
+                return result;
+            }
+        } port;
+        RobotViewport followViewport;
+        struct FollowViewportPort final : RobotQtViewerMotionPlanningViewportAdapter {
+            explicit FollowViewportPort(RobotViewport& view) : RobotQtViewerMotionPlanningViewportAdapter(view) {}
+            int applies = 0, traces = 0, clears = 0;
+            bool visible = false;
+            std::vector<double> received;
+            bool setRobotJointValuesByDof(const std::vector<double>& values, QString* robotId) override {
+                ++applies; received = values; *robotId = QStringLiteral("scene-six-axis"); return true;
+            }
+            void setTelemetryEndEffectorTraceVisible(bool value) override { visible = value; }
+            void appendTelemetryEndEffectorTraceSample(const QString&) override { ++traces; }
+            void clearTelemetryEndEffectorTrace() override { ++clears; }
+        } followPort(followViewport);
+        DigitalTwinTelemetryPanel panel(nullptr);
+        DigitalTwinTelemetryController controller(panel, port, &followPort);
+        panel.resize(440, 760); panel.show();
+        auto* start = panel.findChild<QPushButton*>(QStringLiteral("telemetryStart"));
+        auto* stop = panel.findChild<QPushButton*>(QStringLiteral("telemetryStop"));
+        auto* refresh = panel.findChild<QPushButton*>(QStringLiteral("telemetryRefresh"));
+        auto* endpoints = panel.findChild<QComboBox*>(QStringLiteral("telemetryEndpoints"));
+        auto* joints = panel.findChild<QTableWidget*>(QStringLiteral("telemetryJoints"));
+        require(start && stop && refresh && endpoints && joints, "Digital twin communication panel exposes controls");
+        if(!start || !stop || !refresh || !endpoints || !joints) return;
+        refresh->click();
+        require(port.scans == 1 && endpoints->count() == 3, "Refresh displays all discovered controllers");
+        endpoints->setCurrentIndex(2); start->click(); application.processEvents();
+        require(port.starts == 1 && port.state.source == QStringLiteral("station-b") && !start->isEnabled() && stop->isEnabled(),
+            "Start uses selected workstation and prevents duplicate starts");
+        require(joints->rowCount() == 6 && joints->item(5,1)->text().contains(QStringLiteral("225.213600")), "UI preserves full joint turns");
+        auto* follow = panel.findChild<QCheckBox*>(QStringLiteral("telemetrySceneRobotFollow"));
+        auto* traceVisible = panel.findChild<QCheckBox*>(QStringLiteral("telemetryEndEffectorTraceVisible"));
+        require(follow && traceVisible && !follow->isChecked() && !traceVisible->isChecked() && followPort.applies == 0,
+            "Scene follow and telemetry trace are opt-in switches");
+        if(follow && traceVisible) {
+            follow->setChecked(true);
+            require(followPort.applies == 1 && followPort.received == port.state.joints && followPort.traces == 1,
+                "Enabling scene follow applies the current received joint group and collects TCP");
+            QElapsedTimer wait; wait.start();
+            while(wait.elapsed() < 90) application.processEvents();
+            require(followPort.applies == 1, "Repeated polling does not reapply a stale telemetry frame");
+            const int clears = followPort.clears;
+            traceVisible->setChecked(true); traceVisible->setChecked(false);
+            require(!followPort.visible && followPort.clears == clears,
+                "Trace visibility changes preserve collected points");
+            ++port.state.sequence; port.state.joints[0] = 25.;
+            wait.restart(); while(wait.elapsed() < 90) application.processEvents();
+            require(followPort.applies == 2 && followPort.traces == 2 && followPort.received[0] == 25.,
+                "A new communication frame updates scene and hidden TCP trace");
+            follow->setChecked(false); ++port.state.sequence;
+            wait.restart(); while(wait.elapsed() < 90) application.processEvents();
+            require(followPort.applies == 2, "Disabling follow leaves telemetry active without moving the scene");
+        }
+        auto* time = panel.findChild<QLabel*>(QStringLiteral("telemetryTime"));
+        require(time && time->text().contains(QString::number(port.state.receivedUnixNs)) && time->text().contains(QStringLiteral("0.240000")), "UI shows receipt timestamp and monotonic elapsed time");
+        auto* speedStart = panel.findChild<QDoubleSpinBox*>(QStringLiteral("telemetrySpeedStart"));
+        auto* speedEnd = panel.findChild<QDoubleSpinBox*>(QStringLiteral("telemetrySpeedEnd"));
+        auto* speedMethod = panel.findChild<QComboBox*>(QStringLiteral("telemetrySpeedMethod"));
+        auto* speedMinimum = panel.findChild<QDoubleSpinBox*>(QStringLiteral("telemetrySpeedMinimumInterval"));
+        auto* speedButton = panel.findChild<QPushButton*>(QStringLiteral("telemetrySpeedCalculate"));
+        auto* openSpeedButton = panel.findChild<QPushButton*>(QStringLiteral("telemetrySpeedOpenWindow"));
+        auto* speedTabs = panel.findChild<QTabWidget*>(QStringLiteral("telemetrySpeedTabs"));
+        auto* speedInfo = panel.findChild<QLabel*>(QStringLiteral("telemetrySpeedInfo"));
+        auto* mainTabs = panel.findChild<QTabWidget*>(QStringLiteral("telemetryMainTabs"));
+        auto* tcpSpeedPlot = panel.findChild<QWidget*>(QStringLiteral("telemetryTcpSpeedPlot"));
+        auto* jointSpeedPlot = panel.findChild<QWidget*>(QStringLiteral("telemetryJoint1SpeedPlot"));
+        require(speedStart && speedEnd && speedMethod && speedMinimum && speedButton && openSpeedButton && speedTabs && speedInfo && mainTabs && tcpSpeedPlot && jointSpeedPlot,
+            "Speed analysis exposes interval and plot controls");
+        if(speedStart && speedEnd && speedMethod && speedMinimum && speedButton && openSpeedButton && speedTabs && speedInfo && mainTabs && tcpSpeedPlot && jointSpeedPlot) {
+            speedStart->setValue(0.1); speedEnd->setValue(2.0); speedButton->click(); application.processEvents();
+            require(speedTabs->count() == 8 && speedTabs->tabText(0).contains(QStringLiteral("TCP")) && speedTabs->tabText(1).contains(QStringLiteral("TCP")) &&
+                speedTabs->tabText(2).contains(QStringLiteral("J1")) && speedTabs->tabText(7).contains(QStringLiteral("J6")) &&
+                speedInfo->text().contains(QStringLiteral("20.000")) && speedInfo->text().contains(QStringLiteral("J6")),
+                "Speed analysis separates TCP linear, TCP angular, and each joint curve");
+            mainTabs->setCurrentIndex(1); application.processEvents();
+            require(tcpSpeedPlot->isVisible() && tcpSpeedPlot->height() >= 200 && jointSpeedPlot->height() >= 200,
+                "TCP speed plot remains visible at a usable height on the dedicated page");
+            speedTabs->setCurrentIndex(2); application.processEvents();
+            require(jointSpeedPlot->isVisible() && jointSpeedPlot->height() >= 200,
+                "Joint speed plot remains visible at a usable height on the dedicated page");
+            speedMethod->setCurrentIndex(1); speedMinimum->setValue(.5); speedButton->click(); application.processEvents();
+            require(speedInfo->text().contains(QStringLiteral("20.000")),
+                "Window-average speed method accepts a minimum calculation interval");
+            mainTabs->setCurrentIndex(1); application.processEvents();
+            panel.grab().save(QStringLiteral("digital_twin_speed_panel.png"));
+            openSpeedButton->click(); application.processEvents();
+            auto* speedDialog = panel.findChild<QDialog*>(QStringLiteral("telemetrySpeedDialog"));
+            auto* dialogPlotTabs = panel.findChild<QTabWidget*>(QStringLiteral("telemetryDialogSpeedTabs"));
+            require(speedDialog && speedDialog->isVisible() && dialogPlotTabs && dialogPlotTabs->count() == 8 &&
+                dialogPlotTabs->tabText(0).contains(QStringLiteral("TCP")) && dialogPlotTabs->tabText(1).contains(QStringLiteral("TCP")) &&
+                dialogPlotTabs->tabText(2).contains(QStringLiteral("J1")) && dialogPlotTabs->tabText(7).contains(QStringLiteral("J6")),
+                "Speed analysis opens a separate window with individual TCP and joint pages");
+            if(speedDialog) speedDialog->grab().save(QStringLiteral("digital_twin_speed_dialog.png"));
+            if(speedDialog) speedDialog->close();
+            speedStart->setValue(2.0); speedEnd->setValue(1.0); speedButton->click(); application.processEvents();
+            require(speedInfo->text().contains(QStringLiteral("bad interval")), "Invalid speed interval is reported without stale statistics");
+        }
+        auto* dataTabs = panel.findChild<QTabWidget*>(QStringLiteral("telemetryDataTabs"));
+        auto* tcp = panel.findChild<QTableWidget*>(QStringLiteral("telemetryTcpPose"));
+        auto* tcpInfo = panel.findChild<QLabel*>(QStringLiteral("telemetryTcpInfo"));
+        require(dataTabs && dataTabs->count() == 2 && tcp && tcpInfo, "Telemetry separates joint and TCP pose pages");
+        if(dataTabs && tcp && tcpInfo) {
+            dataTabs->setCurrentIndex(1);
+            require(tcp->rowCount() == 6 && tcp->item(0, 1)->text() == QStringLiteral("2044.200000") &&
+                tcp->item(3, 1)->text() == QStringLiteral("-178.900000") && tcpInfo->text().contains(QStringLiteral("UF0")) &&
+                tcpInfo->text().contains(QStringLiteral("UT1")), "TCP page displays XYZ/WPR and explicit frame/tool identity");
+            port.state.tcpPoseValid = false; port.state.tcpDiagnostic = QStringLiteral("Unsupported pose");
+            panel.render(port.snapshot());
+            require(tcp->rowCount() == 0 && tcpInfo->text().contains(QStringLiteral("Unsupported pose")) && joints->rowCount() == 6,
+                "Unavailable pose clears old coordinates without losing joint display");
+            port.state.tcpPoseValid = true; port.state.tcpDiagnostic.clear(); panel.render(port.snapshot());
+        }
+        panel.grab().save(QStringLiteral("digital_twin_telemetry_panel.png"));
+        stop->click(); panel.render(port.snapshot());
+        require(port.stops == 1 && start->isEnabled() && !stop->isEnabled(), "Stop returns UI to idle");
+    }
+
     void writeFixture(const std::filesystem::path& folder)
     {
         std::ofstream(folder / "gun.urdf") << R"(<robot name="gun">
-<link name="base"/><link name="carriage"/><link name="Link6"><collision><geometry><sphere radius="0.01"/></geometry></collision></link>
+<link name="base"/><link name="carriage"/><link name="Link6"><visual><geometry><mesh filename="nozzle.stl"/></geometry></visual><collision><geometry><sphere radius="0.01"/></geometry></collision></link>
 <joint name="slide" type="prismatic"><parent link="base"/><child link="carriage"/>
 <axis xyz="1 0 0"/><limit lower="-10" upper="10" effort="1" velocity="1"/></joint>
 <joint name="tilt" type="revolute"><parent link="carriage"/><child link="Link6"/>
 <axis xyz="1 0 0"/><limit lower="-3.14" upper="3.14" effort="1" velocity="1"/></joint>
 </robot>)";
+        std::ofstream nozzle(folder / "nozzle.stl");
+        nozzle << "solid nozzle\n";
+        const Eigen::Vector3d vertices[] = {{-.025,-.025,-.065},{.025,-.025,-.065},{0,.025,-.065},{0,0,0}};
+        const int faces[][3] = {{0,2,1},{0,1,3},{1,2,3},{2,0,3}};
+        for(const auto& face:faces) {
+            const Eigen::Vector3d n=(vertices[face[1]]-vertices[face[0]]).cross(vertices[face[2]]-vertices[face[0]]).normalized();
+            nozzle << "facet normal "<<n.x()<<' '<<n.y()<<' '<<n.z()<<"\nouter loop\n";
+            for(int index:face) nozzle << "vertex "<<vertices[index].x()<<' '<<vertices[index].y()<<' '<<vertices[index].z()<<'\n';
+            nozzle << "endloop\nendfacet\n";
+        }
+        nozzle << "endsolid nozzle\n"; nozzle.close();
         for(bool reversed : { false, true }) {
             const auto filename = reversed ? "flipped.stl" : "surface.stl";
             std::ofstream stl(folder / filename);
             stl << "solid surface\n";
             // Far face deliberately precedes near face to test nearest-hit selection.
-            for(double z : { 0.3, 0.0 }) {
+            for(double z : { 0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 0.0 }) {
                 stl << "facet normal 0 0 1\nouter loop\nvertex -10 -10 " << z << '\n';
                 stl << (reversed ? "vertex 0 10 " : "vertex 10 -10 ") << z << '\n';
                 stl << (reversed ? "vertex 10 -10 " : "vertex 0 10 ") << z << '\n';
@@ -106,6 +266,102 @@ namespace
                  << (folder / filename).generic_string()
                  << "\"/></geometry></visual></link></robot>";
         }
+    }
+
+    void verifyFanucTelemetryMapping(const std::filesystem::path& folder)
+    {
+        const double pi = 3.14159265358979323846;
+        const auto source = std::filesystem::path(__FILE__).parent_path() /
+            "../../../../data/fanuc_m710ic50/m710ic_50_drake.urdf";
+        std::ifstream file(source);
+        const std::string original((std::istreambuf_iterator<char>(file)), {});
+        require(!original.empty(), "Load shipped FANUC M710 model for telemetry alignment");
+        if(original.empty()) return;
+        QString stripped = QString::fromStdString(original);
+        stripped.remove(QRegularExpression(QStringLiteral("<(visual|collision)>.*?</\\1>"),
+            QRegularExpression::DotMatchesEverythingOption));
+        // Reverse movable-joint XML order to exercise controller axis names,
+        // independently of whichever DOF indices RobotIO assigns internally.
+        const QRegularExpression joints(QStringLiteral("<joint name=\"J[1-6]\".*?</joint>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        QStringList ordered;
+        auto matches = joints.globalMatch(stripped);
+        while(matches.hasNext()) ordered.push_back(matches.next().captured());
+        stripped.remove(joints);
+        std::reverse(ordered.begin(), ordered.end());
+        stripped.replace(QStringLiteral("</robot>"), ordered.join(QStringLiteral("\n")) + QStringLiteral("\n</robot>"));
+        const auto modelPath = folder / "fanuc_telemetry.urdf";
+        const auto save = [&](const QString& text) { std::ofstream out(modelPath); out << text.toStdString(); };
+        save(stripped);
+        simulation_project::ProjectDocument document;
+        document.collision.query.enabled = false;
+        simulation_project::RobotDesc robot;
+        robot.id = "fanuc"; robot.sourceType = "urdf"; robot.sourcePath = modelPath.generic_string();
+        robot.collisionEnabled = false;
+        document.robots.push_back(robot);
+        ProjectScene scene;
+        scene.setProjectDocument(document, folder);
+        require(scene.initialize(), "FANUC telemetry scene initializes");
+        const std::vector<std::vector<double>> encoders = {
+            {56.2003708494686, -5.67360292889005, -22.1955620193391,
+                104.192029109119, -58.997924125952, 217.27371334755},
+            {49.400599926924507, -10.61717389494798, -12.090397887595541,
+                -85.741925972108817, 43.717646895947532, 227.48939506270622},
+            {0., 25., -30., 10., 20., 725.}};
+        // Independent WORLD/UT1 observations from Robot Server, 2026-11-22/24.
+        const std::array<std::array<double, 6>, 2> measured = {{
+            {1989.43286132813, 889.273132324219, 639.008056640625,
+                -3.42402148246765, -2.57907709055871e-6, 4.08158712161821e-6},
+            {2044.2376708984375, 906.76544189453125, 667.601318359375,
+                -178.92384338378906, 5.80877685546875, 5.5520462989807129}}};
+        const auto transform = [](const simulation_project::TransformDesc& d) {
+            Eigen::Isometry3d t = Eigen::Isometry3d::Identity();
+            t.translation() = Eigen::Vector3d(d.x, d.y, d.z);
+            t.linear() = (Eigen::AngleAxisd(d.yaw, Eigen::Vector3d::UnitZ()) *
+                Eigen::AngleAxisd(d.pitch, Eigen::Vector3d::UnitY()) *
+                Eigen::AngleAxisd(d.roll, Eigen::Vector3d::UnitX())).toRotationMatrix();
+            return t;
+        };
+        simulation_project::TransformDesc tool;
+        tool.x = -.000737; tool.y = -.000759; tool.z = 1.2198;
+        tool.roll = -pi / 6.; tool.pitch = -pi / 2.; tool.yaw = pi;
+        for(std::size_t pose = 0; pose < encoders.size(); ++pose) {
+            require(scene.setRobotJointValuesByDof(encoders[pose]), "Apply native FANUC telemetry");
+            for(std::size_t axis = 0; axis < 6; ++axis) {
+                double actual = 0.;
+                const double expected = (encoders[pose][axis] + (axis == 2 ? encoders[pose][1] : 0.)) * pi / 180.;
+                require(scene.robotJointValue("fanuc", "J" + std::to_string(axis + 1), actual) &&
+                    std::abs(actual - expected) < 1.e-10, "Named axis mapping, serial J3 coupling and full turns");
+            }
+            if(pose >= measured.size()) continue;
+            simulation_project::TransformDesc flange, world;
+            require(scene.robotLinkTransform("fanuc", "fanuc_flange", flange) &&
+                scene.robotLinkTransform("fanuc", "wbase", world), "Resolve model flange and FANUC WORLD");
+            const Eigen::Isometry3d tcp = transform(world).inverse() * transform(flange) * transform(tool);
+            simulation_project::TransformDesc observed;
+            observed.x = measured[pose][0] * .001; observed.y = measured[pose][1] * .001;
+            observed.z = measured[pose][2] * .001; observed.roll = measured[pose][3] * pi / 180.;
+            observed.pitch = measured[pose][4] * pi / 180.; observed.yaw = measured[pose][5] * pi / 180.;
+            const double mm = (tcp.translation() - transform(observed).translation()).norm() * 1000.;
+            const double deg = Eigen::AngleAxisd(tcp.linear().transpose() * transform(observed).linear()).angle() * 180. / pi;
+            std::cout << "FANUC pose " << pose << " WORLD TCP error mm=" << mm << " deg=" << deg << '\n';
+            require(mm < .01 && deg < .001, "Scene FK matches independent ROBOGUIDE WORLD TCP observation");
+        }
+        auto bad = encoders.back(); bad[5] = std::numeric_limits<double>::quiet_NaN();
+        require(!scene.setRobotJointValuesByDof(bad), "Reject nonfinite native telemetry atomically");
+        double last = 0.; scene.robotJointValue("fanuc", "J3", last);
+        require(std::abs(last - (-5. * pi / 180.)) < 1.e-10, "Invalid group preserves previous coupled pose");
+        // A different robot with identical axis labels must not inherit FANUC coupling.
+        QString generic = stripped;
+        generic.replace(QStringLiteral("name=\"m710ic_50\""), QStringLiteral("name=\"custom_six_axis\""));
+        const auto genericPath = folder / "generic_telemetry.urdf";
+        { std::ofstream out(genericPath); out << generic.toStdString(); }
+        document.robots[0].sourcePath = genericPath.generic_string();
+        ProjectScene genericScene;
+        genericScene.setProjectDocument(document, folder);
+        require(genericScene.initialize() && genericScene.setRobotJointValuesByDof(encoders[0]), "Generic six-axis named mapping still works");
+        genericScene.robotJointValue("fanuc", "J3", last);
+        require(std::abs(last - encoders[0][2] * pi / 180.) < 1.e-10, "No FANUC coupling on unrelated six-axis models");
     }
 
     void verifyGeometry(const std::filesystem::path& folder)
@@ -137,8 +393,45 @@ namespace
             "Nearest forward STL intersection is 0.3 m");
         require(value.valid && std::abs(value.angleDegrees) < 1.0e-6,
             "Normal incidence is zero degrees");
+        require(value.poseValid && (value.hitPosition - value.tcpPosition - value.distanceMeters * value.sprayDirection).norm() < 1e-10,
+            "Recorded world-space geometry agrees with the measured ray distance");
+        scene.setSprayDirectionNegativeZ(true);
+        auto reverse = scene.sprayMeasurement("gun", "burnner");
+        require(!reverse.valid && reverse.poseValid && reverse.sprayDirection.z() < -.999,
+            "Z- does not silently fall back to the forward Z+ hit");
+        simulation_project::TransformDesc above;
+        above.z = .8;
+        scene.setRobotBaseTransform("gun", above);
+        reverse = scene.sprayMeasurement("gun", "burnner");
+        require(reverse.valid && std::abs(reverse.distanceMeters - .2) < 1e-6 && std::abs(reverse.hitPosition.z() - .6) < 1e-6,
+            "Z- finds the nearest surface behind local +Z and returns its world hit");
+        scene.setRobotJointValue("gun", "tilt", 3.141592653589793 / 6.);
+        reverse = scene.sprayMeasurement("gun", "burnner");
+        require(reverse.valid && std::abs(reverse.distanceMeters - .2 / std::cos(3.141592653589793 / 6.)) < 1e-6 &&
+            std::abs(reverse.angleDegrees + 30.) < 1e-6 && reverse.surfaceNormal.dot(reverse.sprayDirection) <= 0.,
+            "Z- tilt preserves signed incidence and nozzle-facing normal");
+        const auto reversedWinding = scene.sprayMeasurement("gun", "flipped");
+        require(reversedWinding.valid && std::abs(reversedWinding.angleDegrees - reverse.angleDegrees) < 1e-6,
+            "Z- incidence is independent of STL winding");
+        scene.setRobotJointValue("gun", "tilt", 0.);
+        scene.setRobotBaseTransform("gun", simulation_project::TransformDesc{});
+        scene.setSprayDirectionNegativeZ(false);
         scene.appendEndEffectorTraceSample();
         require(scene.endEffectorTracePointCount() == 0, "Trace is disabled by default");
+        {
+            Eigen::Isometry3d explicitTcp = Eigen::Isometry3d::Identity();
+            explicitTcp.translation().z() = .1;
+            const auto direct = scene.sprayMeasurementAtPose(explicitTcp, "burnner", false);
+            require(direct.valid && std::abs(direct.distanceMeters - .2) < 1.e-6,
+                "Explicit TCP pose uses the same nearest surface kernel without moving the robot");
+            explicitTcp.translation().z() = .4;
+            const auto reverse = scene.sprayMeasurementAtPose(explicitTcp, "burnner", true);
+            require(reverse.valid && std::abs(reverse.distanceMeters - .1) < 1.e-6,
+                "Explicit TCP Z- measures the reverse ray independently of the playback direction");
+            explicitTcp.linear()(0, 0) = 2.;
+            require(!scene.sprayMeasurementAtPose(explicitTcp, "burnner", false).poseValid,
+                "Explicit measurement rejects a nonrigid TCP pose");
+        }
         scene.setEndEffectorTraceVisible("gun", true);
         scene.appendEndEffectorTraceSample();
         scene.appendEndEffectorTraceSample();
@@ -158,6 +451,30 @@ namespace
         scene.appendEndEffectorTraceSample();
         scene.clearEndEffectorTrace();
         require(scene.endEffectorTracePointCount() == 0, "Playback reset clears trace independently");
+        std::string matchedRobot;
+        require(scene.setRobotJointValuesByDof({200., 30.}, &matchedRobot) && matchedRobot == "gun",
+            "Telemetry matches the complete movable DOF group");
+        double mappedSlide = 0., mappedTilt = 0.;
+        require(scene.robotJointValue("gun", "slide", mappedSlide) && scene.robotJointValue("gun", "tilt", mappedTilt) &&
+            std::abs(mappedSlide - .2) < 1e-12 && std::abs(mappedTilt - 3.141592653589793 / 6.) < 1e-12,
+            "Telemetry converts controller millimetres/degrees to scene metres/radians");
+        require(!scene.setRobotJointValuesByDof({300., std::numeric_limits<double>::quiet_NaN()}) &&
+            !scene.setRobotJointValuesByDof({1., 2., 3.}) &&
+            scene.robotJointValue("gun", "slide", mappedSlide) && std::abs(mappedSlide - .2) < 1e-12,
+            "Invalid or mismatched telemetry never partially changes the robot");
+        scene.appendTelemetryEndEffectorTraceSample("gun");
+        scene.appendTelemetryEndEffectorTraceSample("gun");
+        require(scene.telemetryEndEffectorTracePointCount() == 1, "Telemetry trace deduplicates stationary samples");
+        scene.setTelemetryEndEffectorTraceVisible(false);
+        scene.setRobotJointValuesByDof({300., 30.});
+        scene.appendTelemetryEndEffectorTraceSample("gun");
+        scene.setTelemetryEndEffectorTraceVisible(true);
+        require(scene.telemetryEndEffectorTracePointCount() == 2 && scene.endEffectorTracePointCount() == 0,
+            "Hidden telemetry trace keeps collecting independently of planning trace");
+        scene.clearEndEffectorTrace();
+        require(scene.telemetryEndEffectorTracePointCount() == 2, "Planning trace reset preserves digital twin trace");
+        scene.clearTelemetryEndEffectorTrace();
+        scene.setRobotJointValue("gun", "tilt", 0.);
         scene.setRobotJointValue("gun", "slide", 0.0);
         scene.setSprayRangeVisible("gun", true);
         const auto visible = scene.sprayMeasurement("gun", "burnner");
@@ -200,6 +517,14 @@ namespace
         require(scene.endEffectorTracePointCount() == 1, "Trace still samples when spray ray misses target");
         scene.setProjectDocument(document, folder);
         require(scene.endEffectorTracePointCount() == 0, "Project reload clears trace");
+        require(scene.telemetryEndEffectorTracePointCount() == 0, "Project reload clears telemetry trace");
+        auto duplicate = gun;
+        duplicate.id = "another_gun";
+        document.robots.push_back(duplicate);
+        ProjectScene ambiguousScene;
+        ambiguousScene.setProjectDocument(document, folder);
+        require(ambiguousScene.initialize() && !ambiguousScene.setRobotJointValuesByDof({200., 30.}),
+            "Multiple robots with the same DOF do not cause an arbitrary telemetry assignment");
     }
 
     void verifyAWorkpiece(const std::filesystem::path& folder, const std::filesystem::path& projectPath)
@@ -542,13 +867,52 @@ namespace
         require(!plotButton->isEnabled() && !exportButton->isEnabled(), "Pending playback action states");
         widget.setSprayRecordingState(true, false, false);
         require(plotButton->isEnabled() && exportButton->isEnabled(), "Completed recording action states");
-        const double nan = std::numeric_limits<double>::quiet_NaN();
-        widget.showSprayMeasurementPlot({ 200, 250, nan, 300, 290 }, { -30, 0, nan, 30, 20 },
-            QStringLiteral("Spray regression"));
+        QVector<SprayMeasurementPlotSample> samples;
+        for(int i = 0; i < 5; ++i) {
+            SprayMeasurementPlotSample sample;
+            sample.pointIndex = 10 + i * 2;
+            sample.timeSeconds = i * .25;
+            sample.poseValid = true;
+            sample.valid = i != 2;
+            sample.distanceMm = 200 + i * 25;
+            sample.angleDegrees = (i - 2) * 15;
+            sample.tcpPosition = Eigen::Vector3d(i * .05, .01 * i * i, 0.);
+            sample.sprayDirection = Eigen::Vector3d::UnitZ();
+            sample.hitPosition = sample.tcpPosition + sample.sprayDirection * sample.distanceMm * .001;
+            sample.surfaceNormal = Eigen::AngleAxisd(sample.angleDegrees * 3.141592653589793 / 180.,
+                Eigen::Vector3d::UnitX()) * -Eigen::Vector3d::UnitZ();
+            sample.errorMessage = QStringLiteral("No forward intersection with fixture");
+            samples.push_back(sample);
+        }
+        widget.showSprayMeasurementPlot(samples, QStringLiteral("Spray regression - TCP Z+"));
         auto* dialog = widget.findChild<QDialog*>();
         require(dialog != nullptr, "Independent plot dialog exists");
         if(!dialog) { return; }
-        for(const auto& size : { QSize(760, 600), QSize(460, 470) }) {
+        auto* index = dialog->findChild<QSpinBox*>(QStringLiteral("sprayPlotSampleIndex"));
+        auto* info = dialog->findChild<QLabel*>(QStringLiteral("sprayPlotSelectedInfo"));
+        auto* distanceCurve = dialog->findChild<QWidget*>(QStringLiteral("sprayDistanceCurve"));
+        auto* angleCurve = dialog->findChild<QWidget*>(QStringLiteral("sprayAngleCurve"));
+        auto* geometry = dialog->findChild<QWidget*>(QStringLiteral("sprayPlotGeometryView"));
+        require(index && info && distanceCurve && angleCurve && geometry, "Interactive curves and geometry inspector exist");
+        if(!index || !info || !distanceCurve || !angleCurve || !geometry) { return; }
+        index->setValue(4);
+        require(info->text().contains("#17") && info->text().contains("275.000000") && info->text().contains("15.000000"),
+            "Selection maps sample to original trajectory identity and exact recorded metrics");
+        index->setValue(3);
+        require(info->text().contains("#15") && info->text().contains("No forward intersection"),
+            "Invalid sample remains selectable without fabricating distance or angle");
+        samples.clear();
+        index->setValue(5);
+        require(info->text().contains("#19"), "Dialog owns an immutable snapshot independent of caller lifetime");
+        application.processEvents();
+        const QPointF click(72, 75);
+        QMouseEvent press(QEvent::MouseButtonPress, click, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(distanceCurve, &press);
+        require(index->value() == 1 && info->text().contains("#11"), "Distance chart click synchronizes selection and inspector");
+        QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QApplication::sendEvent(angleCurve, &right);
+        require(index->value() == 2 && info->text().contains("#13"), "Angle chart keyboard navigation shares selection");
+        for(const auto& size : { QSize(1160, 760), QSize(820, 650) }) {
             dialog->resize(size);
             application.processEvents();
             const QImage image = dialog->grab().toImage();
@@ -556,11 +920,12 @@ namespace
             for(int y = 0; y < image.height(); ++y) {
                 for(int x = 0; x < image.width(); ++x) {
                     const QColor color = image.pixelColor(x, y);
-                    if(y < image.height() / 2 && color.green() > 100 && color.blue() > 100 && color.red() < 30) { ++distancePixels; }
-                    if(y > image.height() / 2 && color.red() > 150 && color.green() < 110 && color.blue() < 120) { ++anglePixels; }
+                    if(color.green() > 100 && color.blue() > 100 && color.red() < 30) { ++distancePixels; }
+                    if(color.red() > 150 && color.green() < 110 && color.blue() < 120) { ++anglePixels; }
                 }
             }
-            require(distancePixels > 20 && anglePixels > 20, "Both curve panels render nonblank at tested window size");
+            require(distancePixels > 20 && anglePixels > 20 && !geometry->grab().isNull(),
+                "Curves and geometry preview render at tested window sizes");
             image.save(QStringLiteral("spray_plot_%1x%2.png").arg(size.width()).arg(size.height()));
         }
         dialog->close();
@@ -647,10 +1012,17 @@ namespace
     public:
         using PresentationObservingServices::PresentationObservingServices;
         std::function<void(const std::vector<double>&)> jointObserver;
+        std::function<void(const std::vector<double>&)> presentationJointObserver;
+        std::vector<double> lastAppliedJoints;
+        quint64 requestFramePresentation() override {
+            if(presentationJointObserver)presentationJointObserver(lastAppliedJoints);
+            return PresentationObservingServices::requestFramePresentation();
+        }
         bool setRobotJointValues(const QString& robotId, const std::vector<std::string>& names,
             const std::vector<double>& values) override
         {
             const bool applied = RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValues(robotId, names, values);
+            if(applied)lastAppliedJoints=values;
             if(applied && jointObserver) jointObserver(values);
             return applied;
         }
@@ -1860,7 +2232,11 @@ namespace
         RobotQtViewerDocumentViewportAdapter documentViewport(viewport, projectState);
         require(documentViewport.loadProjectDocument(document, projectPath.parent_path()).success,
             "Real robot viewport loads before committing optimized trajectory");
+        viewport.setAttribute(Qt::WA_ShowWithoutActivating);
         viewport.show(); application.processEvents();
+        std::cout<<"Playback viewport initially exposed="<<(viewport.windowHandle() && viewport.windowHandle()->isExposed())<<'\n';
+        require(viewport.isVisible() && viewport.windowHandle() && viewport.windowHandle()->isExposed(),
+            "Actual playback viewport is exposed before frame-handshake checks");
         require(MotionPlanningProjectStore::upsertPlan(document, plan, &error), "Optimized playback plan stores");
         simulation_project::ProjectSession session;
         session.setDocument(document, projectPath, false, false);
@@ -1892,9 +2268,115 @@ namespace
         MotionPlanningModuleController controller(widget, context);
         widget.trajectorySelectionChanged(QString::fromStdString(plan.id));
         widget.resize(480, 700); widget.show();
+        auto* continuityPage=widget.findChild<QWidget*>(QStringLiteral("sprayContinuityPage"));
+        auto* continuityTabs=widget.findChild<QTabWidget*>();
+        require(continuityPage && continuityTabs,"Independent spray continuity page exists");
+        if(continuityPage && continuityTabs) {
+            for(int i=0;i<continuityTabs->count();++i)
+                if(continuityTabs->widget(i)->isAncestorOf(continuityPage))continuityTabs->setCurrentIndex(i);
+            require(continuityPage->findChild<QPushButton*>(QStringLiteral("sprayContinuityRun")) &&
+                continuityPage->findChild<QPushButton*>(QStringLiteral("sprayContinuityExportJoints")),"Continuity page owns compute and export controls");
+            auto* selector=continuityPage->findChild<QComboBox*>(QStringLiteral("sprayContinuityTrajectory"));
+            require(selector && selector->currentData().toString()==QString::fromStdString(plan.id),"Continuity page shares the selected document trajectory");
+            auto* constraint=continuityPage->findChild<QComboBox*>(QStringLiteral("sprayContinuityConstraint"));
+            auto* adjustment=continuityPage->findChild<QDoubleSpinBox*>(QStringLiteral("sprayContinuityAdjustment"));
+            require(constraint && constraint->count()==3 && constraint->currentIndex()==1,
+                "Surface pivot with original standoff is the explicit default");
+            if(constraint && adjustment) {
+                constraint->setCurrentIndex(0);
+                require(widget.sprayContinuitySettings().poseConstraint==0 && !adjustment->isEnabled(),
+                    "Fixed TCP mode disables translation budget without changing geometry in the widget");
+                constraint->setCurrentIndex(2);
+                require(widget.sprayContinuitySettings().poseConstraint==2 && adjustment->isEnabled(),
+                    "Legacy adjustable-standoff mode requires explicit selection");
+                constraint->setCurrentIndex(1);
+            }
+            const auto settings=widget.sprayContinuitySettings();
+            require(settings.poseConstraint==1 && settings.maxTiltDegrees==30 && settings.maxAdjustmentMm==30 &&
+                std::abs(settings.validationStepDegrees-.057296)<1e-6 && settings.maximumOutputPoints==30000. && !settings.enforceJointLimits,"Continuity page exposes expected tolerances");
+            application.processEvents();
+            const auto screenshot=qEnvironmentVariable("SPRAY_CONTINUITY_SCREENSHOT");
+            if(!screenshot.isEmpty())require(widget.grab().save(screenshot),"Continuity page screenshot saves");
+        }
         hub.subscribe(RobotQtViewerEventKind::ViewportPreviewChanged, &controller,
             [&](const auto& event) { controller.handleEvent(event); });
+        if(qEnvironmentVariableIntValue("SPRAY_CONTINUITY_RUN_UI")==1) {
+            const auto sourceId=plan.id;const auto sourcePoints=plan.trajectory.points;
+            QTimer configure;configure.setInterval(50);
+            QObject::connect(&configure,&QTimer::timeout,&widget,[&] {
+                for(auto* top:application.topLevelWidgets())if(top->objectName()==QStringLiteral("motionPlanningCollisionDialog")) {
+                    auto* detectors=top->findChild<QListWidget*>(QStringLiteral("planningCollisionDetectors"));
+                    if(detectors)for(int i=0;i<detectors->count();++i)if(detectors->item(i)->flags() & Qt::ItemIsEnabled)
+                        detectors->item(i)->setSelected(true);
+                    auto* target=top->findChild<QComboBox*>(QStringLiteral("planningCollisionTarget"));
+                    if(target)for(int i=1;i<target->count();++i)if(target->itemText(i).startsWith(QStringLiteral("C [")))target->setCurrentIndex(i);
+                    auto* enable=top->findChild<QCheckBox*>(QStringLiteral("enablePlanningCollisionQueries"));
+                    if(enable)enable->setChecked(true);
+                    auto* buttons=top->findChild<QDialogButtonBox*>();
+                    if(buttons)buttons->button(QDialogButtonBox::Ok)->click();
+                }
+            });
+            configure.start();widget.sprayContinuityRequested();configure.stop();
+            const auto generated=MotionPlanningProjectStore::plans(context.document());
+            bool preserved=false,computed=false;
+            for(const auto& value:generated) {
+                if(value.id==sourceId) {
+                    preserved=value.trajectory.points.size()==sourcePoints.size();
+                    for(std::size_t i=0;preserved && i<sourcePoints.size();++i)preserved &= value.trajectory.points[i].q==sourcePoints[i].q;
+                }
+                const auto metadata=nlohmann::json::parse(value.optimizationMetadata,nullptr,false);
+                if(value.id!=sourceId && metadata.is_object() && metadata.contains("spray_axis_continuity") &&
+                    metadata["spray_axis_continuity"].value("success",false)) {plan=value;computed=true;}
+            }
+            require(preserved,"GUI compute preserves source trajectory in the document");
+            require(computed,"GUI compute commits a new continuously certified trajectory");
+            if(!computed)return;
+            widget.trajectorySelectionChanged(QString::fromStdString(plan.id));
+        }
         widget.findChild<QCheckBox*>(QStringLiteral("endEffectorTraceVisible"))->setChecked(true);
+        const auto executionMetadata=nlohmann::json::parse(plan.optimizationMetadata,nullptr,false);
+        const bool jointLinear=executionMetadata.is_object() && executionMetadata.value("motion",std::string())=="joint_linear";
+        std::size_t observedSegment=0;bool followsJointChords=true;int linearInteriorPoses=0;
+        if(jointLinear && plan.trajectory.points.size()>1)services.presentationJointObserver=[&](const std::vector<double>& values) {
+            bool onChord=false;
+            for(;observedSegment+1<plan.trajectory.points.size();++observedSegment) {
+                auto a=plan.trajectory.points[observedSegment].q,b=plan.trajectory.points[observedSegment+1].q;
+                if(abb){a=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(a);b=ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(b);}
+                double denominator=0,numerator=0;
+                for(std::size_t j=0;j<a.size();++j){denominator+=(b[j]-a[j])*(b[j]-a[j]);numerator+=(values[j]-a[j])*(b[j]-a[j]);}
+                const double u=denominator>1e-24?numerator/denominator:0.;double error=0;
+                for(std::size_t j=0;j<a.size();++j)error=std::max(error,std::abs(values[j]-a[j]-u*(b[j]-a[j])));
+                if(u>=-1e-9 && u<=1+1e-9 && error<1e-9){onChord=true;if(u>1e-5 && u<1-1e-5)++linearInteriorPoses;break;}
+            }
+            if(!onChord && followsJointChords)std::cout<<"First display outside joint chord, search index="<<observedSegment<<'\n';
+            followsJointChords &= onChord;
+        };
+        const bool cartesianLinear=CartesianMotionSampler::isMoveL(plan);
+        bool followsMoveL=true;int moveLInteriorPoses=0;double maximumMoveLPosition=0,maximumMoveLAngle=0;
+        const auto playbackFk=viewport.robotForwardKinematics(QString::fromStdString(robot.id),plan.jointNames,true);
+        std::vector<Eigen::Isometry3d> moveLPoses;
+        if(cartesianLinear && playbackFk) {
+            for(const auto& point:plan.trajectory.points)moveLPoses.push_back(playbackFk(abb?ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(point.q):point.q));
+            services.presentationJointObserver=[&](const std::vector<double>& values) {
+                const auto pose=playbackFk(values);bool onMoveL=false;
+                for(;observedSegment+1<moveLPoses.size();++observedSegment) {
+                    const auto& a=moveLPoses[observedSegment];const auto& b=moveLPoses[observedSegment+1];
+                    const Eigen::Vector3d dp=b.translation()-a.translation();
+                    const Eigen::Quaterniond qa(a.linear()),qb(b.linear()),actual(pose.linear());
+                    const double angle=qa.angularDistance(qb);
+                    const double u=dp.squaredNorm()>1e-20?dp.dot(pose.translation()-a.translation())/dp.squaredNorm():
+                        (angle>1e-10?qa.angularDistance(actual)/angle:0.);
+                    if(u< -1e-8 || u>1+1e-8)continue;
+                    const double position=(pose.translation()-a.translation()-u*dp).norm();
+                    const double orientation=qa.slerp(std::clamp(u,0.,1.),qb).angularDistance(actual);
+                    if(position<2e-7 && orientation<2e-6) {
+                        maximumMoveLPosition=std::max(maximumMoveLPosition,position);maximumMoveLAngle=std::max(maximumMoveLAngle,orientation);
+                        if(u>1e-5 && u<1-1e-5)++moveLInteriorPoses;onMoveL=true;break;
+                    }
+                }
+                followsMoveL &= onMoveL;
+            };
+        }
         const bool queriesBefore = collisionViewport.collisionQueriesEnabled();
         int reloads = 0, clears = 0;
         QObject::connect(&viewport, &RobotViewport::robotLinksAvailable, &widget,
@@ -1953,11 +2435,21 @@ namespace
             << " maxHeartbeatGapMs=" << maxBeatGap << " reloads=" << reloads << " clears=" << clears
             << " summary=" << summary.toStdString() << '\n';
         require(services.samples == static_cast<int>(plan.trajectory.points.size()), "Every optimized trajectory point is played");
+        if(jointLinear) {
+            require(followsJointChords,"Every presented pose lies on the certified joint chords");
+            if(plan.trajectory.points.size()<1000)require(linearInteriorPoses>0,"Joint-linear playback presents interpolated poses");
+            std::cout<<"Presented joint-linear interior poses="<<linearInteriorPoses<<'\n';
+        }
+        if(cartesianLinear) {
+            require(bool(playbackFk) && followsMoveL,"Every displayed pose follows the actual TCP MoveL line and orientation slerp");
+            if(plan.trajectory.points.size()<1000)require(moveLInteriorPoses>0,"MoveL playback presents non-node Cartesian poses");
+            std::cout<<"MoveL displayed interior poses="<<moveLInteriorPoses<<" positionErrorM="<<maximumMoveLPosition<<" angleErrorRad="<<maximumMoveLAngle<<'\n';
+        }
         const auto collisionCounts = QRegularExpression(QStringLiteral("Collision states: (\\d+) / (\\d+)")).match(summary);
         require(collisionCounts.hasMatch() && collisionCounts.captured(2).toInt() >= services.samples,
-            "Every optimized point and generated MoveL interior retains independent collision validation");
+            "Every optimized point and execution interior retains independent collision validation");
           require(collisionCounts.hasMatch() && collisionCounts.captured(1).toInt()==0,
-              "Actual optimized MoveL playback has zero robot/tool collision samples");
+              "Actual optimized playback has zero robot/tool collision samples");
         require(reloads == 0 && clears == 20, "Real optimized playback survives twenty mode preview clears");
         require(collisionViewport.collisionQueriesEnabled() == queriesBefore, "Playback preserves user viewport query settings");
           const auto expected = abb?ProjectTrajectoryInverseKinematics::irb4600RobotSystemJointValues(plan.trajectory.points.back().q):plan.trajectory.points.back().q;
@@ -2742,19 +3234,119 @@ namespace
         SaveDialogAcceptor acceptor;
         acceptor.path = QString::fromStdWString((folder / "spray-export.txt").wstring());
         application.installEventFilter(&acceptor);
-        widget.playbackRequested(0.03);
+        const auto waitUntil = [](const std::function<bool()>& ready) {
+            QElapsedTimer deadline; deadline.start();
+            while(!ready() && deadline.elapsed() < 5000) {
+                QEventLoop tick;
+                QTimer::singleShot(10, &tick, &QEventLoop::quit);
+                tick.exec();
+            }
+            return ready();
+        };
+        widget.playbackRequested(0.3);
         widget.exportSprayMeasurementsRequested();
         QEventLoop playbackLoop;
-        QTimer::singleShot(500, &playbackLoop, &QEventLoop::quit);
-        playbackLoop.exec();
-        application.removeEventFilter(&acceptor);
         auto* plot = widget.findChild<QPushButton*>(QStringLiteral("plotSprayMeasurements"));
+        require(waitUntil([&]() { return plot && plot->isEnabled() && std::filesystem::exists(folder / "spray-export.txt"); }),
+            "Playback endpoint is presented and pending export commits within bounded wait");
+        application.removeEventFilter(&acceptor);
         require(plot && plot->isEnabled(), "Controller records all playback samples and enables plot");
+        widget.plotSprayMeasurementsRequested();
+        auto* recordedPlot = widget.findChild<QDialog*>(QStringLiteral("sprayMeasurementPlotDialog"));
+        auto* recordedIndex = recordedPlot ? recordedPlot->findChild<QSpinBox*>(QStringLiteral("sprayPlotSampleIndex")) : nullptr;
+        auto* recordedInfo = recordedPlot ? recordedPlot->findChild<QLabel*>(QStringLiteral("sprayPlotSelectedInfo")) : nullptr;
+        require(recordedIndex && recordedInfo && recordedIndex->maximum() == 3,
+            "Real playback supplies each original control point to interactive plot");
+        if(recordedIndex && recordedInfo) {
+            recordedIndex->setValue(2);
+            require(recordedInfo->text().contains("#2") && recordedInfo->text().contains("3000.000") && recordedInfo->text().contains("-30.000000"),
+                "Recorded selection shows that point's TCP, rather than current endpoint pose");
+        }
+        auto* inspector = recordedPlot ? recordedPlot->findChild<RobotViewport*>(QStringLiteral("sprayPlotGeometryView")) : nullptr;
+        require(inspector != nullptr, "Spray plot embeds an actual independent RobotViewport");
+        if(inspector && recordedIndex) {
+            require(waitUntil([&]() { return inspector->environmentSceneInitialized(); }),
+                "Inspector creates its real robot/workpiece scene");
+            recordedIndex->setValue(1);
+            const auto firstTicket=inspector->requestFramePresentation();
+            require(waitUntil([&]() { return inspector->isFramePresented(firstTicket); }), "Selected inspection point is presented");
+            bool mainOk=false, previewOk=false;
+            const double mainSlide=viewport.robotJointValue(QStringLiteral("gun"),QStringLiteral("slide"),&mainOk);
+            const double firstSlide=inspector->robotJointValue(QStringLiteral("gun"),QStringLiteral("slide"),&previewOk);
+            require(mainOk && previewOk && std::abs(mainSlide-6.)<1e-9 && std::abs(firstSlide)<1e-9,
+                "Historical inspection joints do not change main scene endpoint");
+            recordedIndex->setValue(2);
+            const auto secondTicket=inspector->requestFramePresentation();
+            require(waitUntil([&]() { return inspector->isFramePresented(secondTicket); }), "Next historical point is presented");
+            require(std::abs(inspector->robotJointValue(QStringLiteral("gun"),QStringLiteral("slide"),&previewOk)-3.)<1e-9 &&
+                std::abs(viewport.robotJointValue(QStringLiteral("gun"),QStringLiteral("slide"),&mainOk)-6.)<1e-9,
+                "Plot selection updates only the independent robot pose");
+            require(!inspector->collisionQueriesEnabled(), "Inspection rendering does not run collision queries");
+            const auto beforeOrbit=inspector->grabFramebuffer();
+            const QPointF center(inspector->width()*.5,inspector->height()*.5);
+            QMouseEvent orbitPress(QEvent::MouseButtonPress,center,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+            QMouseEvent orbitMove(QEvent::MouseMove,center+QPointF(60,30),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+            QMouseEvent orbitRelease(QEvent::MouseButtonRelease,center+QPointF(60,30),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+            QApplication::sendEvent(inspector,&orbitPress); QApplication::sendEvent(inspector,&orbitMove); QApplication::sendEvent(inspector,&orbitRelease);
+            const auto orbitTicket=inspector->requestFramePresentation();
+            require(waitUntil([&]() { return inspector->isFramePresented(orbitTicket); }), "Inspector camera rotation renders");
+            const auto afterOrbit=inspector->grabFramebuffer();
+            require(!beforeOrbit.isNull() && beforeOrbit!=afterOrbit,"Focused real scene supports camera orbit");
+            afterOrbit.save(QStringLiteral("spray_real_scene_orbit.png"));
+            inspector->focusSprayInspection();
+            const auto focusTicket=inspector->requestFramePresentation();
+            require(waitUntil([&]() { return inspector->isFramePresented(focusTicket); }), "Reset focuses current point");
+            recordedPlot->grab().save(QStringLiteral("spray_real_scene_dialog.png"));
+        }
+        auto* sprayTabs = recordedPlot ? recordedPlot->findChild<QTabWidget*>(QStringLiteral("sprayPlotTabs")) : nullptr;
+        require(sprayTabs && sprayTabs->count() == 2, "Discrete and continuous recording have separate pages");
+        if(sprayTabs && recordedIndex && inspector && recordedInfo) {
+            sprayTabs->setCurrentIndex(1);
+            require(recordedIndex->maximum() >= 3, "Continuous page retains actual playback frames");
+            bool foundIntermediate = false;
+            for(int i = 1; i <= recordedIndex->maximum(); ++i) {
+                recordedIndex->setValue(i);
+                const auto selectedTicket = inspector->requestFramePresentation();
+                require(waitUntil([&]() { return inspector->isFramePresented(selectedTicket); }), "Continuous selected pose is presented before inspection");
+                bool ok = false;
+                const double q = inspector->robotJointValue(QStringLiteral("gun"), QStringLiteral("slide"), &ok);
+                if(ok && q > .001 && q < 5.999 && std::abs(q - 3.) > .001) {
+                    foundIntermediate = true;
+                    const auto actual = inspector->sprayMeasurement(QStringLiteral("gun"), QStringLiteral("A"));
+                    require(actual.poseValid && recordedInfo->text().contains(QString::number(q * 1000., 'f', 3)),
+                        "Continuous selected point restores actual intermediate TCP, not endpoint interpolation of results");
+                    require(actual.valid && recordedInfo->text().contains(QString::number(actual.distanceMeters * 1000., 'f', 6)) &&
+                        recordedInfo->text().contains(QString::number(actual.angleDegrees, 'f', 6)),
+                        "Continuous distance and angle match independent measurement at the restored pose");
+                    require(recordedInfo->text().contains("->") && recordedInfo->text().contains("%"),
+                        "Continuous inspection identifies source trajectory interval and fraction");
+                    break;
+                }
+            }
+            require(foundIntermediate, "Continuous recording contains poses beyond source control points");
+            const auto ticket = inspector->requestFramePresentation();
+            require(waitUntil([&]() { return inspector->isFramePresented(ticket); }), "Continuous historical scene is presented");
+            recordedPlot->grab().save(QStringLiteral("spray_continuous_scene_dialog.png"));
+            sprayTabs->setCurrentIndex(0);
+            require(recordedIndex->maximum() == 3 && recordedIndex->value() == 2, "Tab switch preserves independent discrete selection");
+        }
+        auto* direction = widget.findChild<QComboBox*>(QStringLiteral("sprayDirection"));
+        require(direction && direction->currentIndex() == 0, "Direction defaults to backward-compatible TCP Z+");
+        if(direction) {
+            direction->setCurrentIndex(1);
+            require(!plot->isEnabled() && viewport.sprayMeasurement("gun").poseValid &&
+                viewport.sprayMeasurement("gun").sprayDirection.z() > .999,
+                "Changing to Z- propagates to actual viewport and invalidates previous recording");
+            if(recordedInfo) { require(recordedInfo->text().contains("#2"), "Open plot retains its labelled historical snapshot after direction change"); }
+            direction->setCurrentIndex(0);
+        }
+        if(recordedPlot) { recordedPlot->close(); }
         std::ifstream exported(folder / "spray-export.txt");
         std::string line;
         int dataRows = 0, validRows = 0, invalidRows = 0;
-        bool hasNegativeThirty = false;
+        bool hasNegativeThirty = false, hasDirectionMetadata = false;
         while(std::getline(exported, line)) {
+            hasDirectionMetadata |= line.find("# spray_direction_tcp=Z+") == 0;
             if(line.empty() || line[0] == '#') { continue; }
             if(line.rfind("index", 0) == 0) { continue; }
             ++dataRows;
@@ -2764,7 +3356,7 @@ namespace
         }
         require(dataRows == 3 && validRows == 2 && invalidRows == 1,
             "TXT contains one row per joint group with validity status");
-        require(hasNegativeThirty, "TXT records signed -30 degree sample");
+        require(hasNegativeThirty && hasDirectionMetadata, "TXT records signed -30 degree sample and TCP direction metadata");
         require(services.samples == 3 && services.resets > resetsBeforePlayback,
             "Playback resets trace and samples every joint group including invalid spray hits");
         application.processEvents();
@@ -2778,6 +3370,16 @@ namespace
         }
         require(tracePixels > 10, "Actual viewport renders the completed magenta TCP trace");
         traceImage.save(QStringLiteral("end_effector_trace.png"));
+        if(direction) {
+            services.samples = 0;
+            widget.playbackRequested(10.0);
+            direction->setCurrentIndex(1);
+            QTimer::singleShot(60, &playbackLoop, &QEventLoop::quit);
+            playbackLoop.exec();
+            require(services.samples == 1 && !plot->isEnabled(),
+                "Direction change during playback stops sampling and discards mixed-direction results");
+            direction->setCurrentIndex(0);
+        }
         trace->setChecked(false);
         require(!services.enabled, "Unchecking disables viewport trace");
         trace->setChecked(true);
@@ -2829,14 +3431,12 @@ namespace
         services.lastTicket = 0;
         services.holdAtSamples = 3;
         widget.playbackRequested(0.03);
-        QTimer::singleShot(250, &playbackLoop, &QEventLoop::quit);
-        playbackLoop.exec();
+        require(waitUntil([&]() { return services.samples >= 3; }), "Endpoint source sample arrives within bounded wait");
         const auto finalTicket = services.lastTicket;
         require(services.samples == 3 && plot && !plot->isEnabled(),
             "Processing final source point does not complete playback before final frame acknowledgment");
         services.holdAtSamples = 0;
-        QTimer::singleShot(80, &playbackLoop, &QEventLoop::quit);
-        playbackLoop.exec();
+        require(waitUntil([&]() { return plot && plot->isEnabled(); }), "Endpoint presentation finishes within bounded wait");
         require(plot && plot->isEnabled() && services.lastTicket == finalTicket &&
             viewport.isFramePresented(finalTicket) && services.unpresentedOverwrites == 0,
             "Endpoint presentation completes playback without duplicate source samples or overwritten frames");
@@ -2942,6 +3542,37 @@ int main(int argc, char** argv)
     if(argc >= 2 && (std::string(argv[1]) == "--cdf-progress" || std::string(argv[1]) == "--cdf-analysis" || std::string(argv[1]) == "--cdf-reference" || std::string(argv[1]) == "--cdf-shape" || std::string(argv[1]) == "--cdf-alternative"))
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication application(argc, argv);
+    if(argc >= 3 && std::string(argv[1]) == "--telemetry-live") {
+        using namespace robot_qt_viewer;
+        RobotQtViewerTelemetryAdapter port;
+        DigitalTwinTelemetryPanel panel(nullptr);
+        DigitalTwinTelemetryController controller(panel, port);
+        panel.resize(500, 820); panel.show();
+        auto* path = panel.findChild<QLineEdit*>(QStringLiteral("telemetryCsvPath"));
+        path->setText(QString::fromLocal8Bit(argv[2])); path->setModified(true);
+        panel.findChild<QPushButton*>(QStringLiteral("telemetryStart"))->click();
+        QElapsedTimer deadline; deadline.start();
+        while(port.snapshot().sequence < 150 && !port.snapshot().fault && deadline.elapsed() < 15000) {
+            QEventLoop tick; QTimer::singleShot(10, &tick, &QEventLoop::quit); tick.exec();
+        }
+        const auto state = port.snapshot();
+        panel.render(state);
+        auto* tcp = panel.findChild<QTableWidget*>(QStringLiteral("telemetryTcpPose"));
+        auto* tcpInfo = panel.findChild<QLabel*>(QStringLiteral("telemetryTcpInfo"));
+        panel.findChild<QTabWidget*>(QStringLiteral("telemetryDataTabs"))->setCurrentIndex(1);
+        require(state.tcpPoseValid && state.tcpUserFrame == 0 && state.tcpUserTool >= 0 && tcp->rowCount() == 6 &&
+            tcpInfo->text().contains(QStringLiteral("UF0")), "Real TCP page receives WORLD XYZ/WPR and active tool metadata");
+        panel.grab().save(QStringLiteral("digital_twin_telemetry_live.png"));
+        panel.findChild<QPushButton*>(QStringLiteral("telemetryStop"))->click();
+        require(state.sequence >= 150 && state.streaming && !state.source.isEmpty() && !state.joints.empty(),
+            "Real panel start auto-discovers ROBOGUIDE and records 150 timestamped frames");
+        std::cout << "source=" << state.source.toUtf8().constData() << " samples=" << state.sequence
+            << " elapsed_ns=" << state.elapsedNs << " error=" << state.diagnostic.toUtf8().constData() << '\n';
+        std::cout << "TCP UF=" << state.tcpUserFrame << " UT=" << state.tcpUserTool << " XYZ/WPR=";
+        for(double v : state.tcpXyzwpr) std::cout << v << ',';
+        std::cout << '\n';
+        return failures ? 1 : 0;
+    }
     QTimer collisionConditions;
     QObject::connect(&collisionConditions, &QTimer::timeout, &application, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -2951,7 +3582,13 @@ int main(int argc, char** argv)
         int index = target->findData(QStringLiteral("A"));
         if(index < 0 && target->count() > 1) index = 1;
         target->setCurrentIndex(index);
-        if(list->count()) { list->clearSelection(); list->item(0)->setSelected(true); }
+        if(list->count()) {
+            list->clearSelection();
+            // A partial first detector need not cover mounted tools. Keep all
+            // configured enabled conditions in this playback regression.
+            for(int i=0;i<list->count();++i)if(list->item(i)->flags() & Qt::ItemIsEnabled)
+                list->item(i)->setSelected(true);
+        }
         else dialog->findChild<QCheckBox*>(QStringLiteral("createPlanningCollisionDetector"))->setChecked(true);
         dialog->findChild<QCheckBox*>(QStringLiteral("enablePlanningCollisionQueries"))->setChecked(true);
         dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
@@ -2978,6 +3615,12 @@ int main(int argc, char** argv)
     if(failures) { return 1; }
     const std::filesystem::path folder(temporary.path().toStdWString());
     writeFixture(folder);
+    if(argc >= 2 && std::string(argv[1]) == "--spray-direct-geometry") {
+        try { verifyGeometry(folder); }
+        catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
+        std::cout << "Direct geometry failures: " << failures << '\n';
+        return failures ? 1 : 0;
+    }
     if(argc >= 4 && std::string(argv[1]) == "--collision-project") {
         const auto arguments=application.arguments();
         try { inspectProjectCollision(application,std::filesystem::path(arguments[2].toStdWString()),arguments[3].toStdString()); }
@@ -3051,6 +3694,7 @@ int main(int argc, char** argv)
         return failures ? 1 : 0;
     }
     verifyCdfAnalysisControls();
+    verifyTelemetryPanel(application);
     verifyPlaybackTimeline();
     verifyModelIk();
     verifyMultiIkDomain();
@@ -3075,7 +3719,7 @@ int main(int argc, char** argv)
         catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
         return failures ? 1 : 0;
     }
-    try { verifyGeometry(folder); }
+    try { verifyFanucTelemetryMapping(folder); verifyGeometry(folder); }
     catch(const std::exception& error) { std::cerr << error.what() << '\n'; ++failures; }
     verifyPlot(application);
     try { verifyPlaybackExport(application, folder); }

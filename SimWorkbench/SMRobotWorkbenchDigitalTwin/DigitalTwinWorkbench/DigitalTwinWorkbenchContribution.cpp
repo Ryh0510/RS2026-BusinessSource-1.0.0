@@ -1,24 +1,29 @@
 #include "DigitalTwinWorkbenchContribution.h"
+#include "DigitalTwinTelemetryPanel.h"
+#include "DigitalTwinTelemetryController.h"
 
 namespace robot_qt_viewer
 {
     RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
-    makeDigitalTwinWorkbenchRuntimeContributionFactory(QWidget& statusPanel)
+    makeDigitalTwinWorkbenchRuntimeContributionFactory(
+        IRobotQtViewerTelemetryPort& telemetry, IRobotQtViewerMotionPlanningViewportPort& viewport)
     {
         const QString workbenchId = robotQtViewerWorkbenchId(
             RobotQtViewerWorkbenchKind::DigitalTwin);
         return {
             workbenchId,
-            [workbenchId, &statusPanel](QWidget*) {
+            [workbenchId, &telemetry, &viewport](QWidget* parent) {
+                auto* panel = new DigitalTwinTelemetryPanel(parent);
+                new DigitalTwinTelemetryController(*panel, telemetry, &viewport);
                 return std::make_unique<RobotQtViewerBasicWorkbenchRuntimeContribution>(
                     workbenchId,
-                    [&statusPanel]() { return &statusPanel; },
+                    [panel]() { return panel; },
                     std::make_unique<RobotQtViewerNoOpWorkbenchLifecycle>(),
                     RobotQtViewerWorkbenchLifecyclePolicy{
-                        RobotQtViewerWorkbenchExecutionPolicy::NoOwnedExecution,
+                        RobotQtViewerWorkbenchExecutionPolicy::MayContinueHeadless,
                         RobotQtViewerWorkbenchReactivationPolicy::ManualResume },
                     std::make_unique<RobotQtViewerNoOpLanguageParticipant>(),
-                    true);
+                    false, RobotQtViewerBasicWorkbenchRuntimeContribution::PanelTitleResolver{}, [&telemetry]() { telemetry.stop(); });
             }
         };
     }

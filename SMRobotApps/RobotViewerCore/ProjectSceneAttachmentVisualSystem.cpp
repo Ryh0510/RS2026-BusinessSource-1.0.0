@@ -1,6 +1,7 @@
 #include "ProjectSceneAttachmentVisualSystem.h"
 
 #include <algorithm>
+#include <Utility/MathConvert.hpp>
 
 void ProjectSceneAttachmentVisualSystem::useMountedGraph(
     const simulation_runtime::RuntimeMountedAttachmentGraph& graph)
@@ -138,6 +139,29 @@ void ProjectSceneAttachmentVisualSystem::applyVisibility(bool sceneFocusActive)
             attachment.visual,
             attachment.visible && !sceneFocusActive);
     }
+}
+
+bool ProjectSceneAttachmentVisualSystem::applyToolTcpPreview(
+    const std::string& robotId, const collision::Transform3& worldTcp)
+{
+    if(!worldTcp.matrix().allFinite() ||
+        !(worldTcp.linear().transpose() * worldTcp.linear()).isApprox(Eigen::Matrix3d::Identity(), 1.e-6) ||
+        std::abs(worldTcp.linear().determinant() - 1.) > 1.e-6) return false;
+    const auto matches = [&](const auto& attachment) {
+        return attachment.robotId == robotId && attachment.enabled && attachment.assetKind == "tool";
+    };
+    auto selected = m_activeIndex < m_visuals.size() && matches(m_visuals[m_activeIndex])
+        ? m_visuals.begin() + m_activeIndex : std::find_if(m_visuals.begin(), m_visuals.end(), matches);
+    if(selected == m_visuals.end() || !selected->visual.rootNode) return false;
+    // Preserve both the calibrated TCP-to-tool offset and roll about TCP Z.
+    // This changes only the inspection visual, not document/runtime joints or collision geometry.
+    const collision::Transform3 delta = worldTcp * selected->worldTcp.inverse();
+    selected->worldToolMount = delta * selected->worldToolMount;
+    selected->worldVisual = delta * selected->worldVisual;
+    selected->worldTcp = worldTcp;
+    robot_render::MountedAttachmentVisualBridge::syncTransform(selected->visual, math::eigenToGlm(selected->worldToolMount));
+    robot_render::MountedAttachmentVisualBridge::setVisible(selected->visual, true);
+    return true;
 }
 
 void ProjectSceneAttachmentVisualSystem::setPreview(

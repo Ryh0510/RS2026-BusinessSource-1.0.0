@@ -72,6 +72,7 @@ namespace robot_qt_viewer
     class RobotQtViewerCollisionViewportAdapter;
     class RobotQtViewerDocumentViewportAdapter;
     class RobotQtViewerMotionPlanningViewportAdapter;
+    class RobotQtViewerTelemetryAdapter;
     class RobotQtViewerRobotRunServiceAdapter;
     class RobotQtViewerSelectionViewportAdapter;
     class RobotQtViewerVisualizationViewportAdapter;
@@ -219,6 +220,7 @@ private:
     std::unique_ptr<robot_qt_viewer::RobotQtViewerViewportProjectState> m_viewportProjectState;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerDocumentViewportAdapter> m_documentViewport;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter> m_motionPlanningViewport;
+    std::unique_ptr<robot_qt_viewer::RobotQtViewerTelemetryAdapter> m_telemetry;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerSelectionViewportAdapter> m_selectionViewport;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerAssemblyViewportAdapter> m_assemblyViewport;
     std::unique_ptr<robot_qt_viewer::RobotQtViewerCollisionViewportAdapter> m_collisionViewport;

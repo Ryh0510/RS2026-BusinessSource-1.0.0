@@ -218,6 +218,26 @@ void ProjectSceneCameraSystem::animateTo(const LookAtState& state, double durati
     m_animationActive = true;
 }
 
+void ProjectSceneCameraSystem::focusLocalBounds(const Bounds& bounds, const Eigen::Vector3d& viewDirection)
+{
+    if(!bounds.valid || !viewDirection.allFinite() || viewDirection.norm()<1e-9) return;
+    const double radius=std::max(.005,(bounds.max-bounds.min).norm()*.5);
+    double distance=radius/std::sin(45.*kPi/360.)*1.15;
+    if(m_mainCameraNode && m_mainCameraNode->camera()) {
+        const Eigen::Matrix4f projection=m_mainCameraNode->camera()->projection();
+        const double focal=std::max(std::abs(projection(0,0)),std::abs(projection(1,1)));
+        const double nearPlane=std::abs(projection(2,3)/(projection(2,2)-1.));
+        if(std::isfinite(focal)) distance=std::max(distance,radius*std::sqrt(1.+focal*focal)*1.15);
+        if(std::isfinite(nearPlane)) distance=std::max(distance,nearPlane+radius*1.2);
+    }
+    LookAtState state;
+    state.target=bounds.center().cast<float>();
+    const Eigen::Vector3f direction=viewDirection.normalized().cast<float>();
+    state.position=state.target+direction*static_cast<float>(distance);
+    state.up=std::abs(direction.z())<.95f ? Eigen::Vector3f::UnitZ() : Eigen::Vector3f::UnitY();
+    state.valid=true; m_animationActive=false; applyLookAt(state);
+}
+
 void ProjectSceneCameraSystem::setView(
     ProjectSceneCameraView view,
     const Bounds& bounds,

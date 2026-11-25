@@ -16,6 +16,7 @@ target_include_directories(${EXAMPLE_TARGET_NAME} PRIVATE "${ROBOT_QT_VIEWER_SOU
 target_link_libraries(${EXAMPLE_TARGET_NAME} PRIVATE
     SMRobotApps::RobotViewerCore
     MotionPlanningEditor
+    DigitalTwinWorkbench
     SMRobotMotionPlanning::ProjectMotionPlanning
     ${RobotQtViewer_REQUIRED_TARGETS})
 target_compile_features(${EXAMPLE_TARGET_NAME} PRIVATE cxx_std_17)
@@ -70,4 +71,18 @@ if(BuildTests)
     set_tests_properties(RobotQtViewerAWorkpieceSmoke PROPERTIES
         LABELS "RobotQtViewer;Regression;Spray;ScenePersistence"
         TIMEOUT 180 WORKING_DIRECTORY $<TARGET_FILE_DIR:${EXAMPLE_TARGET_NAME}>)
+endif()
+
+add_executable(RobotTelemetryTest
+    TelemetryTest.cpp
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/../RobotViewerCore/Telemetry/ExternalRobotTelemetry.cpp"
+    "${ROBOT_QT_VIEWER_SOURCE_DIR}/../RobotViewerCore/Telemetry/RoboguideComBackend.cpp")
+target_include_directories(RobotTelemetryTest PRIVATE "${ROBOT_QT_VIEWER_SOURCE_DIR}/../RobotViewerCore")
+target_compile_features(RobotTelemetryTest PRIVATE cxx_std_17)
+if(WIN32)
+    target_link_libraries(RobotTelemetryTest PRIVATE ole32 oleaut32)
+endif()
+if(BuildTests)
+    add_test(NAME RobotTelemetrySession COMMAND RobotTelemetryTest)
+    set_tests_properties(RobotTelemetrySession PROPERTIES TIMEOUT 30 LABELS "RobotQtViewer;Regression;Telemetry")
 endif()

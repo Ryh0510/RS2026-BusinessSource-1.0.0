@@ -110,6 +110,7 @@ public:
         double value);
     bool setRobotJointValues(const QString& robotId,
         const std::vector<std::string>& jointNames, const std::vector<double>& values);
+    bool setRobotJointValuesByDof(const std::vector<double>& values, QString* matchedRobotId = nullptr);
     // GUI presentation fence; does not change robot/runtime state.
     quint64 requestFramePresentation();
     bool isFramePresented(quint64 ticket) const;
@@ -238,10 +239,18 @@ public:
     void setToolFrameVisibility(const ProjectScene::ToolFrameVisibility& visibility);
     ProjectScene::RobotForwardKinematics robotForwardKinematics(const QString& robotId,
         const std::vector<std::string>& jointNames, bool includeTool) const;
+    void setSprayInspectionSample(const QString& robotId, const std::vector<std::string>& names,
+        const std::vector<double>& joints, const ProjectScene::SprayMeasurement& measurement);
+    void focusSprayInspection();
+    void setSprayDirectionNegativeZ(bool negativeZ);
     void setSprayRangeVisible(const QString& robotId, bool visible);
     void setEndEffectorTraceVisible(const QString& robotId, bool visible);
     void clearEndEffectorTrace();
     void appendEndEffectorTraceSample();
+    void setTelemetryEndEffectorTraceVisible(bool visible);
+    void clearTelemetryEndEffectorTrace();
+    void appendTelemetryEndEffectorTraceSample(const QString& robotId);
+    ProjectScene::SprayMeasurement sprayMeasurementAtPose(const Eigen::Isometry3d& tcp, const QString& targetId, bool negativeZ) const;
     ProjectScene::SprayMeasurement sprayMeasurement(const QString& robotId) const;
     ProjectScene::SprayMeasurement sprayMeasurement(const QString& robotId, const QString& targetId) const;
     std::vector<ProjectScene::RobotLinkMaterialInfo> robotLinkMaterials(
@@ -295,6 +304,13 @@ public:
     void setTrajectoryControlPointOverlay(
         const QString& trajectoryId,
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints = true, bool showOrientations = false);
+    void setTrajectoryControlPointLineVisible(bool visible);
+    void setTrajectoryDerivedPointOverlays(
+        const QString& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+        bool surfaceLineVisible,
+        const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+        bool offsetLineVisible);
     void setTrajectoryHighlightRange(int first, int last);
     void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString());
     smrobot::visualization::CustomMeshResult upsertCustomMesh(
@@ -393,6 +409,12 @@ private:
     Clock::time_point m_sdkPreviewExpiry;
     Clock::time_point m_manualJointControlExpiry;
     std::string m_manualJointControlRobot;
+    QString m_inspectionRobot;
+    std::vector<std::string> m_inspectionNames;
+    std::vector<double> m_inspectionJoints;
+    ProjectScene::SprayMeasurement m_inspectionMeasurement;
+    bool m_inspectionPending = false;
+    bool m_inspectionFocusPending = false;
     QString m_robotName;
     std::size_t m_linkCount = 0;
     std::size_t m_jointCount = 0;

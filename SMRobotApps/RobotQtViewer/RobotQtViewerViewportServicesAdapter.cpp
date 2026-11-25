@@ -1,7 +1,10 @@
 #include "RobotQtViewerViewportServicesAdapter.h"
 
 #include "ProjectScene.h"
+#include "Telemetry/ExternalRobotTelemetry.h"
 #include "RobotViewport.h"
+#include <QPointer>
+#include <QLabel>
 
 #include <SimulationProject/ProjectAttachmentCommands.h>
 
@@ -1134,6 +1137,12 @@ namespace robot_qt_viewer
         return m_viewport.setRobotJointValues(robotId, jointNames, values);
     }
 
+    bool RobotQtViewerMotionPlanningViewportAdapter::setRobotJointValuesByDof(
+        const std::vector<double>& values, QString* matchedRobotId)
+    {
+        return m_viewport.setRobotJointValuesByDof(values, matchedRobotId);
+    }
+
     quint64 RobotQtViewerMotionPlanningViewportAdapter::requestFramePresentation()
     {
         return m_viewport.requestFramePresentation();
@@ -1150,6 +1159,11 @@ namespace robot_qt_viewer
         bool* ok) const
     {
         return m_viewport.robotJointValue(robotId, jointName, ok);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setSprayDirectionNegativeZ(bool negativeZ)
+    {
+        m_viewport.setSprayDirectionNegativeZ(negativeZ);
     }
 
     void RobotQtViewerMotionPlanningViewportAdapter::setSprayRangeVisible(
@@ -1174,11 +1188,81 @@ namespace robot_qt_viewer
         m_viewport.appendEndEffectorTraceSample();
     }
 
+    void RobotQtViewerMotionPlanningViewportAdapter::setTelemetryEndEffectorTraceVisible(bool visible)
+    {
+        m_viewport.setTelemetryEndEffectorTraceVisible(visible);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::clearTelemetryEndEffectorTrace()
+    {
+        m_viewport.clearTelemetryEndEffectorTrace();
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::appendTelemetryEndEffectorTraceSample(const QString& robotId)
+    {
+        m_viewport.appendTelemetryEndEffectorTraceSample(robotId);
+    }
+
+    SprayInspectionView RobotQtViewerMotionPlanningViewportAdapter::createSprayInspectionView(
+        QWidget* parent, const QString& robotId, const std::vector<std::string>& jointNames,
+        const std::vector<simulation_project::TransformDesc>& trajectory) const
+    {
+        auto* view = new RobotViewport(parent);
+        view->setObjectName(QStringLiteral("sprayPlotGeometryView"));
+        view->setMinimumSize(300, 320);
+        // Keep actual robot/tool/workpiece meshes; decorative ground can occlude a close camera.
+        view->setEnvironmentPreset(ProjectSceneEnvironmentPreset::None);
+        auto inspectionDocument = m_viewport.runtimeDocumentSnapshot();
+        if(jointNames.empty()) {
+            // A TCP-only sample does not imply a robot configuration. The tool
+            // remains visible and follows the measured full TCP pose in the inspection scene.
+            for(auto& robot : inspectionDocument.robots) if(robot.id == robotId.toStdString()) robot.visible = false;
+        }
+        view->loadProjectDocument(inspectionDocument, m_viewport.projectBasePath());
+        QObject::connect(view, &RobotViewport::environmentSceneReady, view, [view, trajectory]() {
+            view->setTrajectoryControlPointOverlay(QStringLiteral("spray_inspection"), trajectory, false, false);
+            view->setCollisionQueriesEnabled(false);
+        });
+        auto* metrics = new QLabel(view);
+        metrics->setObjectName(QStringLiteral("sprayInspectionMetrics"));
+        metrics->setAttribute(Qt::WA_TransparentForMouseEvents);
+        metrics->setStyleSheet(QStringLiteral("QLabel { color: #172b3a; background: rgba(255,255,255,220); padding: 5px; border-radius: 3px; }"));
+        metrics->move(8,8);
+        const QPointer<RobotViewport> guarded(view);
+        SprayInspectionView out; out.widget = view;
+        out.select = [guarded, metrics, robotId, jointNames](const SprayMeasurementResult& value, const std::vector<double>& joints) {
+            if(!guarded) return;
+            ProjectScene::SprayMeasurement geometry;
+            geometry.valid=value.valid; geometry.poseValid=value.poseValid;
+            geometry.tcpPosition=value.tcpPosition; geometry.sprayDirection=value.sprayDirection;
+            geometry.hitPosition=value.hitPosition; geometry.surfaceNormal=value.surfaceNormal;
+            geometry.distanceMeters=value.distanceMeters; geometry.angleDegrees=value.angleDegrees;
+            geometry.tcpPoseAvailable=value.tcpPoseAvailable; geometry.tcpPose=value.tcpPose;
+            guarded->setSprayInspectionSample(robotId, jointNames, joints, geometry);
+            metrics->setText(value.valid
+                ? QStringLiteral("TCP -> hit: %1 mm\nIncidence: %2 deg").arg(value.distanceMeters*1000.,0,'f',3).arg(value.angleDegrees,0,'f',3)
+                : QStringLiteral("No surface intersection"));
+            metrics->adjustSize(); metrics->raise();
+        };
+        out.focus = [guarded]() { if(guarded) guarded->focusSprayInspection(); };
+        return out;
+    }
+
+    SprayMeasurementResult RobotQtViewerMotionPlanningViewportAdapter::sprayMeasurementAtPose(
+        const Eigen::Isometry3d& tcp, const QString& targetId, bool negativeZ) const
+    {
+        const auto measurement = m_viewport.sprayMeasurementAtPose(tcp, targetId, negativeZ);
+        return {measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
+            QString::fromStdString(measurement.errorMessage), measurement.poseValid,
+            measurement.tcpPosition, measurement.sprayDirection, measurement.hitPosition, measurement.surfaceNormal, measurement.tcpPoseAvailable, measurement.tcpPose};
+    }
+
     SprayMeasurementResult RobotQtViewerMotionPlanningViewportAdapter::sprayMeasurement(const QString& robotId) const
     {
         const auto measurement = m_viewport.sprayMeasurement(robotId);
         return { measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
-            QString::fromStdString(measurement.errorMessage) };
+            QString::fromStdString(measurement.errorMessage), measurement.poseValid,
+            measurement.tcpPosition, measurement.sprayDirection, measurement.hitPosition, measurement.surfaceNormal, measurement.tcpPoseAvailable, measurement.tcpPose };
     }
 
     SprayMeasurementResult RobotQtViewerMotionPlanningViewportAdapter::sprayMeasurement(
@@ -1186,7 +1270,8 @@ namespace robot_qt_viewer
     {
         const auto measurement = m_viewport.sprayMeasurement(robotId, targetId);
         return { measurement.valid, measurement.distanceMeters, measurement.angleDegrees,
-            QString::fromStdString(measurement.errorMessage) };
+            QString::fromStdString(measurement.errorMessage), measurement.poseValid,
+            measurement.tcpPosition, measurement.sprayDirection, measurement.hitPosition, measurement.surfaceNormal, measurement.tcpPoseAvailable, measurement.tcpPose };
     }
 
     void RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointOverlay(
@@ -1194,6 +1279,22 @@ namespace robot_qt_viewer
         const std::vector<simulation_project::TransformDesc>& controlPoints, bool showPoints, bool showOrientations)
     {
         m_viewport.setTrajectoryControlPointOverlay(trajectoryId, controlPoints, showPoints, showOrientations);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryControlPointLineVisible(bool visible)
+    {
+        m_viewport.setTrajectoryControlPointLineVisible(visible);
+    }
+
+    void RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryDerivedPointOverlays(
+        const QString& trajectoryId,
+        const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+        bool surfaceLineVisible,
+        const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+        bool offsetLineVisible)
+    {
+        m_viewport.setTrajectoryDerivedPointOverlays(trajectoryId, surfacePoints, surfaceVisible,
+            surfaceLineVisible, offsetPoints, offsetVisible, offsetLineVisible);
     }
 
     void RobotQtViewerMotionPlanningViewportAdapter::clearTrajectoryControlPointOverlay(
@@ -1204,3 +1305,74 @@ namespace robot_qt_viewer
 }
 
 void robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter::setTrajectoryHighlightRange(int first,int last) { m_viewport.setTrajectoryHighlightRange(first,last); }
+
+namespace robot_qt_viewer
+{
+    TelemetrySpeedStatistics RobotQtViewerTelemetryAdapter::speedStatistics(double startSeconds, double endSeconds,
+        TelemetrySpeedCalculationMethod method, double minimumIntervalSeconds) const
+    {
+        const auto source = m_session->speedStatistics(startSeconds, endSeconds,
+            method == TelemetrySpeedCalculationMethod::WindowAverage
+                ? robot_telemetry::SpeedCalculationMethod::WindowAverage
+                : robot_telemetry::SpeedCalculationMethod::InstantaneousDifference,
+            minimumIntervalSeconds);
+        TelemetrySpeedStatistics result;
+        result.valid = source.valid; result.startSeconds = source.startSeconds; result.endSeconds = source.endSeconds;
+        result.method = method; result.minimumIntervalSeconds = source.minimumIntervalSeconds;
+        result.sampleCount = static_cast<quint64>(source.sampleCount);
+        result.tcpLinearMaxMmPerSecond = source.tcpLinearMaxMmPerSecond;
+        result.tcpLinearAverageMmPerSecond = source.tcpLinearAverageMmPerSecond;
+        result.tcpAngularMaxDegPerSecond = source.tcpAngularMaxDegPerSecond;
+        result.tcpAngularAverageDegPerSecond = source.tcpAngularAverageDegPerSecond;
+        result.diagnostic = QString::fromUtf8(source.diagnostic.c_str());
+        for(double value : source.jointMaxSpeed) result.jointMaxSpeed.push_back(value);
+        for(double value : source.jointAverageSpeed) result.jointAverageSpeed.push_back(value);
+        for(const auto& point : source.points) {
+            TelemetrySpeedPoint mapped;
+            mapped.elapsedSeconds = point.elapsedSeconds;
+            mapped.tcpLinearMmPerSecond = point.tcpLinearMmPerSecond;
+            mapped.tcpAngularDegPerSecond = point.tcpAngularDegPerSecond;
+            for(double value : point.jointAbsSpeed) mapped.jointAbsSpeed.push_back(value);
+            result.points.push_back(std::move(mapped));
+        }
+        return result;
+    }
+}
+
+namespace robot_qt_viewer
+{
+    RobotQtViewerTelemetryAdapter::RobotQtViewerTelemetryAdapter() : m_session(std::make_unique<robot_telemetry::Session>()) {}
+    RobotQtViewerTelemetryAdapter::~RobotQtViewerTelemetryAdapter() = default;
+    bool RobotQtViewerTelemetryAdapter::discover() { return m_session->discover(); }
+    bool RobotQtViewerTelemetryAdapter::start(const QString& endpointId, int group, int intervalMs, const QString& csvPath) {
+        robot_telemetry::Options options;
+        options.endpointId = endpointId.toUtf8().toStdString();
+        options.group = group; options.intervalMs = intervalMs;
+        options.csvPath = std::filesystem::u8path(csvPath.toUtf8().toStdString());
+        return m_session->start(options);
+    }
+    void RobotQtViewerTelemetryAdapter::stop() { m_session->stop(); }
+    TelemetrySnapshot RobotQtViewerTelemetryAdapter::snapshot() const {
+        const auto source = m_session->snapshot();
+        TelemetrySnapshot result;
+        using State = robot_telemetry::State;
+        result.busy = source.state == State::Discovering || source.state == State::Connecting || source.state == State::Streaming;
+        result.streaming = source.state == State::Streaming;
+        result.fault = source.state == State::Fault;
+        for(const auto& endpoint : source.endpoints) result.endpoints.push_back({QString::fromUtf8(endpoint.id.c_str()), QString::fromUtf8(endpoint.name.c_str())});
+        result.source = QString::fromUtf8(source.source.c_str());
+        result.diagnostic = QString::fromUtf8(source.diagnostic.c_str());
+        result.csvPath = QString::fromStdWString(source.csvPath.wstring());
+        result.sequence = source.latest.sequence;
+        result.receivedUnixNs = source.latest.receivedUnixNs;
+        result.elapsedNs = source.latest.elapsedNs;
+        result.readLatencyNs = source.latest.readLatencyNs;
+        result.joints = source.latest.joints;
+        result.tcpPoseValid = source.latest.tcpPose.valid;
+        result.tcpXyzwpr = source.latest.tcpPose.xyzwpr;
+        result.tcpUserFrame = source.latest.tcpPose.userFrame;
+        result.tcpUserTool = source.latest.tcpPose.userTool;
+        result.tcpDiagnostic = QString::fromUtf8(source.latest.tcpPose.diagnostic.c_str());
+        return result;
+    }
+}

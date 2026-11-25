@@ -26,7 +26,7 @@ copy_runtime_dlls(${TEST_TARGET})
 deploy_qt(${TEST_TARGET})
 target_compile_definitions(${TEST_TARGET} PRIVATE SECTION_SWEEP_FIXTURE="${CMAKE_SOURCE_DIR}/SMRobotSpray/SprayFreeformTrajPlan/SectionSweepTrajPlan/regression/data/plate_tube.stl")
 target_compile_definitions(${TEST_TARGET} PRIVATE XYZR_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
-foreach(MODE blade-regions data workbenches cdf receiving freeform-transitions section-sweep xyzr fanuc collision-conditions collision-mounts)
+foreach(MODE blade-regions data workbenches cdf receiving freeform-transitions section-sweep xyzr fanuc collision-conditions collision-mounts spray-direct)
     add_test(NAME RobotQtViewerTrajectoryTransfer-${MODE} COMMAND ${TEST_TARGET} --${MODE})
     set_tests_properties(RobotQtViewerTrajectoryTransfer-${MODE} PROPERTIES
         LABELS "RobotQtViewer;Regression;TrajectoryTransfer"

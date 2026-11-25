@@ -1,6 +1,9 @@
 #pragma once
 
 #include "RobotQtViewerViewportPorts.h"
+#include "RobotQtViewerTelemetryPort.h"
+
+namespace robot_telemetry { class Session; }
 
 #include <RobotRuntime/RobotRunService.h>
 #include <RobotRuntime/RobotTrajectoryExecutionSession.h>
@@ -9,6 +12,20 @@ class RobotViewport;
 
 namespace robot_qt_viewer
 {
+    class RobotQtViewerTelemetryAdapter final : public IRobotQtViewerTelemetryPort {
+    public:
+        RobotQtViewerTelemetryAdapter();
+        ~RobotQtViewerTelemetryAdapter() override;
+        bool discover() override;
+        bool start(const QString& endpointId, int group, int intervalMs, const QString& csvPath) override;
+        void stop() override;
+        TelemetrySnapshot snapshot() const override;
+        TelemetrySpeedStatistics speedStatistics(double startSeconds, double endSeconds,
+            TelemetrySpeedCalculationMethod method, double minimumIntervalSeconds) const override;
+    private:
+        std::unique_ptr<robot_telemetry::Session> m_session;
+    };
+
     struct RobotQtViewerViewportProjectState
     {
         simulation_project::ProjectDocument document;
@@ -27,17 +44,33 @@ namespace robot_qt_viewer
         void setRobotJointValue(const QString& robotId, const QString& jointName, double value) override;
         bool setRobotJointValues(const QString& robotId,
             const std::vector<std::string>& jointNames, const std::vector<double>& values) override;
+        bool setRobotJointValuesByDof(const std::vector<double>& values,
+            QString* matchedRobotId = nullptr) override;
         quint64 requestFramePresentation() override;
         bool isFramePresented(quint64 ticket) const override;
         double robotJointValue(const QString& robotId, const QString& jointName, bool* ok = nullptr) const override;
+        SprayInspectionView createSprayInspectionView(QWidget* parent, const QString& robotId,
+            const std::vector<std::string>& jointNames,
+            const std::vector<simulation_project::TransformDesc>& trajectory) const override;
+        void setSprayDirectionNegativeZ(bool negativeZ) override;
         void setSprayRangeVisible(const QString& robotId, bool visible) override;
         void setEndEffectorTraceVisible(const QString& robotId, bool visible) override;
         void clearEndEffectorTrace() override;
         void appendEndEffectorTraceSample() override;
+        void setTelemetryEndEffectorTraceVisible(bool visible) override;
+        void clearTelemetryEndEffectorTrace() override;
+        void appendTelemetryEndEffectorTraceSample(const QString& robotId) override;
+        SprayMeasurementResult sprayMeasurementAtPose(const Eigen::Isometry3d& tcp, const QString& targetId, bool negativeZ) const override;
         SprayMeasurementResult sprayMeasurement(const QString& robotId) const override;
         SprayMeasurementResult sprayMeasurement(const QString& robotId, const QString& targetId) const override;
         void setTrajectoryControlPointOverlay(const QString& trajectoryId,
             const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true, bool showOrientations = false) override;
+        void setTrajectoryControlPointLineVisible(bool visible) override;
+        void setTrajectoryDerivedPointOverlays(const QString& trajectoryId,
+            const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+            bool surfaceLineVisible,
+            const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+            bool offsetLineVisible) override;
         void setTrajectoryHighlightRange(int first, int last) override;
         void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) override;
     private:

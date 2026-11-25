@@ -24,6 +24,8 @@ if(${TARGET_NAME}_MISSING_TARGETS)
 endif()
 
 add_library(${TARGET_NAME} STATIC
+    Telemetry/ExternalRobotTelemetry.cpp
+    Telemetry/RoboguideComBackend.cpp
     CameraPreviewWidget.cpp
     CameraPreviewWidget.h
     ProjectCollisionRuntimeProjection.cpp
@@ -132,3 +134,7 @@ if(ExportPacakge${PACKAGE_NAME})
 endif()
 
 rs_add_example_category_roots()
+
+if(WIN32)
+    target_link_libraries(${TARGET_NAME} PRIVATE ole32 oleaut32)
+endif()

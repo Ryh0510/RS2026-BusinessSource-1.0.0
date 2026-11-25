@@ -17,6 +17,8 @@
 #include "CollisionRuntimeViewModel.h"
 #include "RobotQtViewerEvents.h"
 
+class QWidget;
+
 namespace robot_qt_viewer
 {
     struct SprayMeasurementResult
@@ -25,6 +27,22 @@ namespace robot_qt_viewer
         double distanceMeters = 0.0;
         double angleDegrees = 0.0;
         QString errorMessage;
+        // World-space snapshot, retained even when the ray misses the target.
+        bool poseValid = false;
+        Eigen::Vector3d tcpPosition = Eigen::Vector3d::Zero();
+        Eigen::Vector3d sprayDirection = Eigen::Vector3d::UnitZ();
+        Eigen::Vector3d hitPosition = Eigen::Vector3d::Zero();
+        Eigen::Vector3d surfaceNormal = Eigen::Vector3d::Zero();
+        // Complete TCP orientation is needed to display a tool at pose-only samples.
+        bool tcpPoseAvailable = false;
+        Eigen::Isometry3d tcpPose = Eigen::Isometry3d::Identity();
+    };
+
+    struct SprayInspectionView
+    {
+        QWidget* widget = nullptr;
+        std::function<void(const SprayMeasurementResult&, const std::vector<double>&)> select;
+        std::function<void()> focus;
     };
 
     // Transient planning visualization and access to the actual model/TCP.
@@ -39,15 +57,31 @@ namespace robot_qt_viewer
         virtual void setRobotJointValue(const QString& robotId, const QString& jointName, double value) = 0;
         virtual bool setRobotJointValues(const QString& robotId,
             const std::vector<std::string>& jointNames, const std::vector<double>& values) = 0;
+        // Apply FANUC degrees/mm in model DOF order. Reject absent or ambiguous
+        // matches; never silently truncate the received joint group.
+        virtual bool setRobotJointValuesByDof(const std::vector<double>& values,
+            QString* matchedRobotId = nullptr) { Q_UNUSED(values); if(matchedRobotId) matchedRobotId->clear(); return false; }
         // A frame ticket acknowledges composition/swap, not merely a queued repaint.
         // Hidden/suspended viewports leave it pending until presentation resumes.
         virtual quint64 requestFramePresentation() = 0;
         virtual bool isFramePresented(quint64 ticket) const = 0;
         virtual double robotJointValue(const QString& robotId, const QString& jointName, bool* ok = nullptr) const = 0;
+        virtual SprayInspectionView createSprayInspectionView(QWidget* parent, const QString& robotId,
+            const std::vector<std::string>& jointNames,
+            const std::vector<simulation_project::TransformDesc>& trajectory) const
+        { Q_UNUSED(parent); Q_UNUSED(robotId); Q_UNUSED(jointNames); Q_UNUSED(trajectory); return {}; }
+        virtual void setSprayDirectionNegativeZ(bool negativeZ) = 0;
         virtual void setSprayRangeVisible(const QString& robotId, bool visible) = 0;
         virtual void setEndEffectorTraceVisible(const QString& robotId, bool visible) = 0;
         virtual void clearEndEffectorTrace() = 0;
         virtual void appendEndEffectorTraceSample() = 0;
+        virtual void setTelemetryEndEffectorTraceVisible(bool visible) { Q_UNUSED(visible); }
+        virtual void clearTelemetryEndEffectorTrace() {}
+        virtual void appendTelemetryEndEffectorTraceSample(const QString& robotId) { Q_UNUSED(robotId); }
+        virtual SprayMeasurementResult sprayMeasurementAtPose(const Eigen::Isometry3d& tcp,
+            const QString& targetId, bool negativeZ) const
+        { Q_UNUSED(tcp); Q_UNUSED(targetId); Q_UNUSED(negativeZ);
+            return {false, 0., 0., QStringLiteral("TCP pose measurement unavailable")}; }
         virtual SprayMeasurementResult sprayMeasurement(const QString& robotId) const = 0;
         virtual SprayMeasurementResult sprayMeasurement(const QString& robotId, const QString& targetId) const
         {
@@ -57,6 +91,13 @@ namespace robot_qt_viewer
         }
         virtual void setTrajectoryControlPointOverlay(const QString& trajectoryId,
             const std::vector<simulation_project::TransformDesc>& points, bool showPoints = true, bool showOrientations = false) = 0;
+        virtual void setTrajectoryControlPointLineVisible(bool visible) { Q_UNUSED(visible); }
+        virtual void setTrajectoryDerivedPointOverlays(const QString& trajectoryId,
+            const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+            bool surfaceLineVisible,
+            const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+            bool offsetLineVisible)
+        { Q_UNUSED(trajectoryId); Q_UNUSED(surfacePoints); Q_UNUSED(surfaceVisible); Q_UNUSED(surfaceLineVisible); Q_UNUSED(offsetPoints); Q_UNUSED(offsetVisible); Q_UNUSED(offsetLineVisible); }
         virtual void setTrajectoryHighlightRange(int first, int last) { (void)first; (void)last; }
         virtual void clearTrajectoryControlPointOverlay(const QString& trajectoryId = QString()) = 0;
     };

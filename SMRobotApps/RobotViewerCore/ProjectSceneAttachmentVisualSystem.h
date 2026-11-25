@@ -79,6 +79,8 @@ public:
     void setToolFrameVisibility(const ProjectScene::ToolFrameVisibility& visibility);
     const ProjectScene::ToolFrameVisibility& toolFrameVisibility() const;
     void applyVisibility(bool sceneFocusActive);
+    // Visual-only pose override for a detached tool in an inspection scene.
+    bool applyToolTcpPreview(const std::string& robotId, const collision::Transform3& worldTcp);
 
     void setPreview(
         const simulation_project::AttachmentAssetDesc& asset,

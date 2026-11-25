@@ -3094,24 +3094,96 @@ struct ProjectScene::Impl
         collisionPresentationSystem.state().geometryOverlayCacheVersion;
     std::string sprayRangeRobotId;
     bool sprayRangeVisible = false;
+    bool sprayDirectionNegativeZ = false;
+    SprayMeasurement sprayInspection;
+    std::string sprayInspectionToolRobotId;
+    void drawSprayInspection();
     std::string endEffectorTraceRobotId;
     bool endEffectorTraceVisible = false;
     std::vector<collision::Vec3> endEffectorTracePoints;
     std::shared_ptr<EndEffectorTracePass> endEffectorTracePass;
+    std::shared_ptr<EndEffectorTracePass> telemetryTracePass;
+    std::vector<collision::Vec3> telemetryTracePoints;
+    std::string telemetryTraceRobotId;
+    bool telemetryTraceVisible = false;
     std::shared_ptr<EndEffectorTracePass> trajectoryLinePass, trajectoryHighlightPass;
     struct SpraySurfaceMesh
     {
         std::string linkName;
         std::vector<collision::Vec3> vertices;
         std::vector<std::uint32_t> indices;
+        struct Node {
+            collision::Vec3 low = collision::Vec3::Constant(std::numeric_limits<double>::max());
+            collision::Vec3 high = collision::Vec3::Constant(-std::numeric_limits<double>::max());
+            std::size_t begin = 0, end = 0;
+            int left = -1, right = -1;
+        };
+        std::vector<std::size_t> triangles;
+        std::vector<Node> nodes;
+        int buildNode(std::size_t begin, std::size_t end) {
+            const int id = static_cast<int>(nodes.size());
+            nodes.emplace_back();
+            Node node; node.begin = begin; node.end = end;
+            for(std::size_t k = begin; k < end; ++k) {
+                for(int v = 0; v < 3; ++v) {
+                    const auto& point = vertices[indices[triangles[k] + v]];
+                    node.low = node.low.cwiseMin(point); node.high = node.high.cwiseMax(point);
+                }
+            }
+            // Conservative padding keeps tangent and zero-thickness bounds inclusive.
+            node.low.array() -= 1.0e-10; node.high.array() += 1.0e-10;
+            if(end - begin > 8) {
+                Eigen::Index axis = 0; (node.high - node.low).maxCoeff(&axis);
+                const auto center = [&](std::size_t triangle) {
+                    return (vertices[indices[triangle]][axis] + vertices[indices[triangle+1]][axis]
+                        + vertices[indices[triangle+2]][axis]) / 3.;
+                };
+                const auto middle = begin + (end - begin) / 2;
+                std::nth_element(triangles.begin() + begin, triangles.begin() + middle, triangles.begin() + end,
+                    [&](std::size_t a, std::size_t b) { return center(a) < center(b); });
+                node.left = buildNode(begin, middle); node.right = buildNode(middle, end);
+            }
+            nodes[id] = node;
+            return id;
+        }
+        void buildIndex() {
+            for(std::size_t i = 0; i + 2 < indices.size(); i += 3) {
+                if(indices[i] < vertices.size() && indices[i+1] < vertices.size() && indices[i+2] < vertices.size()
+                    && vertices[indices[i]].allFinite() && vertices[indices[i+1]].allFinite() && vertices[indices[i+2]].allFinite())
+                    triangles.push_back(i);
+            }
+            if(!triangles.empty()) buildNode(0, triangles.size());
+        }
+        static bool intersectsBounds(const Node& node, const ProjectScenePickRay& ray, double nearest) {
+            double low = 0., high = nearest;
+            for(int axis = 0; axis < 3; ++axis) {
+                if(ray.direction[axis] == 0.) {
+                    if(ray.origin[axis] < node.low[axis] || ray.origin[axis] > node.high[axis]) return false;
+                } else {
+                    double a = (node.low[axis] - ray.origin[axis]) / ray.direction[axis];
+                    double b = (node.high[axis] - ray.origin[axis]) / ray.direction[axis];
+                    if(a > b) std::swap(a, b);
+                    low = std::max(low, a); high = std::min(high, b);
+                    if(low > high) return false;
+                }
+            }
+            return true;
+        }
     };
     std::unordered_map<std::string, std::vector<SpraySurfaceMesh>> spraySurfaceMeshes;
     bool trajectoryControlPointMarkersVisible = true;
+    bool trajectoryControlPointLineVisible = true;
     bool trajectoryControlPointOrientationsVisible = false;
     std::shared_ptr<ProjectTrajectoryOrientationOverlayPass> trajectoryOrientationPass;
     int trajectoryHighlightFirst = -1, trajectoryHighlightLast = -1;
     std::string trajectoryControlPointOverlayId;
     std::vector<collision::Transform3> trajectoryControlPointOverlay;
+    bool trajectorySurfacePointsVisible = true;
+    bool trajectoryOffsetPointsVisible = true;
+    bool trajectorySurfacePointsLineVisible = true;
+    bool trajectoryOffsetPointsLineVisible = true;
+    std::vector<collision::Transform3> trajectorySurfacePoints;
+    std::vector<collision::Transform3> trajectoryOffsetPoints;
     simulation_project::ColorDesc defaultBackgroundColor;
     Eigen::Vector4f backgroundColor = Eigen::Vector4f(0.05f, 0.06f, 0.08f, 1.0f);
     bool& previewObjectCollisionModelActive =
@@ -3392,6 +3464,11 @@ bool ProjectScene::Impl::initializeOpenGlRuntime()
     endEffectorTracePass = std::make_shared<EndEffectorTracePass>();
     for(const auto& point : endEffectorTracePoints) { endEffectorTracePass->append(toGlmVec3(point)); }
     renderer.addPass(endEffectorTracePass);
+    telemetryTracePass = std::make_shared<EndEffectorTracePass>();
+    telemetryTracePass->setColor(glm::vec4(0.1f, 0.9f, 0.9f, 1.0f));
+    for(const auto& point : telemetryTracePoints) telemetryTracePass->append(toGlmVec3(point));
+    telemetryTracePass->setEnabled(telemetryTraceVisible);
+    renderer.addPass(telemetryTracePass);
     trajectoryLinePass = std::make_shared<EndEffectorTracePass>();
     trajectoryLinePass->setColor(glm::vec4(1.0f, 0.55f, 0.10f, 1.0f));
     trajectoryHighlightPass = std::make_shared<EndEffectorTracePass>();
@@ -4313,6 +4390,9 @@ void ProjectScene::Impl::syncProjectToolAttachments()
             ProjectRuntimeBuilder::updateSceneObjectPose(collisionObject);
         }
     }
+    if(!sprayInspectionToolRobotId.empty()) {
+        attachmentVisualSystem.applyToolTcpPreview(sprayInspectionToolRobotId, sprayInspection.tcpPose);
+    }
 }
 
 void ProjectScene::Impl::ensureToolAttachmentCollisionObjects()
@@ -4796,7 +4876,7 @@ void ProjectScene::Impl::drawSprayRange()
         return;
     }
 
-    const collision::Vec3 axis = tcp.linear() * collision::Vec3(0.0, 0.0, 1.0);
+    const collision::Vec3 axis = tcp.linear() * collision::Vec3(0.0, 0.0, sprayDirectionNegativeZ ? -1.0 : 1.0);
     const double axisLength = axis.norm();
     if(!std::isfinite(axisLength) || axisLength < 1.0e-9) {
         return;
@@ -4820,9 +4900,9 @@ void ProjectScene::Impl::drawSprayRange()
         vertices.push_back(glm::vec3(
             static_cast<float>(kRadius * std::cos(angle)),
             static_cast<float>(kRadius * std::sin(angle)),
-            static_cast<float>(kLength)));
+            static_cast<float>(sprayDirectionNegativeZ ? -kLength : kLength)));
     }
-    vertices.push_back(glm::vec3(0.0f, 0.0f, static_cast<float>(kLength)));
+    vertices.push_back(glm::vec3(0.0f, 0.0f, static_cast<float>(sprayDirectionNegativeZ ? -kLength : kLength)));
 
     std::vector<unsigned int> indices;
     indices.reserve(static_cast<std::size_t>(kSegments * 6));
@@ -4836,6 +4916,10 @@ void ProjectScene::Impl::drawSprayRange()
         indices.push_back(baseCenter);
         indices.push_back(next);
         indices.push_back(current);
+    }
+    // Reflecting local Z also reverses triangle winding.
+    if(sprayDirectionNegativeZ) {
+        for(std::size_t i = 0; i < indices.size(); i += 3) { std::swap(indices[i + 1], indices[i + 2]); }
     }
 
     const scenecore::RenderTag tag{
@@ -4924,6 +5008,7 @@ void ProjectScene::Impl::rebuildTrajectoryLines()
     trajectoryHighlightPass->clear();
     // Rebuild only when controls or the highlighted range change. Every original
     // vertex remains present; no per-frame DebugDraw allocation per segment.
+    if(!trajectoryControlPointLineVisible) { return; }
     for(std::size_t i = 0; i < trajectoryControlPointOverlay.size(); ++i) {
         const auto p = toGlmVec3(trajectoryControlPointOverlay[i].translation());
         trajectoryLinePass->append(p);
@@ -4935,15 +5020,23 @@ void ProjectScene::Impl::rebuildTrajectoryLines()
 
 void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
 {
-    if(trajectoryControlPointOverlay.empty() || !trajectoryControlPointMarkersVisible) {
+    if(trajectoryControlPointOverlay.empty() && trajectorySurfacePoints.empty() && trajectoryOffsetPoints.empty()) {
         return;
     }
 
-    collision::Vec3 minPoint = trajectoryControlPointOverlay.front().translation();
+    collision::Vec3 minPoint = trajectoryControlPointOverlay.empty()
+        ? (trajectorySurfacePoints.empty() ? trajectoryOffsetPoints.front().translation() : trajectorySurfacePoints.front().translation())
+        : trajectoryControlPointOverlay.front().translation();
     collision::Vec3 maxPoint = minPoint;
     for(const collision::Transform3& point : trajectoryControlPointOverlay) {
         minPoint = minPoint.cwiseMin(point.translation());
         maxPoint = maxPoint.cwiseMax(point.translation());
+    }
+    for(const collision::Transform3& point : trajectorySurfacePoints) {
+        minPoint = minPoint.cwiseMin(point.translation()); maxPoint = maxPoint.cwiseMax(point.translation());
+    }
+    for(const collision::Transform3& point : trajectoryOffsetPoints) {
+        minPoint = minPoint.cwiseMin(point.translation()); maxPoint = maxPoint.cwiseMax(point.translation());
     }
 
     const double extent = (maxPoint - minPoint).norm();
@@ -4959,7 +5052,7 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
         scenecore::RenderFeature::Gizmo };
 
     scenecore::DebugDraw& debug = renderer.debug();
-    for(std::size_t index = 0; index < trajectoryControlPointOverlay.size(); ++index) {
+    if(trajectoryControlPointMarkersVisible) for(std::size_t index = 0; index < trajectoryControlPointOverlay.size(); ++index) {
         const collision::Transform3& point = trajectoryControlPointOverlay[index];
         const bool isStart = index == 0;
         const bool isEnd = index + 1 == trajectoryControlPointOverlay.size();
@@ -4977,6 +5070,27 @@ void ProjectScene::Impl::drawTrajectoryControlPointOverlay()
             scenecore::DrawType::UsingUnlitShader,
             tag);
     }
+    const auto drawDerived = [&](const std::vector<collision::Transform3>& points, bool visible, const glm::vec4& color) {
+        if(!visible) return;
+        const float derivedRadius = static_cast<float>(
+            std::max(0.003, std::min(0.012, markerRadius * 0.45)));
+        for(const collision::Transform3& point : points) {
+            const auto p = point.translation();
+            debug.drawSphere(glm::translate(glm::mat4(1.0f), glm::vec3(float(p.x()), float(p.y()), float(p.z()))),
+                derivedRadius, color, scenecore::DrawType::UsingUnlitShader, tag);
+        }
+    };
+    const auto drawDerivedLine = [&](const std::vector<collision::Transform3>& points, bool visible, const glm::vec4& color) {
+        if(!visible || points.size() < 2) return;
+        for(std::size_t index = 1; index < points.size(); ++index) {
+            debug.drawLine(toGlmVec3(points[index - 1].translation()),
+                toGlmVec3(points[index].translation()), color, tag);
+        }
+    };
+    drawDerivedLine(trajectorySurfacePoints, trajectorySurfacePointsLineVisible, glm::vec4(0.10f, 0.95f, 0.25f, 1.0f));
+    drawDerivedLine(trajectoryOffsetPoints, trajectoryOffsetPointsLineVisible, glm::vec4(0.15f, 0.40f, 1.0f, 1.0f));
+    drawDerived(trajectorySurfacePoints, trajectorySurfacePointsVisible, glm::vec4(0.10f, 0.95f, 0.25f, 1.0f));
+    drawDerived(trajectoryOffsetPoints, trajectoryOffsetPointsVisible, glm::vec4(0.15f, 0.40f, 1.0f, 1.0f));
 }
 
 void ProjectScene::Impl::hideObjectCollisionModelVariantPreviewMeshes()
@@ -5542,6 +5656,9 @@ void ProjectScene::setProjectDocument(
     m_impl->endEffectorTraceVisible = false;
     clearEndEffectorTrace();
     m_impl->spraySurfaceMeshes.clear();
+    m_impl->sprayInspection = {};
+    m_impl->sprayInspectionToolRobotId.clear();
+    clearTelemetryEndEffectorTrace();
 }
 
 const std::filesystem::path& ProjectScene::projectBasePath() const
@@ -6168,6 +6285,7 @@ void ProjectScene::refreshCollisionPresentation(bool submitOverlays)
     m_impl->drawPinnedRobotMountFrames();
     m_impl->drawActiveToolAttachmentFrames();
     m_impl->drawSprayRange();
+    m_impl->drawSprayInspection();
     m_impl->drawEndEffectorTrace();
     m_impl->drawTrajectoryControlPointOverlay();
     if(m_impl->trajectoryOrientationPass && m_impl->cameraSystem.mainCameraNode()) {
@@ -6299,6 +6417,62 @@ void ProjectScene::onMouseMove(float dx, float dy, int button)
 void ProjectScene::onScroll(float delta)
 {
     m_impl->cameraSystem.onScroll(delta);
+}
+
+void ProjectScene::Impl::drawSprayInspection()
+{
+    const auto& row = sprayInspection;
+    if(!row.poseValid) return;
+    auto& debug = renderer.debug();
+    const glm::vec4 cyan(0.0f, .9f, 1.0f, 1.0f), green(.2f, 1.f, .3f, 1.f), red(1.f, .3f, .15f, 1.f);
+    const double length = row.valid ? std::max(.01, row.distanceMeters) : .1;
+    const auto line = [&](const Eigen::Vector3d& a, const Eigen::Vector3d& b, const glm::vec4& color) {
+        debug.drawLine(toGlmVec3(a), toGlmVec3(b), color);
+    };
+    const Eigen::Vector3d hit = row.valid ? row.hitPosition : Eigen::Vector3d(row.tcpPosition + row.sprayDirection * length);
+    line(row.tcpPosition, hit, cyan);
+    const double marker = length * .035;
+    for(int axis=0;axis<3;++axis) {
+        line(row.tcpPosition-Eigen::Vector3d::Unit(axis)*marker, row.tcpPosition+Eigen::Vector3d::Unit(axis)*marker, red);
+        if(row.valid) line(hit-Eigen::Vector3d::Unit(axis)*marker, hit+Eigen::Vector3d::Unit(axis)*marker, cyan);
+    }
+    if(!row.valid || row.surfaceNormal.norm()<1e-9) return;
+    const Eigen::Vector3d a = -row.sprayDirection.normalized(), b = row.surfaceNormal.normalized();
+    line(hit, hit+b*length*.6, green);
+    const double theta=std::acos(std::clamp(a.dot(b),-1.,1.));
+    Eigen::Vector3d side=b-a*a.dot(b);
+    if(side.norm()<1e-9) side=a.unitOrthogonal(); else side.normalize();
+    Eigen::Vector3d previous=hit+a*length*.3;
+    for(int i=1;i<=48;++i) {
+        const double angle=theta*i/48.;
+        const Eigen::Vector3d next=hit+(a*std::cos(angle)+side*std::sin(angle))*length*.3;
+        line(previous,next,red); previous=next;
+    }
+}
+
+void ProjectScene::setSprayInspectionMeasurement(const SprayMeasurement& measurement,
+    const std::string& robotId, bool previewToolAtTcp)
+{
+    m_impl->sprayInspection = measurement;
+    m_impl->sprayInspectionToolRobotId = previewToolAtTcp && measurement.poseValid && measurement.tcpPoseAvailable
+        ? robotId : std::string();
+    // Rebuild from the real runtime mount before applying this transient view pose.
+    m_impl->syncProjectToolAttachments();
+}
+
+void ProjectScene::focusSprayInspection()
+{
+    const auto& row=m_impl->sprayInspection;
+    if(!row.poseValid) return;
+    CameraSceneBounds bounds;
+    bounds.includePoint(row.tcpPosition);
+    const Eigen::Vector3d hit=row.valid ? row.hitPosition : Eigen::Vector3d(row.tcpPosition+row.sprayDirection*.1);
+    bounds.includePoint(hit);
+    const double padding=std::max(.015,(hit-row.tcpPosition).norm()*.2);
+    bounds.includePoint(hit+Eigen::Vector3d::Constant(padding));
+    bounds.includePoint(row.tcpPosition-Eigen::Vector3d::Constant(padding));
+    const Eigen::Vector3d axis=row.sprayDirection.normalized();
+    m_impl->cameraSystem.focusLocalBounds(bounds, -axis+axis.unitOrthogonal()*1.3);
 }
 
 void ProjectScene::setCameraView(ProjectSceneCameraView view)
@@ -6902,6 +7076,30 @@ void ProjectScene::setTrajectoryControlPointOverlay(
     }
 }
 
+void ProjectScene::setTrajectoryControlPointLineVisible(bool visible)
+{
+    m_impl->trajectoryControlPointLineVisible = visible;
+    m_impl->rebuildTrajectoryLines();
+}
+
+void ProjectScene::setTrajectoryDerivedPointOverlays(
+    const std::string& trajectoryId,
+    const std::vector<simulation_project::TransformDesc>& surfacePoints, bool surfaceVisible,
+    bool surfaceLineVisible,
+    const std::vector<simulation_project::TransformDesc>& offsetPoints, bool offsetVisible,
+    bool offsetLineVisible)
+{
+    if(!trajectoryId.empty() && !m_impl->trajectoryControlPointOverlayId.empty() && trajectoryId != m_impl->trajectoryControlPointOverlayId) return;
+    m_impl->trajectorySurfacePointsVisible = surfaceVisible;
+    m_impl->trajectoryOffsetPointsVisible = offsetVisible;
+    m_impl->trajectorySurfacePointsLineVisible = surfaceLineVisible;
+    m_impl->trajectoryOffsetPointsLineVisible = offsetLineVisible;
+    m_impl->trajectorySurfacePoints.clear();
+    m_impl->trajectoryOffsetPoints.clear();
+    for(const auto& point : surfacePoints) m_impl->trajectorySurfacePoints.push_back(ProjectRuntimeBuilder::makeTransform(point));
+    for(const auto& point : offsetPoints) m_impl->trajectoryOffsetPoints.push_back(ProjectRuntimeBuilder::makeTransform(point));
+}
+
 void ProjectScene::clearTrajectoryControlPointOverlay(const std::string& trajectoryId)
 {
     if(!trajectoryId.empty() && trajectoryId != m_impl->trajectoryControlPointOverlayId) {
@@ -6910,6 +7108,8 @@ void ProjectScene::clearTrajectoryControlPointOverlay(const std::string& traject
 
     m_impl->trajectoryControlPointOverlayId.clear();
     m_impl->trajectoryControlPointOverlay.clear();
+    m_impl->trajectorySurfacePoints.clear();
+    m_impl->trajectoryOffsetPoints.clear();
     m_impl->rebuildTrajectoryLines();
     if(m_impl->trajectoryOrientationPass) {
         m_impl->trajectoryOrientationPass->setPoints({});
@@ -7714,6 +7914,81 @@ bool ProjectScene::setRobotJointValues(const std::string& robotId,
     return true;
 }
 
+bool ProjectScene::setRobotJointValuesByDof(const std::vector<double>& values,
+    std::string* matchedRobotId)
+{
+    if(matchedRobotId) matchedRobotId->clear();
+    if(values.empty() || !std::all_of(values.begin(), values.end(),
+        [](double value) { return std::isfinite(value); })) return false;
+    const RuntimeRobot* candidate = nullptr;
+    for(const RuntimeRobot& runtime : m_impl->robots) {
+        if(runtime.model.dof() != values.size()) continue;
+        if(candidate) return false;
+        candidate = &runtime;
+    }
+    if(!candidate) return false;
+    const auto& model = candidate->model;
+
+    // Controller axis order is J1..Jn, not the loader's internal DOF order.
+    // Unnumbered/custom models retain their existing DOF-order convention.
+    std::vector<const robot::RobotJoint*> numbered(values.size(), nullptr);
+    for(std::size_t axis = 0; axis < values.size(); ++axis) {
+        const auto found = model.jointNameToIndex.find("J" + std::to_string(axis + 1));
+        if(found == model.jointNameToIndex.end()) break;
+        const auto& joint = model.joints.at(static_cast<std::size_t>(found->second));
+        if(joint.dofIndex < 0) break;
+        numbered[axis] = &joint;
+    }
+    const bool numberedAxes = std::all_of(numbered.begin(), numbered.end(),
+        [](const auto* joint) { return joint != nullptr; });
+
+    // This shipped M-710iC/50 URDF uses relative serial angles, whereas FANUC
+    // reports J3 relative to the horizontal (its J2/J3 mechanical coupling).
+    // Recognize this specific model AND its axis convention; never apply the
+    // correction to arbitrary six-axis robots or already coupled models.
+    bool fanucSerial = numberedAxes && values.size() == 6 && model.name == "m710ic_50";
+    const std::array<Eigen::Vector3d, 6> fanucAxes = {{
+        {0., 0., 1.}, {0., 1., 0.}, {0., -1., 0.},
+        {-1., 0., 0.}, {0., -1., 0.}, {-1., 0., 0.}}};
+    if(fanucSerial) {
+        for(std::size_t axis = 0; axis < numbered.size(); ++axis) {
+            const auto& joint = *numbered[axis];
+            if(joint.type != robot::JointType::Revolute || joint.isLoop ||
+                joint.parent != (axis == 0 ? "base_link" : "J" + std::to_string(axis) + "_link") ||
+                joint.child != "J" + std::to_string(axis + 1) + "_link" ||
+                !joint.axis_local.isApprox(fanucAxes[axis], 1.e-9) ||
+                !joint.T_parent_joint.linear().isApprox(Eigen::Matrix3d::Identity(), 1.e-9) ||
+                !joint.T_joint_child.matrix().isApprox(Eigen::Matrix4d::Identity(), 1.e-9)) {
+                fanucSerial = false;
+                break;
+            }
+        }
+    }
+    std::vector<std::string> names;
+    std::vector<double> sceneValues;
+    std::vector<bool> seen(values.size(), false);
+    for(std::size_t index = 0; index < (numberedAxes ? numbered.size() : model.joints.size()); ++index) {
+        const auto& joint = numberedAxes ? *numbered[index] : model.joints[index];
+        if(joint.dofIndex < 0) continue;
+        const auto dof = static_cast<std::size_t>(joint.dofIndex);
+        if(dof >= values.size() || seen[dof]) return false;
+        seen[dof] = true;
+        double raw = values[numberedAxes ? index : dof];
+        if(fanucSerial && index == 2) raw += values[1];
+        double converted = 0.;
+        if(joint.type == robot::JointType::Revolute) converted = raw * (kPi / 180.0);
+        else if(joint.type == robot::JointType::Prismatic) converted = raw * 0.001;
+        else return false;
+        if(!std::isfinite(converted)) return false;
+        names.push_back(joint.name);
+        sceneValues.push_back(converted);
+    }
+    if(names.size() != values.size()) return false;
+    if(!setRobotJointValues(candidate->documentId, names, sceneValues)) return false;
+    if(matchedRobotId) *matchedRobotId = candidate->documentId;
+    return true;
+}
+
 bool ProjectScene::robotJointValue(
     const std::string& robotId,
     const std::string& jointName,
@@ -8129,6 +8404,11 @@ bool ProjectScene::endEffectorWorldTransform(const std::string& robotId, Eigen::
     return m_impl->sprayNozzleWorldTransform(robotId, pose);
 }
 
+void ProjectScene::setSprayDirectionNegativeZ(bool negativeZ)
+{
+    m_impl->sprayDirectionNegativeZ = negativeZ;
+}
+
 void ProjectScene::setSprayRangeVisible(const std::string& robotId, bool visible)
 {
     m_impl->sprayRangeRobotId = robotId;
@@ -8175,6 +8455,53 @@ std::size_t ProjectScene::endEffectorTracePointCount() const
     return m_impl->endEffectorTracePoints.size();
 }
 
+void ProjectScene::setTelemetryEndEffectorTraceVisible(bool visible)
+{
+    m_impl->telemetryTraceVisible = visible;
+    if(m_impl->telemetryTracePass) m_impl->telemetryTracePass->setEnabled(visible);
+}
+
+void ProjectScene::clearTelemetryEndEffectorTrace()
+{
+    m_impl->telemetryTraceRobotId.clear();
+    m_impl->telemetryTracePoints.clear();
+    if(m_impl->telemetryTracePass) m_impl->telemetryTracePass->clear();
+}
+
+void ProjectScene::appendTelemetryEndEffectorTraceSample(const std::string& robotId)
+{
+    if(m_impl->telemetryTraceRobotId != robotId) clearTelemetryEndEffectorTrace();
+    m_impl->telemetryTraceRobotId = robotId;
+    collision::Transform3 tcp = collision::Transform3::Identity();
+    if(!m_impl->sprayNozzleWorldTransform(robotId, tcp)) {
+        const auto* runtime = findRuntimeRobot(m_impl->robots, robotId);
+        if(!runtime || !runtime->instance || runtime->model.tip_links.size() != 1) {
+            clearTelemetryEndEffectorTrace();
+            return;
+        }
+        tcp = runtime->instance->getLinkTransform(runtime->model.tip_links.front());
+        if(!tcp.matrix().allFinite()) { clearTelemetryEndEffectorTrace(); return; }
+    }
+    auto& points = m_impl->telemetryTracePoints;
+    const collision::Vec3 position = tcp.translation();
+    if(!points.empty() && (points.back() - position).squaredNorm() <= 1.0e-12) return;
+    // Bound memory for long communication sessions, retaining the newest path.
+    if(points.size() >= 20000) {
+        points.erase(points.begin(), points.begin() + 1000);
+        if(m_impl->telemetryTracePass) {
+            m_impl->telemetryTracePass->clear();
+            for(const auto& point : points) m_impl->telemetryTracePass->append(toGlmVec3(point));
+        }
+    }
+    points.push_back(position);
+    if(m_impl->telemetryTracePass) m_impl->telemetryTracePass->append(toGlmVec3(position));
+}
+
+std::size_t ProjectScene::telemetryEndEffectorTracePointCount() const
+{
+    return m_impl->telemetryTracePoints.size();
+}
+
 ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
     const std::string& robotId,
     const std::string& targetId) const
@@ -8185,6 +8512,24 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
         result.errorMessage = "No spray nozzle pose available";
         return result;
     }
+    return sprayMeasurementAtPose(tcp, targetId, m_impl->sprayDirectionNegativeZ);
+}
+
+ProjectScene::SprayMeasurement ProjectScene::sprayMeasurementAtPose(
+    const Eigen::Isometry3d& tcp, const std::string& targetId, bool negativeZ) const
+{
+    SprayMeasurement result;
+    if(!tcp.matrix().allFinite() ||
+        !(tcp.linear().transpose() * tcp.linear()).isApprox(Eigen::Matrix3d::Identity(), 1.e-6) ||
+        std::abs(tcp.linear().determinant() - 1.) > 1.e-6) {
+        result.errorMessage = "Invalid rigid TCP pose";
+        return result;
+    }
+    result.poseValid = true;
+    result.tcpPoseAvailable = true;
+    result.tcpPose = tcp;
+    result.tcpPosition = tcp.translation();
+    result.sprayDirection = (negativeZ ? -1.0 : 1.0) * tcp.linear().col(2).normalized();
     const RuntimeSceneObject* targetObject = findRuntimeObject(m_impl->objects, targetId);
     const auto* objectDesc = targetObject ? findSceneObjectDesc(m_impl->document(), targetId) : nullptr;
     const RuntimeRobot* target = targetObject ? nullptr : findRuntimeRobot(m_impl->robots, targetId);
@@ -8262,10 +8607,11 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
                 }
             }
         }
+        for(auto& mesh : meshes) mesh.buildIndex();
         cached = m_impl->spraySurfaceMeshes.emplace(cacheKey, std::move(meshes)).first;
     }
 
-    const collision::Vec3 direction = tcp.linear().col(2).normalized();
+    const collision::Vec3 direction = result.sprayDirection;
     const collision::Vec3 localXWorld = tcp.linear().col(0).normalized();
     double nearest = std::numeric_limits<double>::max();
     collision::Vec3 normal = collision::Vec3::Zero();
@@ -8277,23 +8623,29 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
         ProjectScenePickRay ray;
         ray.origin = inverse * tcp.translation();
         ray.direction = inverse.linear() * direction;
-        for(std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-            const auto ia = mesh.indices[i];
-            const auto ib = mesh.indices[i + 1];
-            const auto ic = mesh.indices[i + 2];
-            if(ia >= mesh.vertices.size() || ib >= mesh.vertices.size() || ic >= mesh.vertices.size()) {
-                continue;
-            }
-            ++triangleCount;
-            const auto& a = mesh.vertices[ia];
-            const auto& b = mesh.vertices[ib];
-            const auto& c = mesh.vertices[ic];
-            double distance = 0.0, u = 0.0, v = 0.0;
-            if(intersectRayTriangle(ray, a, b, c, distance, u, v) && distance < nearest) {
-                const collision::Vec3 candidate = world.linear() * (b - a).cross(c - a);
-                if(candidate.allFinite() && candidate.norm() > 1.0e-12) {
-                    nearest = distance;
-                    normal = candidate.normalized();
+        triangleCount += mesh.triangles.size();
+        const double previousMeshNearest = nearest;
+        std::size_t nearestTriangle = std::numeric_limits<std::size_t>::max();
+        std::vector<int> pending;
+        if(!mesh.nodes.empty()) pending.push_back(0);
+        while(!pending.empty()) {
+            const auto& node = mesh.nodes[pending.back()]; pending.pop_back();
+            if(!Impl::SpraySurfaceMesh::intersectsBounds(node, ray, nearest)) continue;
+            if(node.left >= 0) { pending.push_back(node.right); pending.push_back(node.left); continue; }
+            for(std::size_t k = node.begin; k < node.end; ++k) {
+                const auto i = mesh.triangles[k];
+                const auto& a = mesh.vertices[mesh.indices[i]];
+                const auto& b = mesh.vertices[mesh.indices[i+1]];
+                const auto& c = mesh.vertices[mesh.indices[i+2]];
+                double distance = 0.0, u = 0.0, v = 0.0;
+                if(intersectRayTriangle(ray, a, b, c, distance, u, v) &&
+                    (distance < nearest || (distance == nearest && distance < previousMeshNearest && i < nearestTriangle))) {
+                    const collision::Vec3 candidate = world.linear() * (b - a).cross(c - a);
+                    if(candidate.allFinite() && candidate.norm() > 1.0e-12) {
+                        nearest = distance;
+                        nearestTriangle = i;
+                        normal = candidate.normalized();
+                    }
                 }
             }
         }
@@ -8310,6 +8662,8 @@ ProjectScene::SprayMeasurement ProjectScene::sprayMeasurement(
     const double orientation = normal.cross(direction).dot(localXWorld);
     result.valid = true;
     result.distanceMeters = nearest;
+    result.hitPosition = result.tcpPosition + nearest * direction;
+    result.surfaceNormal = normal;
     // At the sign boundary choose positive deterministically; normal incidence is zero.
     result.angleDegrees = magnitude < 1.0e-7 ? 0.0 : (orientation < -1.0e-10 ? -magnitude : magnitude);
     return result;

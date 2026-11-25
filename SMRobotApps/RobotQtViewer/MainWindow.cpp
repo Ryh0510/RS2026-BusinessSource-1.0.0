@@ -623,6 +623,7 @@ MainWindow::MainWindow(
             m_appController.setObjectInspectorContext(objectId);
             m_selectionModel.selectSceneObject(objectId, QStringLiteral("sceneExplorerCollisionModel"));
         });
+    m_telemetry = std::make_unique<robot_qt_viewer::RobotQtViewerTelemetryAdapter>();
     m_motionPlanningViewport = std::make_unique<robot_qt_viewer::RobotQtViewerMotionPlanningViewportAdapter>(*m_viewport);
     m_documentContext.setMotionPlanningViewport(m_motionPlanningViewport.get());
     m_documentContext.setDocumentViewport(m_documentViewport.get());
@@ -3490,7 +3491,7 @@ void MainWindow::initializeWorkbenchContributions()
     }
     if(m_workbenchPackageRegistry.hasWorkbench(Kind::DigitalTwin)) {
         registerFactory(robot_qt_viewer::makeDigitalTwinWorkbenchRuntimeContributionFactory(
-            *m_statusPanelWidget));
+            *m_telemetry, *m_motionPlanningViewport));
     }
     const QString freeformWorkbenchId =
     QStringLiteral("smrobot.mode.freeform-trajectory-planning");

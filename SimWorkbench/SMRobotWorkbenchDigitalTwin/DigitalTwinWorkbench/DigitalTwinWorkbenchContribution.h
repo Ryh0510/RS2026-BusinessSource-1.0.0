@@ -7,8 +7,11 @@ class QWidget;
 
 namespace robot_qt_viewer
 {
+    class IRobotQtViewerTelemetryPort;
+    class IRobotQtViewerMotionPlanningViewportPort;
     bool registerDigitalTwinWorkbenchContribution(
         RobotQtViewerWorkbenchPackageRegistry& catalog);
     RobotQtViewerWorkbenchRuntimeContributionFactoryDesc
-        makeDigitalTwinWorkbenchRuntimeContributionFactory(QWidget& statusPanel);
+        makeDigitalTwinWorkbenchRuntimeContributionFactory(IRobotQtViewerTelemetryPort& telemetry,
+            IRobotQtViewerMotionPlanningViewportPort& viewport);
 }

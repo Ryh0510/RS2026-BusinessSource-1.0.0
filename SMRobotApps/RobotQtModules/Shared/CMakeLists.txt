@@ -35,6 +35,7 @@ set(SOURCES
     RobotQtViewerSelectionModel.h
     RobotQtViewerViewportPreviewState.cpp
     RobotQtViewerViewportPreviewState.h
+    RobotQtViewerTelemetryPort.h
     RobotQtViewerViewportPorts.h
     RobotQtViewerViewportServices.h
     RobotQtViewerWorkbench.cpp
